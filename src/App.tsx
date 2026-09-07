@@ -6,6 +6,7 @@ import {
   UploadCloud, Volume2, X,
 } from 'lucide-react'
 import { initialUnits } from './data'
+import { readVocabularyFile } from './docx'
 import type { ImportDraft, Unit, View, Word } from './types'
 import { makeFallbackWord, parseVocabulary, pronunciationScore, shuffle, uid } from './utils'
 
@@ -449,13 +450,19 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
   const [raw, setRaw] = useState('')
   const [drafts, setDrafts] = useState<ImportDraft[]>([])
   const [loading, setLoading] = useState(false)
+  const [fileReading, setFileReading] = useState(false)
   const [notice, setNotice] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
   const parse = (text = raw) => { const next = parseVocabulary(text); setDrafts(next); setNotice(next.length ? '' : '没有识别到单词，请检查格式。') }
   const readFile = async (file?: File) => {
     if (!file) return
-    if (file.size > 1024 * 1024) { setNotice('文件请控制在 1MB 以内。'); return }
-    const text = await file.text(); setRaw(text); parse(text)
+    setFileReading(true); setNotice('')
+    try {
+      const text = await readVocabularyFile(file)
+      setRaw(text); parse(text)
+    } catch (reason) {
+      setNotice(reason instanceof Error ? reason.message : '文件读取失败，请检查文件格式。')
+    } finally { setFileReading(false) }
   }
   const enrich = async () => {
     if (!drafts.length) return
@@ -478,8 +485,8 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
         <button className="modal-close" onClick={onClose}><X /></button>
         <span className="modal-icon"><Import /></span><span className="eyebrow">SMART IMPORT</span><h2>导入到「{unit.name}」</h2><p>粘贴单词或上传文件，AI 将自动补全读音、释义与初学者例句。</p>
         {!drafts.length ? <>
-          <button className="drop-zone" onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); readFile(e.dataTransfer.files[0]) }}><UploadCloud /><b>拖入 TXT、CSV 或 JSON 文件</b><span>或点击选择文件 · 最大 1MB</span></button>
-          <input ref={fileRef} type="file" accept=".txt,.csv,.json" hidden onChange={(e) => readFile(e.target.files?.[0])} />
+          <button className="drop-zone" disabled={fileReading} onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); readFile(e.dataTransfer.files[0]) }}>{fileReading ? <span className="spinner dark" /> : <UploadCloud />}<b>{fileReading ? '正在读取 Word 文档…' : '拖入 Word、TXT、CSV 或 JSON 文件'}</b><span>Word 支持段落、列表与三列表格 · DOCX 最大 5MB</span></button>
+          <input ref={fileRef} type="file" accept=".docx,.doc,.txt,.csv,.json,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden onChange={(e) => readFile(e.target.files?.[0])} />
           <div className="or"><span />或直接粘贴<span /></div>
           <textarea className="import-textarea" value={raw} onChange={(e) => setRaw(e.target.value)} placeholder={'猫\n食べる, たべる, 吃\n図書館\tとしょかん\t图书馆'} />
           <small className="format-hint"><FileText size={14} />每行一个词；也支持“单词, 读音, 释义”格式</small>

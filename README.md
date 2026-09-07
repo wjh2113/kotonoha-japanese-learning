@@ -28,9 +28,12 @@ LLM_GATEWAY_SPEECH_CAPABILITY=speech
 
 ## 导入格式
 
+- DOCX：支持普通段落、项目列表，以及“单词 / 读音 / 释义”表格
 - TXT：每行一个单词
 - CSV：`单词, 读音, 释义`
 - JSON：字符串数组，或含 `term / reading / meaning` 字段的对象数组
+
+旧版二进制 `.doc` 不直接解析，请先在 Word 中另存为 `.docx`。
 
 ## 语音说明
 

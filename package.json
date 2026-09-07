@@ -15,15 +15,17 @@
     "concurrently": "latest",
     "express": "latest",
     "lucide-react": "latest",
-    "vite": "latest",
+    "mammoth": "^1.12.2",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "vite": "latest"
   },
   "devDependencies": {
     "@types/express": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "jsdom": "^29.1.1",
     "typescript": "latest",
     "vitest": "latest"
   }
