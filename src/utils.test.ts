@@ -43,9 +43,16 @@ describe('Japanese pronunciation helpers', () => {
 describe('spaced review scheduling', () => {
   const baseWord = { term: '水', reading: 'みず', mastered: true, reviewStage: 0 } as any
 
-  it('advances remembered words through Ebbinghaus-style intervals', () => {
+  it('starts never-scheduled words on the 1-day interval', () => {
     const now = new Date('2026-09-08T00:00:00Z').getTime()
     const result = scheduleReview(baseWord, true, now)
+    expect(result.reviewStage).toBe(0)
+    expect(result.nextReviewAt).toBe(now + 1 * 24 * 60 * 60 * 1000)
+  })
+
+  it('advances remembered words through Ebbinghaus-style intervals', () => {
+    const now = new Date('2026-09-08T00:00:00Z').getTime()
+    const result = scheduleReview({ ...baseWord, lastReviewedAt: now - 1000, nextReviewAt: now }, true, now)
     expect(result.reviewStage).toBe(1)
     expect(result.nextReviewAt).toBe(now + 2 * 24 * 60 * 60 * 1000)
   })

@@ -7,12 +7,17 @@
     "dev": "concurrently -k \"vite\" \"node --env-file-if-exists=.env --watch server.mjs\"",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "db:local:init": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres-local.ps1 init",
-    "db:local:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres-local.ps1 start",
-    "db:local:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres-local.ps1 status",
-    "db:local:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres-local.ps1 stop",
+    "db:local:init": "bash scripts/postgres-local.sh init",
+    "db:local:start": "bash scripts/postgres-local.sh start",
+    "db:local:status": "bash scripts/postgres-local.sh status",
+    "db:local:stop": "bash scripts/postgres-local.sh stop",
+    "db:local:init:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres-local.ps1 init",
+    "db:local:start:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres-local.ps1 start",
+    "db:local:status:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres-local.ps1 status",
+    "db:local:stop:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres-local.ps1 stop",
     "preview": "vite preview",
-    "start": "node --env-file-if-exists=.env server.mjs"
+    "start": "node --env-file-if-exists=.env server.mjs",
+    "deploy": "bash scripts/deploy-jdcloud.sh"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

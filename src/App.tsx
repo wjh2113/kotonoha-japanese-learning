@@ -5,6 +5,7 @@ import {
   Mic, MoreHorizontal, Pause, Plus, Search, Settings, Sparkles, SquarePen,
   Trash2, Trophy, UploadCloud, UserRound, Volume2, X,
 } from 'lucide-react'
+import { apiFetch, AUTH_REQUIRED_EVENT, getAccessToken, setAccessToken } from './api'
 import { initialUnits } from './data'
 import { readVocabularyFile } from './docx'
 import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
@@ -17,6 +18,7 @@ const DEFAULT_SETTINGS: AppSettings = { avatar: 'ゆ', voiceGender: 'female' }
 const SettingsContext = createContext<AppSettings>(DEFAULT_SETTINGS)
 
 function App() {
+  const [auth, setAuth] = useState<'checking' | 'needed' | 'ok'>('checking')
   const [units, setUnits] = useState<Unit[]>(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '') } catch { return initialUnits }
   })
@@ -37,9 +39,34 @@ function App() {
 
   useEffect(() => {
     let cancelled = false
+    const check = async () => {
+      try {
+        const headers: HeadersInit = {}
+        const token = getAccessToken()
+        if (token) headers.Authorization = `Bearer ${token}`
+        const response = await fetch('/api/auth/check', { headers })
+        const data = await response.json()
+        if (cancelled) return
+        setAuth(!data.required || data.ok ? 'ok' : 'needed')
+      } catch {
+        if (!cancelled) setAuth('ok')
+      }
+    }
+    check()
+    const onNeed = () => setAuth('needed')
+    window.addEventListener(AUTH_REQUIRED_EVENT, onNeed)
+    return () => {
+      cancelled = true
+      window.removeEventListener(AUTH_REQUIRED_EVENT, onNeed)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (auth !== 'ok') return
+    let cancelled = false
     const hydrate = async () => {
       try {
-        const response = await fetch('/api/state')
+        const response = await apiFetch('/api/state')
         if (!response.ok) throw new Error('DATABASE_READ_FAILED')
         const stored = await response.json()
         if (cancelled) return
@@ -47,7 +74,7 @@ function App() {
           setUnits(stored.units)
           setSettings({ ...DEFAULT_SETTINGS, ...stored.settings })
         } else {
-          const seed = await fetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ units, settings }) })
+          const seed = await apiFetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ units, settings }) })
           if (!seed.ok) throw new Error('DATABASE_SEED_FAILED')
         }
         localStorage.removeItem(STORAGE_KEY)
@@ -59,13 +86,13 @@ function App() {
     }
     hydrate()
     return () => { cancelled = true }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [auth]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!databaseReady) return
+    if (auth !== 'ok' || !databaseReady) return
     const timer = window.setTimeout(async () => {
       try {
-        const response = await fetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ units, settings }) })
+        const response = await apiFetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ units, settings }) })
         if (!response.ok) throw new Error('DATABASE_WRITE_FAILED')
         databaseErrorShown.current = false
       } catch {
@@ -76,7 +103,7 @@ function App() {
       }
     }, 350)
     return () => window.clearTimeout(timer)
-  }, [units, settings, databaseReady])
+  }, [units, settings, databaseReady, auth])
   useEffect(() => {
     const unit = units.find((item) => item.id === unitId)
     if (unit && !unit.words.some((word) => word.id === selectedId)) setSelectedId(unit.words[0]?.id || '')
@@ -132,6 +159,13 @@ function App() {
   }
 
   const importUnit = units.find((item) => item.id === importUnitId) || unit
+
+  if (auth === 'checking') {
+    return <div className="access-boot"><span>語</span><p>正在连接言の葉…</p></div>
+  }
+  if (auth === 'needed') {
+    return <AccessGate onUnlock={() => setAuth('ok')} />
+  }
 
   return (
     <SettingsContext.Provider value={settings}>
@@ -444,7 +478,7 @@ function InlinePronunciationPractice({ word }: { word: Word }) {
         reader.readAsDataURL(blob)
       })
       const extension = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? 'm4a' : 'webm'
-      const response = await fetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audioBase64, mimeType: blob.type || 'audio/webm', filename: `pronunciation.${extension}` }) })
+      const response = await apiFetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audioBase64, mimeType: blob.type || 'audio/webm', filename: `pronunciation.${extension}` }) })
       const data = await response.json()
       if (!response.ok || !data.text) throw new Error(data.error || '网关没有返回转写文本。')
       finish(data.text)
@@ -480,131 +514,38 @@ function InlinePronunciationPractice({ word }: { word: Word }) {
   </div>
 }
 
-function PronunciationView({ unit, initialWord, onBack }: { unit: Unit; initialWord?: Word; onBack: () => void }) {
-  const [index, setIndex] = useState(Math.max(0, initialWord ? unit.words.findIndex((word) => word.id === initialWord.id) : 0))
-  const [recording, setRecording] = useState(false)
-  const [evaluating, setEvaluating] = useState(false)
-  const [transcript, setTranscript] = useState('')
-  const [score, setScore] = useState<number | null>(null)
+function AccessGate({ onUnlock }: { onUnlock: () => void }) {
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
-  const recognition = useRef<SpeechRecognition | null>(null)
-  const mediaRecorder = useRef<MediaRecorder | null>(null)
-  const mediaStream = useRef<MediaStream | null>(null)
-  const audioChunks = useRef<Blob[]>([])
-  const browserFallback = useRef(false)
-  const word = unit.words[index]
-  useEffect(() => { setTranscript(''); setScore(null); setError('') }, [index])
-
-  const finishScore = (text: string) => {
-    setTranscript(text)
-    setScore(pronunciationScore(text, word))
-    setRecording(false)
-    setEvaluating(false)
-  }
-
-  const recordWithBrowser = () => {
-    if (!word) return
-    const Constructor = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!Constructor) { setError('当前浏览器不支持语音识别，请使用最新版 Chrome 或 Edge。'); return }
-    const instance = new Constructor()
-    recognition.current = instance
-    instance.lang = 'ja-JP'; instance.interimResults = false; instance.continuous = false
-    instance.onresult = (event) => {
-      const text = event.results[0][0].transcript
-      finishScore(text)
-    }
-    instance.onerror = (event) => { setError(event.error === 'not-allowed' ? '请允许浏览器使用麦克风。' : '没有听清，请靠近麦克风再试一次。'); setRecording(false) }
-    instance.onend = () => setRecording(false)
-    setError(''); setScore(null); setTranscript(''); setRecording(true); instance.start()
-  }
-
-  const blobToBase64 = (blob: Blob) => new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result).split(',', 2)[1] || '')
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
-  })
-
-  const sendRecording = async (blob: Blob) => {
-    setEvaluating(true)
+  const [busy, setBusy] = useState(false)
+  const submit = async () => {
+    if (!password.trim() || busy) return
+    setBusy(true); setError('')
     try {
-      const audioBase64 = await blobToBase64(blob)
-      const extension = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? 'm4a' : 'webm'
-      const response = await fetch('/api/transcribe', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audioBase64, mimeType: blob.type || 'audio/webm', filename: `pronunciation.${extension}` }),
-      })
-      const data = await response.json()
-      if (!response.ok || !data.text) throw new Error(data.error || '网关没有返回转写文本。')
-      finishScore(data.text)
-    } catch (reason) {
-      setEvaluating(false)
-      browserFallback.current = true
-      setError(`${reason instanceof Error ? reason.message : '网关语音转写失败。'} 已切换到浏览器识别，请再读一次。`)
-    }
-  }
-
-  const startRecording = async () => {
-    if (!word) return
-    if (browserFallback.current || !window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) {
-      recordWithBrowser(); return
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      mediaStream.current = stream
-      const supported = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find((type) => MediaRecorder.isTypeSupported(type))
-      const recorder = new MediaRecorder(stream, supported ? { mimeType: supported } : undefined)
-      mediaRecorder.current = recorder; audioChunks.current = []
-      recorder.ondataavailable = (event) => { if (event.data.size) audioChunks.current.push(event.data) }
-      recorder.onstop = () => {
-        stream.getTracks().forEach((track) => track.stop())
-        const blob = new Blob(audioChunks.current, { type: recorder.mimeType || 'audio/webm' })
-        setRecording(false)
-        if (blob.size) sendRecording(blob)
+      const response = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.token) {
+        setError(data.message || '密码错误')
+        return
       }
-      setError(''); setScore(null); setTranscript(''); setRecording(true); recorder.start()
+      setAccessToken(data.token)
+      onUnlock()
     } catch {
-      browserFallback.current = true
-      setError('无法开始录音，已切换到浏览器识别。')
-      recordWithBrowser()
-    }
+      setError('无法连接服务，请稍后重试')
+    } finally { setBusy(false) }
   }
-
-  const stopRecording = () => {
-    if (mediaRecorder.current?.state === 'recording') mediaRecorder.current.stop()
-    else recognition.current?.stop()
-  }
-
-  if (!word) return <div className="page"><EmptyState onImport={onBack} /></div>
   return (
-    <div className="page practice-page">
-      <button className="back-link" onClick={onBack}><ChevronLeft size={17} />返回单词表</button>
-      <div className="mode-heading"><span className="eyebrow">PRONUNCIATION LAB</span><h1>发音练习</h1><p>先听标准读音，再用自然的速度读出来。</p></div>
-      <div className="practice-layout">
-        <aside className="practice-queue"><b>{unit.name}</b><span>{index + 1} / {unit.words.length}</span><div>{unit.words.map((item, i) => <button key={item.id} className={i === index ? 'active' : ''} onClick={() => setIndex(i)}><span className="jp">{item.term}</span><small>{item.reading}</small></button>)}</div></aside>
-        <section className="practice-card">
-          <div className="sound-waves"><i /><i /><i /><i /><i /></div>
-          <span className="jp practice-reading">{word.reading}</span>
-          <h2 className="jp">{word.term}</h2>
-          <p>{word.meaning}</p>
-          <VolumeButton word={word} />
-          <div className="record-area">
-            <button className={`record-button ${recording ? 'recording' : ''}`} disabled={evaluating} onClick={() => recording ? stopRecording() : startRecording()}>
-              {evaluating ? <span className="spinner" /> : recording ? <Pause size={26} /> : <Mic size={27} />}
-            </button>
-            <b>{evaluating ? 'AI 正在分析发音…' : recording ? '正在聆听…再次点按结束' : score === null ? '点按录音，朗读上方单词' : '完成评测'}</b>
-            <small>{recording ? '建议保持 1–3 秒的自然语速' : '录音经服务端转写，API Key 不会发送到浏览器'}</small>
-          </div>
-          {error && <div className="speech-error">{error}</div>}
-          {score !== null && (
-            <div className={`score-panel ${score >= 80 ? 'great' : score >= 55 ? 'okay' : 'retry'}`}>
-              <div className="score-ring"><b>{score}</b><small>分</small></div>
-              <div><b>{score >= 80 ? '发音很自然！' : score >= 55 ? '已经很接近了' : '再慢一点试试'}</b><p>识别结果：<span className="jp">{transcript}</span></p><small>{score >= 80 ? '假名与目标词匹配良好，保持现在的节奏。' : '重点留意长音、促音和浊音，先跟读标准音再录一次。'}</small></div>
-            </div>
-          )}
-          <div className="practice-controls"><button disabled={index === 0} onClick={() => setIndex(index - 1)}><ChevronLeft />上一个</button><button disabled={index === unit.words.length - 1} onClick={() => setIndex(index + 1)}>下一个<ChevronRight /></button></div>
-        </section>
-      </div>
+    <div className="access-gate" role="dialog" aria-modal="true" aria-labelledby="access-title">
+      <section className="access-card">
+        <span className="access-mark">語</span>
+        <h1 id="access-title">言の葉</h1>
+        <p>请输入访问密码后继续学习</p>
+        <div className="access-row">
+          <input type="password" autoFocus value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && submit()} placeholder="访问密码" />
+          <button className="primary-button" disabled={busy || !password.trim()} onClick={submit}>{busy ? '验证中…' : '进入'}</button>
+        </div>
+        {error && <em>{error}</em>}
+      </section>
     </div>
   )
 }
@@ -746,7 +687,7 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
     if (!drafts.length) return
     setLoading(true); setNotice('')
     try {
-      const response = await fetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ words: drafts, unitName: unit.name }) })
+      const response = await apiFetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ words: drafts, unitName: unit.name }) })
       if (!response.ok) throw new Error((await response.json()).error)
       const data = await response.json()
       const words: Word[] = data.words.map((item: Partial<Word>, index: number) => ({ ...makeFallbackWord(drafts[index] || { term: item.term || '' }), ...item, id: uid(), mastered: false, createdAt: Date.now() }))

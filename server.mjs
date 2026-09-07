@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -5,21 +6,91 @@ import { createDatabase } from './database.mjs'
 
 const app = express()
 const port = Number(process.env.PORT || 8787)
+const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '127.0.0.1' : '0.0.0.0')
 const dirname = path.dirname(fileURLToPath(import.meta.url))
 const gatewayUrl = (process.env.LLM_GATEWAY_URL || 'https://aiapimgrapi.aidigitcloud.cn').replace(/\/$/, '')
 const gatewayKey = process.env.LLM_GATEWAY_API_KEY
 const tenantId = process.env.LLM_GATEWAY_TENANT || 'Japan'
+const accessPassword = process.env.ACCESS_PASSWORD || ''
 const database = createDatabase(process.env.DATABASE_URL)
 
-app.use(express.json({ limit: '40mb' }))
+app.set('trust proxy', 1)
+app.use(express.json({ limit: '8mb' }))
+
+function sha256buf(value) {
+  return crypto.createHash('sha256').update(String(value), 'utf8').digest()
+}
+
+function safeEqualStr(left, right) {
+  return crypto.timingSafeEqual(sha256buf(left), sha256buf(right))
+}
+
+function accessToken() {
+  return crypto.createHmac('sha256', accessPassword).update('kotonoha-access-v1').digest('hex')
+}
+
+function readBearer(req) {
+  const header = req.headers.authorization || ''
+  if (header.startsWith('Bearer ')) return header.slice(7).trim()
+  const fallback = req.headers['x-access-token']
+  return fallback ? String(fallback).trim() : ''
+}
+
+function rateLimit(windowMs, max) {
+  const hits = new Map()
+  return (req, res, next) => {
+    const ip = req.ip || req.socket.remoteAddress || 'unknown'
+    const key = `${req.path}:${ip}`
+    const now = Date.now()
+    const recent = (hits.get(key) || []).filter((time) => now - time < windowMs)
+    if (recent.length >= max) {
+      return res.status(429).json({ error: '请求过于频繁，请稍后再试。' })
+    }
+    recent.push(now)
+    hits.set(key, recent)
+    next()
+  }
+}
 
 app.get('/api/health', async (_req, res) => {
   try {
     const db = await database.health()
-    res.json({ ok: true, database: { connected: true, name: db.database }, llmConfigured: Boolean(gatewayKey), provider: 'AIapiMgr', tenant: tenantId })
+    res.json({
+      ok: true,
+      database: { connected: true, name: db.database },
+      llmConfigured: Boolean(gatewayKey),
+      authRequired: Boolean(accessPassword),
+      provider: 'AIapiMgr',
+      tenant: tenantId,
+    })
   } catch (error) {
     res.status(503).json({ ok: false, database: { connected: false }, error: error.message })
   }
+})
+
+app.get('/api/auth/check', (req, res) => {
+  if (!accessPassword) return res.json({ ok: true, required: false })
+  const token = readBearer(req)
+  res.json({ ok: Boolean(token && safeEqualStr(token, accessToken())), required: true })
+})
+
+app.post('/api/auth/login', rateLimit(60_000, 8), (req, res) => {
+  if (!accessPassword) return res.json({ ok: true, token: '', required: false })
+  const password = req.body?.password != null ? String(req.body.password) : ''
+  if (!password || !safeEqualStr(password, accessPassword)) {
+    return res.status(401).json({ error: 'invalid_password', message: '密码错误' })
+  }
+  res.json({ ok: true, token: accessToken(), required: true })
+})
+
+app.use('/api', (req, res, next) => {
+  if (!accessPassword) return next()
+  if (req.path === '/health' || req.path === '/auth/check' || req.path === '/auth/login') return next()
+  const token = readBearer(req)
+  if (!token || !safeEqualStr(token, accessToken())) {
+    return res.status(401).json({ error: 'unauthorized', message: '请先输入访问密码' })
+  }
+  next()
 })
 
 app.get('/api/state', async (_req, res) => {
@@ -91,7 +162,7 @@ async function callGateway(pathname, payload) {
   }
 }
 
-app.post('/api/enrich', async (req, res) => {
+app.post('/api/enrich', rateLimit(60_000, 20), async (req, res) => {
   const words = Array.isArray(req.body?.words) ? req.body.words.slice(0, 40) : []
   const unitName = String(req.body?.unitName || '').trim().slice(0, 80)
   if (!words.length) return res.status(400).json({ error: '请至少提供一个单词。' })
@@ -139,10 +210,10 @@ app.post('/api/enrich', async (req, res) => {
   }
 })
 
-app.post('/api/transcribe', async (req, res) => {
+app.post('/api/transcribe', rateLimit(60_000, 12), async (req, res) => {
   const { audioBase64, mimeType = 'audio/webm', filename = 'pronunciation.webm' } = req.body || {}
   if (typeof audioBase64 !== 'string' || !audioBase64) return res.status(400).json({ error: '缺少录音数据。' })
-  if (audioBase64.length > 35_000_000) return res.status(413).json({ error: '录音文件过大。' })
+  if (audioBase64.length > 6_000_000) return res.status(413).json({ error: '录音文件过大。' })
   try {
     const { data, headers } = await callGateway('/api/ai/transcribe/json', {
       tenantId,
@@ -171,7 +242,7 @@ if (process.env.NODE_ENV === 'production') {
 
 async function start() {
   await database.initialize()
-  app.listen(port, () => console.log(`KOTONOHA API listening on http://localhost:${port} with PostgreSQL`))
+  app.listen(port, host, () => console.log(`KOTONOHA API listening on http://${host}:${port} with PostgreSQL`))
 }
 
 start().catch((error) => {

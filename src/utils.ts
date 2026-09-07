@@ -86,11 +86,12 @@ export const REVIEW_INTERVAL_DAYS = [1, 2, 4, 7, 15, 30] as const
 const DAY = 24 * 60 * 60 * 1000
 
 export function scheduleReview(word: Word, remembered: boolean, now = Date.now()): Partial<Word> {
-  const reviewStage = remembered
-    ? Math.min((word.reviewStage ?? -1) + 1, REVIEW_INTERVAL_DAYS.length - 1)
-    : 0
-  const delay = remembered ? REVIEW_INTERVAL_DAYS[reviewStage] * DAY : 10 * 60 * 1000
-  return { reviewStage, lastReviewedAt: now, nextReviewAt: now + delay }
+  if (!remembered) {
+    return { reviewStage: 0, lastReviewedAt: now, nextReviewAt: now + 10 * 60 * 1000 }
+  }
+  const previous = (word.lastReviewedAt || word.nextReviewAt) ? (word.reviewStage ?? 0) : -1
+  const reviewStage = Math.min(previous + 1, REVIEW_INTERVAL_DAYS.length - 1)
+  return { reviewStage, lastReviewedAt: now, nextReviewAt: now + REVIEW_INTERVAL_DAYS[reviewStage] * DAY }
 }
 
 export function getReviewState(word: Word, now = Date.now()) {
