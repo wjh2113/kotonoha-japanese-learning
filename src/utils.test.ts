@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { levenshtein, makeFallbackWord, normalizeJapanese, parseVocabulary, pronunciationScore, toHiragana } from './utils'
+import { formatReviewTime, getReviewState, levenshtein, makeFallbackWord, normalizeJapanese, parseVocabulary, pronunciationScore, scheduleReview, toHiragana } from './utils'
 
 describe('parseVocabulary', () => {
   it('parses one-word-per-line text', () => {
@@ -37,5 +37,26 @@ describe('Japanese pronunciation helpers', () => {
     const word = makeFallbackWord({ term: '水' })
     expect(word.reading).toBe('みず')
     expect(word.example).toContain('水')
+  })
+})
+
+describe('spaced review scheduling', () => {
+  const baseWord = { term: '水', reading: 'みず', mastered: true, reviewStage: 0 } as any
+
+  it('advances remembered words through Ebbinghaus-style intervals', () => {
+    const now = new Date('2026-09-08T00:00:00Z').getTime()
+    const result = scheduleReview(baseWord, true, now)
+    expect(result.reviewStage).toBe(1)
+    expect(result.nextReviewAt).toBe(now + 2 * 24 * 60 * 60 * 1000)
+  })
+
+  it('resets forgotten words for a short retry', () => {
+    const now = 1000
+    expect(scheduleReview({ ...baseWord, reviewStage: 4 }, false, now)).toMatchObject({ reviewStage: 0, nextReviewAt: now + 10 * 60 * 1000 })
+  })
+
+  it('treats legacy mastered words as due now', () => {
+    expect(getReviewState(baseWord, 1000).due).toBe(true)
+    expect(formatReviewTime(baseWord, 1000)).toBe('现在应复习')
   })
 })

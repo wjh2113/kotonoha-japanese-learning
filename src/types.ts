@@ -9,6 +9,10 @@ export type Word = {
   translation: string
   mastered: boolean
   createdAt: number
+  starred?: boolean
+  reviewStage?: number
+  lastReviewedAt?: number
+  nextReviewAt?: number
 }
 
 export type Unit = {
@@ -19,7 +23,14 @@ export type Unit = {
   words: Word[]
 }
 
-export type View = 'study' | 'pronunciation' | 'test'
+export type View = 'library' | 'study' | 'test' | 'wordbook' | 'review' | 'settings'
+
+export type VoiceGender = 'female' | 'male'
+
+export type AppSettings = {
+  avatar: string
+  voiceGender: VoiceGender
+}
 
 export type ImportDraft = {
   term: string

@@ -76,3 +76,29 @@ export function pronunciationScore(transcript: string, word: Word) {
 export function shuffle<T>(items: T[]) {
   return [...items].sort(() => Math.random() - 0.5)
 }
+
+export const REVIEW_INTERVAL_DAYS = [1, 2, 4, 7, 15, 30] as const
+const DAY = 24 * 60 * 60 * 1000
+
+export function scheduleReview(word: Word, remembered: boolean, now = Date.now()): Partial<Word> {
+  const reviewStage = remembered
+    ? Math.min((word.reviewStage ?? -1) + 1, REVIEW_INTERVAL_DAYS.length - 1)
+    : 0
+  const delay = remembered ? REVIEW_INTERVAL_DAYS[reviewStage] * DAY : 10 * 60 * 1000
+  return { reviewStage, lastReviewedAt: now, nextReviewAt: now + delay }
+}
+
+export function getReviewState(word: Word, now = Date.now()) {
+  const nextReviewAt = word.nextReviewAt ?? (word.mastered ? 0 : Number.POSITIVE_INFINITY)
+  const due = nextReviewAt <= now
+  const daysUntil = Number.isFinite(nextReviewAt) ? Math.ceil((nextReviewAt - now) / DAY) : null
+  return { due, nextReviewAt, daysUntil, stage: word.reviewStage ?? 0 }
+}
+
+export function formatReviewTime(word: Word, now = Date.now()) {
+  const state = getReviewState(word, now)
+  if (!Number.isFinite(state.nextReviewAt)) return '尚未进入复习计划'
+  if (state.due) return '现在应复习'
+  if (state.daysUntil === 1) return '明天复习'
+  return `${state.daysUntil} 天后复习`
+}

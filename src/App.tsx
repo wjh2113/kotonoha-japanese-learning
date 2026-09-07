@@ -1,17 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AudioLines, BookOpen, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
-  CircleHelp, FileText, GraduationCap, Headphones, Import, LayoutGrid, List, Menu,
-  Mic, MoreHorizontal, Pause, Play, Plus, Search, Sparkles, SquarePen, Trophy,
-  UploadCloud, Volume2, X,
+  AudioLines, BookMarked, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronLeft, ChevronRight,
+  Clock3, FileText, GraduationCap, Import, LayoutGrid, LibraryBig, List, Menu,
+  Mic, MoreHorizontal, Pause, Plus, Search, Settings, Sparkles, SquarePen,
+  Trash2, Trophy, UploadCloud, UserRound, Volume2, X,
 } from 'lucide-react'
 import { initialUnits } from './data'
 import { readVocabularyFile } from './docx'
-import type { ImportDraft, Unit, View, Word } from './types'
-import { makeFallbackWord, parseVocabulary, pronunciationScore, shuffle, uid } from './utils'
+import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
+import { formatReviewTime, getReviewState, makeFallbackWord, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, shuffle, uid } from './utils'
 
 const STORAGE_KEY = 'kotonoha-units-v1'
+const SETTINGS_KEY = 'kotonoha-settings-v1'
 const COLORS = ['#dd5b43', '#668b87', '#d39a43', '#786f95', '#6d8d55']
+const DEFAULT_SETTINGS: AppSettings = { avatar: 'ゆ', voiceGender: 'female' }
+const SettingsContext = createContext<AppSettings>(DEFAULT_SETTINGS)
 
 function App() {
   const [units, setUnits] = useState<Unit[]>(() => {
@@ -19,14 +22,20 @@ function App() {
   })
   const [unitId, setUnitId] = useState(units[0]?.id || '')
   const [view, setView] = useState<View>('study')
+  const [learningMode, setLearningMode] = useState<'cards' | 'pronunciation'>('cards')
   const [selectedId, setSelectedId] = useState(units[0]?.words[0]?.id || '')
   const [search, setSearch] = useState('')
   const [importOpen, setImportOpen] = useState(false)
+  const [importUnitId, setImportUnitId] = useState(unitId)
   const [newUnitOpen, setNewUnitOpen] = useState(false)
   const [mobileNav, setMobileNav] = useState(false)
   const [toast, setToast] = useState('')
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '') } } catch { return DEFAULT_SETTINGS }
+  })
 
   useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(units)), [units])
+  useEffect(() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)), [settings])
   useEffect(() => {
     const unit = units.find((item) => item.id === unitId)
     if (unit && !unit.words.some((word) => word.id === selectedId)) setSelectedId(unit.words[0]?.id || '')
@@ -41,9 +50,11 @@ function App() {
   const selectedWord = unit?.words.find((word) => word.id === selectedId) || unit?.words[0]
   const totalWords = units.reduce((sum, item) => sum + item.words.length, 0)
   const mastered = units.reduce((sum, item) => sum + item.words.filter((word) => word.mastered).length, 0)
+  const starredCount = units.reduce((sum, item) => sum + item.words.filter((word) => word.starred).length, 0)
+  const reviewCount = units.reduce((sum, item) => sum + item.words.filter((word) => getReviewState(word).due).length, 0)
 
-  const updateWord = (wordId: string, changes: Partial<Word>) => {
-    setUnits((current) => current.map((item) => item.id === unitId
+  const updateWord = (wordId: string, changes: Partial<Word>, targetUnitId = unitId) => {
+    setUnits((current) => current.map((item) => item.id === targetUnitId
       ? { ...item, words: item.words.map((word) => word.id === wordId ? { ...word, ...changes } : word) }
       : item))
   }
@@ -56,92 +67,127 @@ function App() {
     setToast('新单元已创建')
   }
 
-  const nav = (next: View) => { setView(next); setMobileNav(false) }
+  const nav = (next: View) => {
+    setView(next)
+    if (next === 'study') setLearningMode('cards')
+    setMobileNav(false)
+  }
+
+  const toggleMastered = (word: Word) => updateWord(word.id, word.mastered
+    ? { mastered: false }
+    : { mastered: true, ...scheduleReview(word, true) })
+
+  const addImportedWords = (targetUnit: Unit, words: Word[]) => {
+    setUnits((current) => current.map((item) => item.id === targetUnit.id ? { ...item, words: [...item.words, ...words] } : item))
+    if (words[0]) setSelectedId(words[0].id)
+    setImportOpen(false)
+    setToast(`已导入 ${words.length} 个单词到「${targetUnit.name}」`)
+  }
+
+  const openImport = (targetUnitId = unitId) => {
+    setImportUnitId(targetUnitId)
+    setImportOpen(true)
+  }
+
+  const importUnit = units.find((item) => item.id === importUnitId) || unit
 
   return (
+    <SettingsContext.Provider value={settings}>
     <div className="app-shell">
-      <Sidebar
-        open={mobileNav} view={view} units={units} unitId={unitId} totalWords={totalWords}
-        onView={nav} onUnit={(id) => { setUnitId(id); setView('study'); setMobileNav(false) }}
-        onNewUnit={() => setNewUnitOpen(true)}
+      <AppHeader
+        open={mobileNav} view={view} units={units} unitId={unitId} settings={settings}
+        starredCount={starredCount} reviewCount={reviewCount}
+        onMenu={() => setMobileNav((current) => !current)} onView={nav}
+        onUnit={setUnitId}
       />
       <main className="main">
-        <header className="topbar">
-          <button className="icon-button mobile-menu" onClick={() => setMobileNav(true)} aria-label="打开菜单"><Menu size={21} /></button>
-          <div className="search-wrap">
-            <Search size={17} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索单词、假名或释义…" />
-            <span className="shortcut">⌘ K</span>
-          </div>
-          <div className="daily-progress">
-            <span className="progress-icon"><Trophy size={16} /></span>
-            <span><b>今日进度</b><small>{mastered} / {Math.max(totalWords, 1)} 个单词</small></span>
-            <div className="progress-track"><i style={{ width: `${Math.round(mastered / Math.max(totalWords, 1) * 100)}%` }} /></div>
-          </div>
-          <button className="help-button"><CircleHelp size={19} /></button>
-          <div className="avatar">ゆ</div>
-        </header>
-
-        {view === 'study' && unit && (
+        {view === 'library' && <LibraryView units={units} unitId={unitId} onUnit={setUnitId} onImport={openImport} onNewUnit={() => setNewUnitOpen(true)} />}
+        {view === 'study' && unit && learningMode === 'cards' && (
           <StudyView
-            unit={unit} selectedWord={selectedWord} search={search}
-            onSelect={setSelectedId} onImport={() => setImportOpen(true)}
-            onToggleMastered={(word) => updateWord(word.id, { mastered: !word.mastered })}
+            unit={unit} selectedWord={selectedWord}
+            onSelect={setSelectedId} onImport={() => openImport()}
+            onToggleMastered={toggleMastered}
             onEdit={(word, changes) => updateWord(word.id, changes)}
-            onPractice={() => setView('pronunciation')}
+            onPractice={() => setLearningMode('pronunciation')}
+            onToggleStar={(word) => { updateWord(word.id, { starred: !word.starred }); setToast(word.starred ? '已移出生词本' : '已加入生词本') }}
+            search={search} onSearch={setSearch}
           />
         )}
-        {view === 'pronunciation' && unit && <PronunciationView unit={unit} initialWord={selectedWord} onBack={() => setView('study')} />}
-        {view === 'test' && unit && <TestView unit={unit} onBack={() => setView('study')} />}
+        {view === 'study' && unit && learningMode === 'pronunciation' && <PronunciationView unit={unit} initialWord={selectedWord} onBack={() => setLearningMode('cards')} />}
+        {view === 'test' && unit && <TestView unit={unit} onBack={() => setView('study')} onAnswer={(word, correct) => updateWord(word.id, { mastered: correct || word.mastered, ...scheduleReview(word, correct) })} />}
+        {view === 'wordbook' && <WordbookView units={units} onRemove={(wordId, targetUnitId) => { updateWord(wordId, { starred: false }, targetUnitId); setToast('已移出生词本') }} />}
+        {view === 'review' && <ReviewView units={units} onReview={(word, targetUnitId, remembered) => { updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId); setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒') }} />}
+        {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} />}
       </main>
 
-      {importOpen && unit && <ImportModal unit={unit} onClose={() => setImportOpen(false)} onImported={(words) => {
-        setUnits((current) => current.map((item) => item.id === unit.id ? { ...item, words: [...item.words, ...words] } : item))
-        if (words[0]) setSelectedId(words[0].id)
-        setImportOpen(false); setToast(`已导入 ${words.length} 个单词`)
-      }} />}
+      {importOpen && importUnit && <ImportModal unit={importUnit} onClose={() => setImportOpen(false)} onImported={(words) => addImportedWords(importUnit, words)} />}
       {newUnitOpen && <NewUnitModal onClose={() => setNewUnitOpen(false)} onCreate={addUnit} />}
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
       {mobileNav && <button className="mobile-overlay" onClick={() => setMobileNav(false)} aria-label="关闭菜单" />}
     </div>
+    </SettingsContext.Provider>
   )
 }
 
-function Sidebar({ open, view, units, unitId, totalWords, onView, onUnit, onNewUnit }: {
-  open: boolean; view: View; units: Unit[]; unitId: string; totalWords: number
-  onView: (view: View) => void; onUnit: (id: string) => void; onNewUnit: () => void
+function AppHeader({ open, view, units, unitId, settings, starredCount, reviewCount, onMenu, onView, onUnit }: {
+  open: boolean; view: View; units: Unit[]; unitId: string; settings: AppSettings; starredCount: number; reviewCount: number
+  onMenu: () => void; onView: (view: View) => void; onUnit: (id: string) => void
 }) {
+  const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
+    { id: 'library', label: '词库', icon: <LibraryBig size={17} /> },
+    { id: 'study', label: '学习', icon: <BookOpen size={17} /> },
+    { id: 'test', label: '测试', icon: <GraduationCap size={17} /> },
+    { id: 'wordbook', label: '生词本', icon: <BookMarked size={17} />, count: starredCount },
+    { id: 'review', label: '待复习', icon: <Clock3 size={17} />, count: reviewCount },
+    { id: 'settings', label: '设置', icon: <Settings size={17} /> },
+  ]
   return (
-    <aside className={`sidebar ${open ? 'sidebar-open' : ''}`}>
-      <div className="brand"><span className="brand-mark">葉</span><span><b>KOTONOHA</b><small>言の葉 · 日语学习</small></span></div>
-      <nav className="main-nav">
-        <button className={view === 'study' ? 'active' : ''} onClick={() => onView('study')}><BookOpen size={19} />学习</button>
-        <button className={view === 'pronunciation' ? 'active' : ''} onClick={() => onView('pronunciation')}><AudioLines size={19} />发音练习</button>
-        <button className={view === 'test' ? 'active' : ''} onClick={() => onView('test')}><GraduationCap size={19} />测试模式</button>
+    <header className="app-header">
+      <button className="header-menu" onClick={onMenu} aria-label="打开菜单"><Menu size={21} /></button>
+      <button className="header-brand" onClick={() => onView('study')}><span>語</span><b>日语单词学习</b></button>
+      <label className="unit-select"><span>学习单元</span><select value={unitId} onChange={(event) => onUnit(event.target.value)}>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name} · {unit.words.length}词</option>)}</select></label>
+      <nav className={`header-nav ${open ? 'open' : ''}`}>
+        {items.map((item) => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => onView(item.id)}>{item.icon}<span>{item.label}</span>{Boolean(item.count) && <em>{item.count}</em>}</button>)}
       </nav>
-      <div className="sidebar-rule" />
-      <div className="unit-heading"><span>我的单元</span><button onClick={onNewUnit}><Plus size={17} /></button></div>
-      <div className="unit-list">
-        {units.map((unit, index) => (
-          <button key={unit.id} className={unit.id === unitId ? 'active' : ''} onClick={() => onUnit(unit.id)}>
-            <span className="unit-index" style={{ '--unit-color': unit.color } as React.CSSProperties}>{String(index + 1).padStart(2, '0')}</span>
-            <span><b>{unit.name}</b><small>{unit.words.length} 个单词</small></span>
-            {unit.id === unitId && <span className="current-dot" />}
-          </button>
-        ))}
-      </div>
-      <button className="new-unit" onClick={onNewUnit}><Plus size={17} />新建单元</button>
-      <div className="sidebar-footer">
-        <span><Sparkles size={16} /></span>
-        <div><b>{totalWords} 个词汇</b><small>坚持，就是最好的天赋。</small></div>
-      </div>
-    </aside>
+      <button className="header-avatar" onClick={() => onView('settings')} aria-label="打开设置"><span>{settings.avatar}</span></button>
+    </header>
   )
 }
 
-function StudyView({ unit, selectedWord, search, onSelect, onImport, onToggleMastered, onEdit, onPractice }: {
+function LibraryView({ units, unitId, onUnit, onImport, onNewUnit }: {
+  units: Unit[]; unitId: string; onUnit: (id: string) => void; onImport: (unitId?: string) => void; onNewUnit: () => void
+}) {
+  const total = units.reduce((sum, item) => sum + item.words.length, 0)
+  const mastered = units.reduce((sum, item) => sum + item.words.filter((word) => word.mastered).length, 0)
+  return (
+    <div className="page hub-page">
+      <section className="hub-hero">
+        <div><span className="eyebrow">VOCABULARY LIBRARY</span><h1>我的词库</h1><p>按单元管理词汇，并从 Word、TXT、CSV 或 JSON 批量导入。</p></div>
+        <div className="hero-actions"><button className="secondary-button" onClick={onNewUnit}><Plus size={17} />新建单元</button><button className="primary-button" onClick={() => onImport(unitId)}><UploadCloud size={17} />上传到当前单元</button></div>
+      </section>
+      <div className="metric-row"><div><LibraryBig /><span><b>{units.length}</b><small>学习单元</small></span></div><div><BookOpen /><span><b>{total}</b><small>全部单词</small></span></div><div><CheckCircle2 /><span><b>{mastered}</b><small>已经掌握</small></span></div></div>
+      <section className="unit-cards">
+        {units.map((item, index) => {
+          const learned = item.words.filter((word) => word.mastered).length
+          const percent = Math.round(learned / Math.max(item.words.length, 1) * 100)
+          return <article key={item.id} className={`unit-card ${item.id === unitId ? 'active' : ''}`} onClick={() => onUnit(item.id)}>
+            <div className="unit-card-top"><span style={{ background: item.color }}>{String(index + 1).padStart(2, '0')}</span><em>{item.id === unitId ? '当前单元' : '选择单元'}</em></div>
+            <h2>{item.name}</h2><p>{item.description}</p>
+            <div className="unit-card-meta"><span>{item.words.length} 个单词</span><span>{learned} 个已掌握</span></div>
+            <div className="unit-progress"><i style={{ width: `${percent}%`, background: item.color }} /></div>
+            <button onClick={(event) => { event.stopPropagation(); onUnit(item.id); onImport(item.id) }}><UploadCloud size={15} />上传词汇</button>
+          </article>
+        })}
+        <button className="unit-card add-unit-card" onClick={onNewUnit}><Plus size={26} /><b>创建新单元</b><span>按主题整理你的学习内容</span></button>
+      </section>
+    </div>
+  )
+}
+
+function StudyView({ unit, selectedWord, search, onSelect, onImport, onToggleMastered, onEdit, onPractice, onToggleStar, onSearch }: {
   unit: Unit; selectedWord?: Word; search: string; onSelect: (id: string) => void; onImport: () => void
   onToggleMastered: (word: Word) => void; onEdit: (word: Word, changes: Partial<Word>) => void; onPractice: () => void
+  onToggleStar: (word: Word) => void; onSearch: (value: string) => void
 }) {
   const [layout, setLayout] = useState<'grid' | 'list'>('grid')
   const [filter, setFilter] = useState<'all' | 'learning' | 'mastered'>('all')
@@ -162,6 +208,8 @@ function StudyView({ unit, selectedWord, search, onSelect, onImport, onToggleMas
         </div>
         <button className="primary-button" onClick={onImport}><UploadCloud size={18} />导入单词</button>
       </section>
+
+      <label className="study-search"><Search size={17} /><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="搜索当前单元的单词、假名或释义…" /></label>
 
       <section className="overview-card">
         <div className="overview-copy"><span>单元学习进度</span><b>{percent}%</b></div>
@@ -186,7 +234,7 @@ function StudyView({ unit, selectedWord, search, onSelect, onImport, onToggleMas
           ) : <EmptyState onImport={onImport} />}
         </section>
         <aside className="detail-column">
-          {selectedWord ? <WordDetail word={selectedWord} onToggle={() => onToggleMastered(selectedWord)} onEdit={(changes) => onEdit(selectedWord, changes)} onPractice={onPractice} /> : <EmptyDetail onImport={onImport} />}
+          {selectedWord ? <WordDetail word={selectedWord} onToggle={() => onToggleMastered(selectedWord)} onToggleStar={() => onToggleStar(selectedWord)} onEdit={(changes) => onEdit(selectedWord, changes)} onPractice={onPractice} /> : <EmptyDetail onImport={onImport} />}
         </aside>
       </div>
     </div>
@@ -209,13 +257,17 @@ function WordCard({ word, active, onClick }: { word: Word; active: boolean; onCl
 
 function VolumeButton({ word, small = false, sentence = false }: { word: Word; small?: boolean; sentence?: boolean }) {
   const [speaking, setSpeaking] = useState(false)
+  const { voiceGender } = useContext(SettingsContext)
   const speak = (event: React.MouseEvent) => {
     event.stopPropagation()
     speechSynthesis.cancel()
     const utterance = new SpeechSynthesisUtterance(sentence ? word.example : word.term)
     utterance.lang = 'ja-JP'; utterance.rate = sentence ? 0.82 : 0.72
-    const voices = speechSynthesis.getVoices()
-    utterance.voice = voices.find((voice) => voice.lang.toLowerCase().startsWith('ja')) || null
+    const voices = speechSynthesis.getVoices().filter((voice) => voice.lang.toLowerCase().startsWith('ja'))
+    const genderHint = voiceGender === 'female'
+      ? /nanami|ayumi|haruka|kyoko|sayaka|female|woman|女性|女声/i
+      : /ichiro|keita|male|man|男性|男声/i
+    utterance.voice = voices.find((voice) => genderHint.test(`${voice.name} ${voice.voiceURI}`)) || voices[0] || null
     utterance.onstart = () => setSpeaking(true)
     utterance.onend = () => setSpeaking(false)
     utterance.onerror = () => setSpeaking(false)
@@ -224,7 +276,7 @@ function VolumeButton({ word, small = false, sentence = false }: { word: Word; s
   return <button className={`volume-button ${small ? 'small' : ''} ${speaking ? 'speaking' : ''}`} onClick={speak} aria-label="朗读">{speaking ? <Pause size={small ? 14 : 19} /> : <Volume2 size={small ? 14 : 19} />}</button>
 }
 
-function WordDetail({ word, onToggle, onEdit, onPractice }: { word: Word; onToggle: () => void; onEdit: (changes: Partial<Word>) => void; onPractice: () => void }) {
+function WordDetail({ word, onToggle, onToggleStar, onEdit, onPractice }: { word: Word; onToggle: () => void; onToggleStar: () => void; onEdit: (changes: Partial<Word>) => void; onPractice: () => void }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(word)
   useEffect(() => { setDraft(word); setEditing(false) }, [word])
@@ -232,7 +284,7 @@ function WordDetail({ word, onToggle, onEdit, onPractice }: { word: Word; onTogg
 
   return (
     <div className="detail-card">
-      <div className="detail-actions"><button onClick={() => setEditing(!editing)}><SquarePen size={17} /></button><button><MoreHorizontal size={19} /></button></div>
+      <div className="detail-actions"><button onClick={onToggleStar} aria-label={word.starred ? '移出生词本' : '加入生词本'} className={word.starred ? 'starred' : ''}><BookMarked size={17} /></button><button onClick={() => setEditing(!editing)} aria-label="编辑词卡"><SquarePen size={17} /></button><button aria-label="更多操作"><MoreHorizontal size={19} /></button></div>
       <div className="detail-main-word">
         <span className="jp">{word.reading}</span>
         <div><h2 className="jp">{word.term}</h2><VolumeButton word={word} /></div>
@@ -393,7 +445,7 @@ function PronunciationView({ unit, initialWord, onBack }: { unit: Unit; initialW
   )
 }
 
-function TestView({ unit, onBack }: { unit: Unit; onBack: () => void }) {
+function TestView({ unit, onBack, onAnswer }: { unit: Unit; onBack: () => void; onAnswer: (word: Word, correct: boolean) => void }) {
   const [questions, setQuestions] = useState<Word[]>([])
   const [index, setIndex] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})
@@ -413,6 +465,7 @@ function TestView({ unit, onBack }: { unit: Unit; onBack: () => void }) {
   const choose = (id: string) => {
     if (!current || answers[current.id]) return
     setAnswers({ ...answers, [current.id]: id })
+    onAnswer(current, id === current.id)
   }
   const next = () => index === questions.length - 1 ? setFinished(true) : setIndex(index + 1)
   const correct = questions.filter((word) => answers[word.id] === word.id).length
@@ -442,6 +495,55 @@ function TestView({ unit, onBack }: { unit: Unit; onBack: () => void }) {
         {picked && <div className={`answer-feedback ${picked === current.id ? 'correct' : 'wrong'}`}><b>{picked === current.id ? '回答正确' : '再记一次'}</b><span className="jp">{current.example}</span><small>{current.translation}</small></div>}
         <button className="primary-button quiz-next" disabled={!picked} onClick={next}>{index === questions.length - 1 ? '查看结果' : '下一题'}<ChevronRight size={18} /></button>
       </section>
+    </div>
+  )
+}
+
+function WordbookView({ units, onRemove }: { units: Unit[]; onRemove: (wordId: string, unitId: string) => void }) {
+  const entries = units.flatMap((unit) => unit.words.filter((word) => word.starred).map((word) => ({ word, unit })))
+  return (
+    <div className="page hub-page">
+      <section className="hub-hero"><div><span className="eyebrow">PERSONAL WORDBOOK</span><h1>生词本</h1><p>这里保存你主动标记的单词，跨单元集中查看。</p></div><span className="hero-count"><b>{entries.length}</b> 个生词</span></section>
+      {entries.length ? <section className="collection-list">{entries.map(({ word, unit }) => <article key={word.id} className="collection-card">
+        <span className="collection-unit" style={{ color: unit.color }}>{unit.name}</span>
+        <div className="collection-word"><b className="jp">{word.term}</b><span className="jp">{word.reading}</span></div>
+        <p>{word.meaning}</p><div className="collection-example"><span className="jp">{word.example}</span><small>{word.translation}</small></div>
+        <VolumeButton word={word} />
+        <button className="remove-word" onClick={() => onRemove(word.id, unit.id)}><Trash2 size={15} />移出</button>
+      </article>)}</section> : <div className="wide-empty"><BookMarked /><h2>生词本还是空的</h2><p>在“学习”页打开词卡，点击右上角的生词本图标即可收藏。</p></div>}
+    </div>
+  )
+}
+
+function ReviewView({ units, onReview }: { units: Unit[]; onReview: (word: Word, unitId: string, remembered: boolean) => void }) {
+  const entries = units.flatMap((unit) => unit.words.map((word) => ({ word, unit, state: getReviewState(word) })))
+  const due = entries.filter((item) => item.state.due).sort((a, b) => a.state.nextReviewAt - b.state.nextReviewAt)
+  const upcoming = entries.filter((item) => !item.state.due && Number.isFinite(item.state.nextReviewAt)).sort((a, b) => a.state.nextReviewAt - b.state.nextReviewAt).slice(0, 6)
+  return (
+    <div className="page hub-page">
+      <section className="hub-hero"><div><span className="eyebrow">SPACED REPETITION</span><h1>待复习</h1><p>按照 1、2、4、7、15、30 天的间隔自动安排，忘记的词会在 10 分钟后重试。</p></div><span className="hero-count accent"><b>{due.length}</b> 个到期</span></section>
+      <section className="memory-curve"><div className="curve-copy"><BrainCircuit /><div><b>艾宾浩斯间隔复习</b><span>每次确认记得后，系统自动延长下一次复习间隔。</span></div></div><div className="curve-steps">{REVIEW_INTERVAL_DAYS.map((day, index) => <span key={day}><i>{index + 1}</i><b>{day}天</b></span>)}</div></section>
+      <h2 className="section-title">今天需要复习</h2>
+      {due.length ? <section className="review-list">{due.map(({ word, unit, state }) => <article key={word.id} className="review-card">
+        <div><span className="review-unit" style={{ color: unit.color }}>{unit.name}</span><b className="jp">{word.term}</b><small className="jp">{word.reading}</small></div>
+        <p>{word.meaning}</p><span className="review-status">第 {state.stage + 1} 阶段 · {formatReviewTime(word)}</span><VolumeButton word={word} />
+        <div className="review-actions"><button onClick={() => onReview(word, unit.id, false)}>没记住</button><button onClick={() => onReview(word, unit.id, true)}><Check size={16} />记住了</button></div>
+      </article>)}</section> : <div className="wide-empty compact"><CheckCircle2 /><h2>今天的复习完成了</h2><p>系统会根据下一次到期时间自动把单词放回这里。</p></div>}
+      {upcoming.length > 0 && <><h2 className="section-title upcoming-title">接下来</h2><div className="upcoming-list">{upcoming.map(({ word, unit }) => <div key={word.id}><span className="jp">{word.term}</span><small>{unit.name}</small><b>{formatReviewTime(word)}</b></div>)}</div></>}
+    </div>
+  )
+}
+
+function SettingsView({ settings, onChange }: { settings: AppSettings; onChange: (settings: AppSettings) => void }) {
+  const avatars = ['ゆ', '桜', '語', '猫', '旅', '月']
+  const sample = makeFallbackWord({ term: 'こんにちは', reading: 'こんにちは', meaning: '你好' })
+  return (
+    <div className="page settings-page">
+      <section className="hub-hero"><div><span className="eyebrow">PREFERENCES</span><h1>个人设置</h1><p>设置头像和日语朗读音色，选择会保存在当前浏览器。</p></div></section>
+      <div className="settings-layout">
+        <section className="settings-card"><div className="settings-title"><UserRound /><div><h2>头像</h2><p>选择一个代表你的文字头像。</p></div></div><div className="avatar-options">{avatars.map((avatar) => <button key={avatar} className={settings.avatar === avatar ? 'active' : ''} onClick={() => onChange({ ...settings, avatar })}>{avatar}{settings.avatar === avatar && <CheckCircle2 />}</button>)}</div><label className="custom-avatar">自定义<input maxLength={2} value={settings.avatar} onChange={(event) => onChange({ ...settings, avatar: event.target.value || 'ゆ' })} /></label></section>
+        <section className="settings-card"><div className="settings-title"><AudioLines /><div><h2>日语朗读音色</h2><p>系统会优先匹配设备中对应性别的日语语音。</p></div></div><div className="voice-options"><button className={settings.voiceGender === 'female' ? 'active' : ''} onClick={() => onChange({ ...settings, voiceGender: 'female' })}><span>女</span><div><b>女声</b><small>清晰、柔和</small></div>{settings.voiceGender === 'female' && <CheckCircle2 />}</button><button className={settings.voiceGender === 'male' ? 'active' : ''} onClick={() => onChange({ ...settings, voiceGender: 'male' })}><span>男</span><div><b>男声</b><small>沉稳、自然</small></div>{settings.voiceGender === 'male' && <CheckCircle2 />}</button></div><div className="voice-preview"><span><b>试听当前音色</b><small className="jp">こんにちは</small></span><VolumeButton word={sample} /></div></section>
+      </div>
     </div>
   )
 }
