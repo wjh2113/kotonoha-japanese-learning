@@ -330,3 +330,45 @@ body { background: var(--cream); color: var(--ink); }
   .study-page .content-columns { display: block; }
   .study-page .detail-card { min-height: 0; }
 }
+
+/* Compact typography and inline pronunciation */
+.header-brand b { font-size: 15px; }
+.header-nav button { font-size: 11px; }
+.page-intro h1, .hub-hero h1 { font-size: 24px; }
+.page-unit-select select { min-width: 200px; height: 37px; font-size: 22px; }
+.page-intro p, .mode-heading p, .hub-hero p { font-size: 10px; }
+.word-term { font-size: 23px; }
+.word-meaning { font-size: 9px; }
+.detail-main-word h2 { font-size: 34px; }
+.detail-main-word > span { font-size: 10px; }
+.definition { font-size: 12px; }
+.example-block .example { font-size: 13px; }
+.translation { font-size: 9px; }
+.typing-practice > p { font-size: 9px; }
+.typing-input input { font-size: 12px; }
+.modal h2 { font-size: 20px; }
+.modal > p { font-size: 10px; }
+.small-modal input { height: 38px; font-size: 11px; }
+.quiz-card h2 { font-size: 42px; }
+.practice-card > h2 { font-size: 45px; }
+.pronounce-button.open { background: #293f5e; border-color: #293f5e; color: white; }
+.inline-practice { margin-top: 8px; padding: 13px; border: 1px solid #eadbd5; border-radius: 9px; background: #fff8f5; animation: rise .18s ease; }
+.inline-practice-head { display: flex; align-items: center; justify-content: space-between; }
+.inline-practice-head > div span, .inline-practice-head > div b { display: block; }
+.inline-practice-head > div span { color: #a09b94; font-size: 8px; }
+.inline-practice-head > div b { margin-top: 3px; font-size: 12px; }
+.inline-practice-head .volume-button { width: 29px; height: 29px; }
+.inline-record { width: 100%; height: 35px; margin-top: 10px; border: 0; border-radius: 7px; background: var(--red); color: white; display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; font-size: 9px; font-weight: 700; }
+.inline-record.recording { animation: pulse 1.25s infinite; }
+.inline-record:disabled { opacity: .55; cursor: wait; }
+.inline-practice .speech-error { margin-top: 8px; }
+.inline-score { margin-top: 8px; padding: 9px 11px; border-radius: 7px; background: #edf7f1; color: #397153; display: flex; align-items: center; gap: 10px; }
+.inline-score > b { font: 700 19px Georgia; }.inline-score > b small { font: 8px sans-serif; margin-left: 2px; }
+.inline-score > span { font-size: 9px; font-weight: 700; }.inline-score > span small { display: block; margin-top: 3px; font-size: 8px; font-weight: 400; }
+.inline-score.okay { background: #fff6e8; color: #9b702f; }.inline-score.retry { background: #fff0ed; color: #a64a3b; }
+.voice-preview em { display: block; max-width: 320px; margin-top: 4px; color: #85878c; font-size: 8px; font-style: normal; line-height: 1.35; }
+
+@media (max-width: 470px) {
+  .page-unit-select select { min-width: 170px; font-size: 20px; }
+  .detail-main-word h2 { font-size: 30px; }
+}

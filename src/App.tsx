@@ -22,7 +22,6 @@ function App() {
   })
   const [unitId, setUnitId] = useState(units[0]?.id || '')
   const [view, setView] = useState<View>('study')
-  const [learningMode, setLearningMode] = useState<'cards' | 'pronunciation'>('cards')
   const [selectedId, setSelectedId] = useState(units[0]?.words[0]?.id || '')
   const [search, setSearch] = useState('')
   const [importOpen, setImportOpen] = useState(false)
@@ -30,12 +29,54 @@ function App() {
   const [newUnitOpen, setNewUnitOpen] = useState(false)
   const [mobileNav, setMobileNav] = useState(false)
   const [toast, setToast] = useState('')
+  const [databaseReady, setDatabaseReady] = useState(false)
+  const databaseErrorShown = useRef(false)
   const [settings, setSettings] = useState<AppSettings>(() => {
     try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '') } } catch { return DEFAULT_SETTINGS }
   })
 
-  useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(units)), [units])
-  useEffect(() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)), [settings])
+  useEffect(() => {
+    let cancelled = false
+    const hydrate = async () => {
+      try {
+        const response = await fetch('/api/state')
+        if (!response.ok) throw new Error('DATABASE_READ_FAILED')
+        const stored = await response.json()
+        if (cancelled) return
+        if (Array.isArray(stored.units) && stored.units.length) {
+          setUnits(stored.units)
+          setSettings({ ...DEFAULT_SETTINGS, ...stored.settings })
+        } else {
+          const seed = await fetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ units, settings }) })
+          if (!seed.ok) throw new Error('DATABASE_SEED_FAILED')
+        }
+        localStorage.removeItem(STORAGE_KEY)
+        localStorage.removeItem(SETTINGS_KEY)
+        setDatabaseReady(true)
+      } catch {
+        if (!cancelled) setToast('PostgreSQL 暂时无法连接，本次修改不会被持久化')
+      }
+    }
+    hydrate()
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!databaseReady) return
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ units, settings }) })
+        if (!response.ok) throw new Error('DATABASE_WRITE_FAILED')
+        databaseErrorShown.current = false
+      } catch {
+        if (!databaseErrorShown.current) {
+          databaseErrorShown.current = true
+          setToast('数据写入 PostgreSQL 失败，请检查服务状态')
+        }
+      }
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [units, settings, databaseReady])
   useEffect(() => {
     const unit = units.find((item) => item.id === unitId)
     if (unit && !unit.words.some((word) => word.id === selectedId)) setSelectedId(unit.words[0]?.id || '')
@@ -59,17 +100,18 @@ function App() {
       : item))
   }
 
-  const addUnit = (name: string, description: string) => {
-    const newUnit: Unit = { id: uid(), name, description, color: COLORS[units.length % COLORS.length], words: [] }
+  const addUnit = (name: string) => {
+    const newUnit: Unit = { id: uid(), name, description: '上传词汇后由 AI 自动归纳主题', color: COLORS[units.length % COLORS.length], words: [] }
     setUnits((current) => [...current, newUnit])
     setUnitId(newUnit.id)
+    setImportUnitId(newUnit.id)
     setNewUnitOpen(false)
-    setToast('新单元已创建')
+    setImportOpen(true)
+    setToast('单元已创建，请上传词汇')
   }
 
   const nav = (next: View) => {
     setView(next)
-    if (next === 'study') setLearningMode('cards')
     setMobileNav(false)
   }
 
@@ -77,8 +119,8 @@ function App() {
     ? { mastered: false }
     : { mastered: true, ...scheduleReview(word, true) })
 
-  const addImportedWords = (targetUnit: Unit, words: Word[]) => {
-    setUnits((current) => current.map((item) => item.id === targetUnit.id ? { ...item, words: [...item.words, ...words] } : item))
+  const addImportedWords = (targetUnit: Unit, words: Word[], description?: string) => {
+    setUnits((current) => current.map((item) => item.id === targetUnit.id ? { ...item, description: description?.trim() || item.description, words: [...item.words, ...words] } : item))
     if (words[0]) setSelectedId(words[0].id)
     setImportOpen(false)
     setToast(`已导入 ${words.length} 个单词到「${targetUnit.name}」`)
@@ -101,25 +143,23 @@ function App() {
       />
       <main className="main">
         {view === 'library' && <LibraryView units={units} unitId={unitId} onUnit={setUnitId} onImport={openImport} onNewUnit={() => setNewUnitOpen(true)} />}
-        {view === 'study' && unit && learningMode === 'cards' && (
+        {view === 'study' && unit && (
           <StudyView
             unit={unit} units={units} selectedWord={selectedWord} onUnit={setUnitId}
             onSelect={setSelectedId} onImport={() => openImport()}
             onToggleMastered={toggleMastered}
             onEdit={(word, changes) => updateWord(word.id, changes)}
-            onPractice={() => setLearningMode('pronunciation')}
             onToggleStar={(word) => { updateWord(word.id, { starred: !word.starred }); setToast(word.starred ? '已移出生词本' : '已加入生词本') }}
             search={search} onSearch={setSearch}
           />
         )}
-        {view === 'study' && unit && learningMode === 'pronunciation' && <PronunciationView unit={unit} initialWord={selectedWord} onBack={() => setLearningMode('cards')} />}
         {view === 'test' && unit && <TestView unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')} onAnswer={(word, correct) => updateWord(word.id, { mastered: correct || word.mastered, ...scheduleReview(word, correct) })} />}
         {view === 'wordbook' && <WordbookView units={units} onRemove={(wordId, targetUnitId) => { updateWord(wordId, { starred: false }, targetUnitId); setToast('已移出生词本') }} />}
         {view === 'review' && <ReviewView units={units} onReview={(word, targetUnitId, remembered) => { updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId); setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒') }} />}
         {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} />}
       </main>
 
-      {importOpen && importUnit && <ImportModal unit={importUnit} onClose={() => setImportOpen(false)} onImported={(words) => addImportedWords(importUnit, words)} />}
+      {importOpen && importUnit && <ImportModal unit={importUnit} onClose={() => setImportOpen(false)} onImported={(words, description) => addImportedWords(importUnit, words, description)} />}
       {newUnitOpen && <NewUnitModal onClose={() => setNewUnitOpen(false)} onCreate={addUnit} />}
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
       {mobileNav && <button className="mobile-overlay" onClick={() => setMobileNav(false)} aria-label="关闭菜单" />}
@@ -186,9 +226,9 @@ function LibraryView({ units, unitId, onUnit, onImport, onNewUnit }: {
   )
 }
 
-function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onToggleMastered, onEdit, onPractice, onToggleStar, onSearch }: {
+function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onToggleMastered, onEdit, onToggleStar, onSearch }: {
   unit: Unit; units: Unit[]; selectedWord?: Word; search: string; onUnit: (id: string) => void; onSelect: (id: string) => void; onImport: () => void
-  onToggleMastered: (word: Word) => void; onEdit: (word: Word, changes: Partial<Word>) => void; onPractice: () => void
+  onToggleMastered: (word: Word) => void; onEdit: (word: Word, changes: Partial<Word>) => void
   onToggleStar: (word: Word) => void; onSearch: (value: string) => void
 }) {
   const [layout, setLayout] = useState<'grid' | 'list'>('grid')
@@ -239,7 +279,7 @@ function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImpo
         <aside className="detail-column">
           {selectedWord ? <WordDetail
             word={selectedWord} onToggle={() => onToggleMastered(selectedWord)} onToggleStar={() => onToggleStar(selectedWord)}
-            onEdit={(changes) => onEdit(selectedWord, changes)} onPractice={onPractice}
+            onEdit={(changes) => onEdit(selectedWord, changes)}
             position={selectedIndex >= 0 ? selectedIndex + 1 : 0} total={filtered.length}
             onPrevious={() => selectedIndex > 0 && onSelect(filtered[selectedIndex - 1].id)}
             onNext={() => selectedIndex >= 0 && selectedIndex < filtered.length - 1 && onSelect(filtered[selectedIndex + 1].id)}
@@ -264,19 +304,39 @@ function WordCard({ word, active, onClick }: { word: Word; active: boolean; onCl
   )
 }
 
+async function loadSpeechVoices() {
+  const current = speechSynthesis.getVoices()
+  if (current.length) return current
+  return new Promise<SpeechSynthesisVoice[]>((resolve) => {
+    const timeout = window.setTimeout(() => resolve(speechSynthesis.getVoices()), 1200)
+    speechSynthesis.addEventListener('voiceschanged', () => {
+      window.clearTimeout(timeout)
+      resolve(speechSynthesis.getVoices())
+    }, { once: true })
+  })
+}
+
+const MALE_VOICE_HINT = /ichiro|keita|takumi|haruto|daichi|naoki|otoya|male|man|男性|男声/i
+const FEMALE_VOICE_HINT = /nanami|ayumi|haruka|kyoko|sayaka|female|woman|女性|女声/i
+
+function selectJapaneseVoice(voices: SpeechSynthesisVoice[], voiceGender: AppSettings['voiceGender']) {
+  const japanese = voices.filter((voice) => voice.lang.toLowerCase().startsWith('ja'))
+  const wanted = voiceGender === 'male' ? MALE_VOICE_HINT : FEMALE_VOICE_HINT
+  const unwanted = voiceGender === 'male' ? FEMALE_VOICE_HINT : MALE_VOICE_HINT
+  const matched = japanese.find((voice) => wanted.test(`${voice.name} ${voice.voiceURI}`))
+  return { voice: matched || japanese.find((voice) => !unwanted.test(`${voice.name} ${voice.voiceURI}`)) || japanese[0] || null, nativeMatch: Boolean(matched) }
+}
+
 function VolumeButton({ word, small = false, sentence = false }: { word: Word; small?: boolean; sentence?: boolean }) {
   const [speaking, setSpeaking] = useState(false)
   const { voiceGender } = useContext(SettingsContext)
-  const speak = (event: React.MouseEvent) => {
+  const speak = async (event: React.MouseEvent) => {
     event.stopPropagation()
     speechSynthesis.cancel()
     const utterance = new SpeechSynthesisUtterance(sentence ? word.example : word.term)
     utterance.lang = 'ja-JP'; utterance.rate = sentence ? 0.82 : 0.72
-    const voices = speechSynthesis.getVoices().filter((voice) => voice.lang.toLowerCase().startsWith('ja'))
-    const genderHint = voiceGender === 'female'
-      ? /nanami|ayumi|haruka|kyoko|sayaka|female|woman|女性|女声/i
-      : /ichiro|keita|male|man|男性|男声/i
-    utterance.voice = voices.find((voice) => genderHint.test(`${voice.name} ${voice.voiceURI}`)) || voices[0] || null
+    utterance.pitch = voiceGender === 'male' ? 0.72 : 1.06
+    utterance.voice = selectJapaneseVoice(await loadSpeechVoices(), voiceGender).voice
     utterance.onstart = () => setSpeaking(true)
     utterance.onend = () => setSpeaking(false)
     utterance.onerror = () => setSpeaking(false)
@@ -285,15 +345,16 @@ function VolumeButton({ word, small = false, sentence = false }: { word: Word; s
   return <button className={`volume-button ${small ? 'small' : ''} ${speaking ? 'speaking' : ''}`} onClick={speak} aria-label="朗读">{speaking ? <Pause size={small ? 14 : 19} /> : <Volume2 size={small ? 14 : 19} />}</button>
 }
 
-function WordDetail({ word, onToggle, onToggleStar, onEdit, onPractice, position, total, onPrevious, onNext }: {
-  word: Word; onToggle: () => void; onToggleStar: () => void; onEdit: (changes: Partial<Word>) => void; onPractice: () => void
+function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onPrevious, onNext }: {
+  word: Word; onToggle: () => void; onToggleStar: () => void; onEdit: (changes: Partial<Word>) => void
   position: number; total: number; onPrevious: () => void; onNext: () => void
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(word)
   const [typing, setTyping] = useState('')
   const [typingResult, setTypingResult] = useState<'correct' | 'wrong' | null>(null)
-  useEffect(() => { setDraft(word); setEditing(false); setTyping(''); setTypingResult(null) }, [word])
+  const [practiceOpen, setPracticeOpen] = useState(false)
+  useEffect(() => { setDraft(word); setEditing(false); setTyping(''); setTypingResult(null); setPracticeOpen(false) }, [word])
   const save = () => { onEdit(draft); setEditing(false) }
   const checkTyping = () => {
     const correct = matchesTypingAnswer(typing, word)
@@ -333,11 +394,90 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, onPractice, position
           </div>
         </>
       )}
-      <button className="pronounce-button" onClick={onPractice}><Mic size={18} />练习这个词的发音</button>
+      <button className={`pronounce-button ${practiceOpen ? 'open' : ''}`} onClick={() => setPracticeOpen((current) => !current)}><Mic size={18} />{practiceOpen ? '收起发音练习' : '练习这个词的发音'}</button>
+      {practiceOpen && <InlinePronunciationPractice word={word} />}
       <button className={`master-button ${word.mastered ? 'done' : ''}`} onClick={onToggle}>{word.mastered ? <><CheckCircle2 size={18} />已掌握</> : <><Check size={18} />标记为已掌握</>}</button>
       <div className="detail-nav"><button disabled={position <= 1} onClick={onPrevious}><ChevronLeft size={16} />上一个</button><span>{position || 0} / {total}</span><button disabled={position <= 0 || position >= total} onClick={onNext}>下一个<ChevronRight size={16} /></button></div>
     </div>
   )
+}
+
+function InlinePronunciationPractice({ word }: { word: Word }) {
+  const [recording, setRecording] = useState(false)
+  const [evaluating, setEvaluating] = useState(false)
+  const [transcript, setTranscript] = useState('')
+  const [score, setScore] = useState<number | null>(null)
+  const [error, setError] = useState('')
+  const recognition = useRef<SpeechRecognition | null>(null)
+  const recorder = useRef<MediaRecorder | null>(null)
+  const stream = useRef<MediaStream | null>(null)
+  const chunks = useRef<Blob[]>([])
+  const browserFallback = useRef(false)
+
+  useEffect(() => () => {
+    recognition.current?.stop()
+    if (recorder.current?.state === 'recording') recorder.current.stop()
+    stream.current?.getTracks().forEach((track) => track.stop())
+  }, [])
+
+  const finish = (text: string) => {
+    setTranscript(text); setScore(pronunciationScore(text, word)); setRecording(false); setEvaluating(false)
+  }
+  const recordInBrowser = () => {
+    const Constructor = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!Constructor) { setError('当前浏览器不支持语音识别，请使用最新版 Chrome 或 Edge。'); return }
+    const instance = new Constructor()
+    recognition.current = instance
+    instance.lang = 'ja-JP'; instance.interimResults = false; instance.continuous = false
+    instance.onresult = (event) => finish(event.results[0][0].transcript)
+    instance.onerror = (event) => { setError(event.error === 'not-allowed' ? '请允许浏览器使用麦克风。' : '没有听清，请再读一次。'); setRecording(false) }
+    instance.onend = () => setRecording(false)
+    setError(''); setScore(null); setTranscript(''); setRecording(true); instance.start()
+  }
+  const send = async (blob: Blob) => {
+    setEvaluating(true)
+    try {
+      const audioBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result).split(',', 2)[1] || '')
+        reader.onerror = reject
+        reader.readAsDataURL(blob)
+      })
+      const extension = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? 'm4a' : 'webm'
+      const response = await fetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audioBase64, mimeType: blob.type || 'audio/webm', filename: `pronunciation.${extension}` }) })
+      const data = await response.json()
+      if (!response.ok || !data.text) throw new Error(data.error || '网关没有返回转写文本。')
+      finish(data.text)
+    } catch (reason) {
+      setEvaluating(false); browserFallback.current = true
+      setError(`${reason instanceof Error ? reason.message : '语音转写失败。'} 已切换到浏览器识别，请再试一次。`)
+    }
+  }
+  const start = async () => {
+    if (browserFallback.current || !window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) { recordInBrowser(); return }
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream.current = mediaStream
+      const supported = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find((type) => MediaRecorder.isTypeSupported(type))
+      const mediaRecorder = new MediaRecorder(mediaStream, supported ? { mimeType: supported } : undefined)
+      recorder.current = mediaRecorder; chunks.current = []
+      mediaRecorder.ondataavailable = (event) => { if (event.data.size) chunks.current.push(event.data) }
+      mediaRecorder.onstop = () => {
+        mediaStream.getTracks().forEach((track) => track.stop())
+        const blob = new Blob(chunks.current, { type: mediaRecorder.mimeType || 'audio/webm' })
+        setRecording(false); if (blob.size) send(blob)
+      }
+      setError(''); setScore(null); setTranscript(''); setRecording(true); mediaRecorder.start()
+    } catch { browserFallback.current = true; setError('无法开始录音，已切换到浏览器识别。'); recordInBrowser() }
+  }
+  const stop = () => recorder.current?.state === 'recording' ? recorder.current.stop() : recognition.current?.stop()
+
+  return <div className="inline-practice">
+    <div className="inline-practice-head"><div><span>当前练习</span><b className="jp">{word.term} · {word.reading}</b></div><VolumeButton word={word} /></div>
+    <button className={`inline-record ${recording ? 'recording' : ''}`} disabled={evaluating} onClick={() => recording ? stop() : start()}>{evaluating ? <span className="spinner" /> : recording ? <Pause size={18} /> : <Mic size={18} />}<span>{evaluating ? '正在分析…' : recording ? '结束录音' : '开始朗读'}</span></button>
+    {error && <div className="speech-error">{error}</div>}
+    {score !== null && <div className={`inline-score ${score >= 80 ? 'great' : score >= 55 ? 'okay' : 'retry'}`}><b>{score}<small>分</small></b><span>{score >= 80 ? '发音很自然' : score >= 55 ? '已经很接近了' : '请跟读后再试'}<small>识别结果：{transcript}</small></span></div>}
+  </div>
 }
 
 function PronunciationView({ unit, initialWord, onBack }: { unit: Unit; initialWord?: Word; onBack: () => void }) {
@@ -561,18 +701,30 @@ function ReviewView({ units, onReview }: { units: Unit[]; onReview: (word: Word,
 function SettingsView({ settings, onChange }: { settings: AppSettings; onChange: (settings: AppSettings) => void }) {
   const avatars = ['ゆ', '桜', '語', '猫', '旅', '月']
   const sample = makeFallbackWord({ term: 'こんにちは', reading: 'こんにちは', meaning: '你好' })
+  const [voiceStatus, setVoiceStatus] = useState('正在检测设备音色…')
+  useEffect(() => {
+    let cancelled = false
+    loadSpeechVoices().then((voices) => {
+      if (cancelled) return
+      const selected = selectJapaneseVoice(voices, settings.voiceGender)
+      if (!selected.voice) setVoiceStatus('未检测到日语音色，将使用浏览器默认语音')
+      else if (settings.voiceGender === 'male' && !selected.nativeMatch) setVoiceStatus(`未找到原生男声，已对 ${selected.voice.name} 启用低音高模式`)
+      else setVoiceStatus(`当前使用：${selected.voice.name}`)
+    })
+    return () => { cancelled = true }
+  }, [settings.voiceGender])
   return (
     <div className="page settings-page">
-      <section className="hub-hero"><div><span className="eyebrow">PREFERENCES</span><h1>个人设置</h1><p>设置头像和日语朗读音色，选择会保存在当前浏览器。</p></div></section>
+      <section className="hub-hero"><div><span className="eyebrow">PREFERENCES</span><h1>个人设置</h1><p>设置头像和日语朗读音色，选择会保存到 PostgreSQL。</p></div></section>
       <div className="settings-layout">
         <section className="settings-card"><div className="settings-title"><UserRound /><div><h2>头像</h2><p>选择一个代表你的文字头像。</p></div></div><div className="avatar-options">{avatars.map((avatar) => <button key={avatar} className={settings.avatar === avatar ? 'active' : ''} onClick={() => onChange({ ...settings, avatar })}>{avatar}{settings.avatar === avatar && <CheckCircle2 />}</button>)}</div><label className="custom-avatar">自定义<input maxLength={2} value={settings.avatar} onChange={(event) => onChange({ ...settings, avatar: event.target.value || 'ゆ' })} /></label></section>
-        <section className="settings-card"><div className="settings-title"><AudioLines /><div><h2>日语朗读音色</h2><p>系统会优先匹配设备中对应性别的日语语音。</p></div></div><div className="voice-options"><button className={settings.voiceGender === 'female' ? 'active' : ''} onClick={() => onChange({ ...settings, voiceGender: 'female' })}><span>女</span><div><b>女声</b><small>清晰、柔和</small></div>{settings.voiceGender === 'female' && <CheckCircle2 />}</button><button className={settings.voiceGender === 'male' ? 'active' : ''} onClick={() => onChange({ ...settings, voiceGender: 'male' })}><span>男</span><div><b>男声</b><small>沉稳、自然</small></div>{settings.voiceGender === 'male' && <CheckCircle2 />}</button></div><div className="voice-preview"><span><b>试听当前音色</b><small className="jp">こんにちは</small></span><VolumeButton word={sample} /></div></section>
+        <section className="settings-card"><div className="settings-title"><AudioLines /><div><h2>日语朗读音色</h2><p>系统会优先匹配设备中对应性别的日语语音。</p></div></div><div className="voice-options"><button className={settings.voiceGender === 'female' ? 'active' : ''} onClick={() => onChange({ ...settings, voiceGender: 'female' })}><span>女</span><div><b>女声</b><small>清晰、柔和</small></div>{settings.voiceGender === 'female' && <CheckCircle2 />}</button><button className={settings.voiceGender === 'male' ? 'active' : ''} onClick={() => onChange({ ...settings, voiceGender: 'male' })}><span>男</span><div><b>男声</b><small>沉稳、自然</small></div>{settings.voiceGender === 'male' && <CheckCircle2 />}</button></div><div className="voice-preview"><span><b>试听当前音色</b><small className="jp">こんにちは</small><em>{voiceStatus}</em></span><VolumeButton word={sample} /></div></section>
       </div>
     </div>
   )
 }
 
-function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () => void; onImported: (words: Word[]) => void }) {
+function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () => void; onImported: (words: Word[], description?: string) => void }) {
   const [raw, setRaw] = useState('')
   const [drafts, setDrafts] = useState<ImportDraft[]>([])
   const [loading, setLoading] = useState(false)
@@ -594,11 +746,11 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
     if (!drafts.length) return
     setLoading(true); setNotice('')
     try {
-      const response = await fetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ words: drafts }) })
+      const response = await fetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ words: drafts, unitName: unit.name }) })
       if (!response.ok) throw new Error((await response.json()).error)
       const data = await response.json()
       const words: Word[] = data.words.map((item: Partial<Word>, index: number) => ({ ...makeFallbackWord(drafts[index] || { term: item.term || '' }), ...item, id: uid(), mastered: false, createdAt: Date.now() }))
-      onImported(words)
+      onImported(words, data.unitDescription)
     } catch {
       setNotice('当前未配置 LLM，已使用本地词典与模板生成。你可以稍后在 .env 中配置密钥。')
       window.setTimeout(() => onImported(drafts.map(makeFallbackWord)), 750)
@@ -629,10 +781,9 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
   )
 }
 
-function NewUnitModal({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string, description: string) => void }) {
+function NewUnitModal({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string) => void }) {
   const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><section className="modal small-modal"><button className="modal-close" onClick={onClose}><X /></button><span className="modal-icon"><BookOpen /></span><h2>创建新单元</h2><p>相同主题的单词放进一个单元，复习会更高效。</p><label>单元名称<input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：第四单元" /></label><label>主题说明<input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="例如：旅行与住宿" /></label><button className="primary-button modal-submit" disabled={!name.trim()} onClick={() => onCreate(name.trim(), description.trim() || '我的词汇单元')}>创建单元</button></section></div>
+  return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><section className="modal small-modal"><button className="modal-close" onClick={onClose}><X /></button><span className="modal-icon"><BookOpen /></span><h2>创建新单元</h2><p>只需填写名称。创建后上传词汇，AI 会根据内容自动归纳主题。</p><label>单元名称<input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：第四单元" /></label><button className="primary-button modal-submit" disabled={!name.trim()} onClick={() => onCreate(name.trim())}>创建并上传词汇</button></section></div>
 }
 
 function EmptyState({ onImport }: { onImport: () => void }) { return <div className="empty-state"><span><FileText /></span><b>这里还没有单词</b><p>导入 TXT、CSV、JSON，或直接粘贴词汇。</p><button onClick={onImport}>添加单词</button></div> }

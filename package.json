@@ -7,6 +7,10 @@
     "dev": "concurrently -k \"vite\" \"node --env-file-if-exists=.env --watch server.mjs\"",
     "build": "tsc -b && vite build",
     "test": "vitest run",
+    "db:local:init": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres-local.ps1 init",
+    "db:local:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres-local.ps1 start",
+    "db:local:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres-local.ps1 status",
+    "db:local:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres-local.ps1 stop",
     "preview": "vite preview",
     "start": "node --env-file-if-exists=.env server.mjs"
   },
@@ -16,6 +20,7 @@
     "express": "latest",
     "lucide-react": "latest",
     "mammoth": "^1.12.2",
+    "pg": "^8.23.0",
     "react": "latest",
     "react-dom": "latest",
     "vite": "latest"

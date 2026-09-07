@@ -1,6 +1,7 @@
 import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createDatabase } from './database.mjs'
 
 const app = express()
 const port = Number(process.env.PORT || 8787)
@@ -8,11 +9,36 @@ const dirname = path.dirname(fileURLToPath(import.meta.url))
 const gatewayUrl = (process.env.LLM_GATEWAY_URL || 'https://aiapimgrapi.aidigitcloud.cn').replace(/\/$/, '')
 const gatewayKey = process.env.LLM_GATEWAY_API_KEY
 const tenantId = process.env.LLM_GATEWAY_TENANT || 'Japan'
+const database = createDatabase(process.env.DATABASE_URL)
 
-app.use(express.json({ limit: '1mb' }))
+app.use(express.json({ limit: '40mb' }))
 
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, llmConfigured: Boolean(gatewayKey), provider: 'AIapiMgr', tenant: tenantId })
+app.get('/api/health', async (_req, res) => {
+  try {
+    const db = await database.health()
+    res.json({ ok: true, database: { connected: true, name: db.database }, llmConfigured: Boolean(gatewayKey), provider: 'AIapiMgr', tenant: tenantId })
+  } catch (error) {
+    res.status(503).json({ ok: false, database: { connected: false }, error: error.message })
+  }
+})
+
+app.get('/api/state', async (_req, res) => {
+  try {
+    res.json(await database.getState())
+  } catch (error) {
+    console.error(error)
+    res.status(500).json({ error: '读取 PostgreSQL 数据失败。' })
+  }
+})
+
+app.put('/api/state', async (req, res) => {
+  try {
+    res.json(await database.replaceState(req.body))
+  } catch (error) {
+    console.error(error)
+    const clientError = ['INVALID_STATE', 'TOO_MANY_UNITS', 'TOO_MANY_WORDS', 'INVALID_UNIT', 'INVALID_WORD'].includes(error.message)
+    res.status(clientError ? 400 : 500).json({ error: clientError ? '提交的数据格式无效。' : '写入 PostgreSQL 数据失败。' })
+  }
 })
 
 function gatewayError(status, payload) {
@@ -67,6 +93,7 @@ async function callGateway(pathname, payload) {
 
 app.post('/api/enrich', async (req, res) => {
   const words = Array.isArray(req.body?.words) ? req.body.words.slice(0, 40) : []
+  const unitName = String(req.body?.unitName || '').trim().slice(0, 80)
   if (!words.length) return res.status(400).json({ error: '请至少提供一个单词。' })
   if (!gatewayKey) {
     return res.status(503).json({ error: 'LLM_NOT_CONFIGURED' })
@@ -78,8 +105,9 @@ app.post('/api/enrich', async (req, res) => {
       '释义简明准确；读音仅用平假名；词性使用中文；例句控制在 JLPT N5-N4 难度。',
       '例句必须自然、短小，且包含目标词；提供准确中文翻译。',
       '保持输入顺序，每个输入只返回一个结果。',
+      '根据整组词汇归纳一个简短准确的中文主题说明，控制在4到12个汉字，不要重复单元名称。',
       '只返回一个 JSON 对象，不要 Markdown。格式严格为：',
-      '{"words":[{"term":"","reading":"","meaning":"","partOfSpeech":"","example":"","exampleReading":"","translation":""}]}',
+      '{"unitDescription":"","words":[{"term":"","reading":"","meaning":"","partOfSpeech":"","example":"","exampleReading":"","translation":""}]}',
       '所有字段必须是非空字符串。'
     ].join('')
     const { data, headers } = await callGateway('/api/ai/chat', {
@@ -87,7 +115,7 @@ app.post('/api/enrich', async (req, res) => {
       capability: process.env.LLM_GATEWAY_CHAT_CAPABILITY || 'quality-chat',
       messages: [
         { role: 'system', content: system },
-        { role: 'user', content: `请解析以下词汇：${JSON.stringify(words)}` },
+        { role: 'user', content: `单元名称：${unitName || '未命名'}。请解析并归纳以下词汇：${JSON.stringify(words)}` },
       ],
       dataClass: 'internal',
       fallback: true,
@@ -98,6 +126,7 @@ app.post('/api/enrich', async (req, res) => {
     const content = data?.choices?.[0]?.message?.content
     const parsed = parseJsonContent(content)
     if (!Array.isArray(parsed.words) || parsed.words.length !== words.length) throw new Error('模型返回的词汇数量不匹配。')
+    if (typeof parsed.unitDescription !== 'string' || !parsed.unitDescription.trim()) throw new Error('模型没有返回单元主题。')
     res.json({
       ...parsed,
       source: 'AIapiMgr',
@@ -140,4 +169,12 @@ if (process.env.NODE_ENV === 'production') {
   })
 }
 
-app.listen(port, () => console.log(`KOTONOHA API listening on http://localhost:${port}`))
+async function start() {
+  await database.initialize()
+  app.listen(port, () => console.log(`KOTONOHA API listening on http://localhost:${port} with PostgreSQL`))
+}
+
+start().catch((error) => {
+  console.error('KOTONOHA startup failed:', error.message)
+  process.exitCode = 1
+})
