@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatReviewTime, getReviewState, levenshtein, makeFallbackWord, normalizeJapanese, parseVocabulary, pronunciationScore, scheduleReview, toHiragana } from './utils'
+import { formatReviewTime, getReviewState, levenshtein, makeFallbackWord, matchesTypingAnswer, normalizeJapanese, parseVocabulary, pronunciationScore, scheduleReview, toHiragana } from './utils'
 
 describe('parseVocabulary', () => {
   it('parses one-word-per-line text', () => {
@@ -58,5 +58,19 @@ describe('spaced review scheduling', () => {
   it('treats legacy mastered words as due now', () => {
     expect(getReviewState(baseWord, 1000).due).toBe(true)
     expect(formatReviewTime(baseWord, 1000)).toBe('现在应复习')
+  })
+})
+
+describe('typing practice', () => {
+  const word = makeFallbackWord({ term: '勉強', reading: 'べんきょう', meaning: '学习' })
+
+  it('accepts the current term or its kana reading', () => {
+    expect(matchesTypingAnswer('勉強', word)).toBe(true)
+    expect(matchesTypingAnswer('べんきょう。', word)).toBe(true)
+  })
+
+  it('rejects a different word and empty input', () => {
+    expect(matchesTypingAnswer('水', word)).toBe(false)
+    expect(matchesTypingAnswer('  ', word)).toBe(false)
   })
 })

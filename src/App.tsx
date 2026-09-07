@@ -8,7 +8,7 @@ import {
 import { initialUnits } from './data'
 import { readVocabularyFile } from './docx'
 import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
-import { formatReviewTime, getReviewState, makeFallbackWord, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, shuffle, uid } from './utils'
+import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, shuffle, uid } from './utils'
 
 const STORAGE_KEY = 'kotonoha-units-v1'
 const SETTINGS_KEY = 'kotonoha-settings-v1'
@@ -95,16 +95,15 @@ function App() {
     <SettingsContext.Provider value={settings}>
     <div className="app-shell">
       <AppHeader
-        open={mobileNav} view={view} units={units} unitId={unitId} settings={settings}
+        open={mobileNav} view={view} settings={settings}
         starredCount={starredCount} reviewCount={reviewCount}
         onMenu={() => setMobileNav((current) => !current)} onView={nav}
-        onUnit={setUnitId}
       />
       <main className="main">
         {view === 'library' && <LibraryView units={units} unitId={unitId} onUnit={setUnitId} onImport={openImport} onNewUnit={() => setNewUnitOpen(true)} />}
         {view === 'study' && unit && learningMode === 'cards' && (
           <StudyView
-            unit={unit} selectedWord={selectedWord}
+            unit={unit} units={units} selectedWord={selectedWord} onUnit={setUnitId}
             onSelect={setSelectedId} onImport={() => openImport()}
             onToggleMastered={toggleMastered}
             onEdit={(word, changes) => updateWord(word.id, changes)}
@@ -114,7 +113,7 @@ function App() {
           />
         )}
         {view === 'study' && unit && learningMode === 'pronunciation' && <PronunciationView unit={unit} initialWord={selectedWord} onBack={() => setLearningMode('cards')} />}
-        {view === 'test' && unit && <TestView unit={unit} onBack={() => setView('study')} onAnswer={(word, correct) => updateWord(word.id, { mastered: correct || word.mastered, ...scheduleReview(word, correct) })} />}
+        {view === 'test' && unit && <TestView unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')} onAnswer={(word, correct) => updateWord(word.id, { mastered: correct || word.mastered, ...scheduleReview(word, correct) })} />}
         {view === 'wordbook' && <WordbookView units={units} onRemove={(wordId, targetUnitId) => { updateWord(wordId, { starred: false }, targetUnitId); setToast('已移出生词本') }} />}
         {view === 'review' && <ReviewView units={units} onReview={(word, targetUnitId, remembered) => { updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId); setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒') }} />}
         {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} />}
@@ -129,9 +128,9 @@ function App() {
   )
 }
 
-function AppHeader({ open, view, units, unitId, settings, starredCount, reviewCount, onMenu, onView, onUnit }: {
-  open: boolean; view: View; units: Unit[]; unitId: string; settings: AppSettings; starredCount: number; reviewCount: number
-  onMenu: () => void; onView: (view: View) => void; onUnit: (id: string) => void
+function AppHeader({ open, view, settings, starredCount, reviewCount, onMenu, onView }: {
+  open: boolean; view: View; settings: AppSettings; starredCount: number; reviewCount: number
+  onMenu: () => void; onView: (view: View) => void
 }) {
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'library', label: '词库', icon: <LibraryBig size={17} /> },
@@ -145,13 +144,16 @@ function AppHeader({ open, view, units, unitId, settings, starredCount, reviewCo
     <header className="app-header">
       <button className="header-menu" onClick={onMenu} aria-label="打开菜单"><Menu size={21} /></button>
       <button className="header-brand" onClick={() => onView('study')}><span>語</span><b>日语单词学习</b></button>
-      <label className="unit-select"><span>学习单元</span><select value={unitId} onChange={(event) => onUnit(event.target.value)}>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name} · {unit.words.length}词</option>)}</select></label>
       <nav className={`header-nav ${open ? 'open' : ''}`}>
         {items.map((item) => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => onView(item.id)}>{item.icon}<span>{item.label}</span>{Boolean(item.count) && <em>{item.count}</em>}</button>)}
       </nav>
       <button className="header-avatar" onClick={() => onView('settings')} aria-label="打开设置"><span>{settings.avatar}</span></button>
     </header>
   )
+}
+
+function PageUnitSelect({ units, unit, onUnit, label }: { units: Unit[]; unit: Unit; onUnit: (id: string) => void; label: string }) {
+  return <label className="page-unit-select"><span>{label}</span><select aria-label={label} value={unit.id} onChange={(event) => onUnit(event.target.value)}>{units.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
 }
 
 function LibraryView({ units, unitId, onUnit, onImport, onNewUnit }: {
@@ -184,8 +186,8 @@ function LibraryView({ units, unitId, onUnit, onImport, onNewUnit }: {
   )
 }
 
-function StudyView({ unit, selectedWord, search, onSelect, onImport, onToggleMastered, onEdit, onPractice, onToggleStar, onSearch }: {
-  unit: Unit; selectedWord?: Word; search: string; onSelect: (id: string) => void; onImport: () => void
+function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onToggleMastered, onEdit, onPractice, onToggleStar, onSearch }: {
+  unit: Unit; units: Unit[]; selectedWord?: Word; search: string; onUnit: (id: string) => void; onSelect: (id: string) => void; onImport: () => void
   onToggleMastered: (word: Word) => void; onEdit: (word: Word, changes: Partial<Word>) => void; onPractice: () => void
   onToggleStar: (word: Word) => void; onSearch: (value: string) => void
 }) {
@@ -197,13 +199,14 @@ function StudyView({ unit, selectedWord, search, onSelect, onImport, onToggleMas
   })
   const mastered = unit.words.filter((word) => word.mastered).length
   const percent = Math.round(mastered / Math.max(unit.words.length, 1) * 100)
+  const selectedIndex = selectedWord ? filtered.findIndex((word) => word.id === selectedWord.id) : -1
 
   return (
     <div className="page study-page">
       <section className="page-intro">
         <div>
           <div className="eyebrow"><span style={{ background: unit.color }} /> VOCABULARY UNIT</div>
-          <h1>{unit.name}</h1>
+          <PageUnitSelect units={units} unit={unit} onUnit={onUnit} label="学习单元" />
           <p>{unit.description} · 共 {unit.words.length} 个单词</p>
         </div>
         <button className="primary-button" onClick={onImport}><UploadCloud size={18} />导入单词</button>
@@ -234,7 +237,13 @@ function StudyView({ unit, selectedWord, search, onSelect, onImport, onToggleMas
           ) : <EmptyState onImport={onImport} />}
         </section>
         <aside className="detail-column">
-          {selectedWord ? <WordDetail word={selectedWord} onToggle={() => onToggleMastered(selectedWord)} onToggleStar={() => onToggleStar(selectedWord)} onEdit={(changes) => onEdit(selectedWord, changes)} onPractice={onPractice} /> : <EmptyDetail onImport={onImport} />}
+          {selectedWord ? <WordDetail
+            word={selectedWord} onToggle={() => onToggleMastered(selectedWord)} onToggleStar={() => onToggleStar(selectedWord)}
+            onEdit={(changes) => onEdit(selectedWord, changes)} onPractice={onPractice}
+            position={selectedIndex >= 0 ? selectedIndex + 1 : 0} total={filtered.length}
+            onPrevious={() => selectedIndex > 0 && onSelect(filtered[selectedIndex - 1].id)}
+            onNext={() => selectedIndex >= 0 && selectedIndex < filtered.length - 1 && onSelect(filtered[selectedIndex + 1].id)}
+          /> : <EmptyDetail onImport={onImport} />}
         </aside>
       </div>
     </div>
@@ -276,11 +285,20 @@ function VolumeButton({ word, small = false, sentence = false }: { word: Word; s
   return <button className={`volume-button ${small ? 'small' : ''} ${speaking ? 'speaking' : ''}`} onClick={speak} aria-label="朗读">{speaking ? <Pause size={small ? 14 : 19} /> : <Volume2 size={small ? 14 : 19} />}</button>
 }
 
-function WordDetail({ word, onToggle, onToggleStar, onEdit, onPractice }: { word: Word; onToggle: () => void; onToggleStar: () => void; onEdit: (changes: Partial<Word>) => void; onPractice: () => void }) {
+function WordDetail({ word, onToggle, onToggleStar, onEdit, onPractice, position, total, onPrevious, onNext }: {
+  word: Word; onToggle: () => void; onToggleStar: () => void; onEdit: (changes: Partial<Word>) => void; onPractice: () => void
+  position: number; total: number; onPrevious: () => void; onNext: () => void
+}) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(word)
-  useEffect(() => { setDraft(word); setEditing(false) }, [word])
+  const [typing, setTyping] = useState('')
+  const [typingResult, setTypingResult] = useState<'correct' | 'wrong' | null>(null)
+  useEffect(() => { setDraft(word); setEditing(false); setTyping(''); setTypingResult(null) }, [word])
   const save = () => { onEdit(draft); setEditing(false) }
+  const checkTyping = () => {
+    const correct = matchesTypingAnswer(typing, word)
+    setTypingResult(correct ? 'correct' : 'wrong')
+  }
 
   return (
     <div className="detail-card">
@@ -307,11 +325,17 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, onPractice }: { word
             <p className="translation">{word.translation}</p>
             <VolumeButton word={word} sentence />
           </div>
+          <div className="typing-practice">
+            <label><SquarePen size={14} /> 打字练习</label>
+            <p>输入“{word.meaning}”对应的日语单词或假名</p>
+            <div className={typingResult ? `typing-input ${typingResult}` : 'typing-input'}><input value={typing} onChange={(event) => { setTyping(event.target.value); setTypingResult(null) }} onKeyDown={(event) => event.key === 'Enter' && checkTyping()} placeholder="在这里输入…" /><button onClick={checkTyping} disabled={!typing.trim()}>检查</button></div>
+            {typingResult && <span className={`typing-feedback ${typingResult}`}>{typingResult === 'correct' ? <><CheckCircle2 size={14} />输入正确</> : <><X size={14} />再试一次，正确答案是 {word.term}（{word.reading}）</>}</span>}
+          </div>
         </>
       )}
       <button className="pronounce-button" onClick={onPractice}><Mic size={18} />练习这个词的发音</button>
       <button className={`master-button ${word.mastered ? 'done' : ''}`} onClick={onToggle}>{word.mastered ? <><CheckCircle2 size={18} />已掌握</> : <><Check size={18} />标记为已掌握</>}</button>
-      <div className="detail-nav"><button><ChevronLeft size={16} />上一个</button><span>选择左侧单词继续</span><button>下一个<ChevronRight size={16} /></button></div>
+      <div className="detail-nav"><button disabled={position <= 1} onClick={onPrevious}><ChevronLeft size={16} />上一个</button><span>{position || 0} / {total}</span><button disabled={position <= 0 || position >= total} onClick={onNext}>下一个<ChevronRight size={16} /></button></div>
     </div>
   )
 }
@@ -445,7 +469,7 @@ function PronunciationView({ unit, initialWord, onBack }: { unit: Unit; initialW
   )
 }
 
-function TestView({ unit, onBack, onAnswer }: { unit: Unit; onBack: () => void; onAnswer: (word: Word, correct: boolean) => void }) {
+function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units: Unit[]; onUnit: (id: string) => void; onBack: () => void; onAnswer: (word: Word, correct: boolean) => void }) {
   const [questions, setQuestions] = useState<Word[]>([])
   const [index, setIndex] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})
@@ -481,7 +505,7 @@ function TestView({ unit, onBack, onAnswer }: { unit: Unit; onBack: () => void; 
   return (
     <div className="page test-page">
       <button className="back-link" onClick={onBack}><ChevronLeft size={17} />退出测试</button>
-      <div className="test-top"><div><span className="eyebrow">QUICK TEST · {unit.name}</span><h1>选择正确的中文释义</h1></div><b>{index + 1}<small> / {questions.length}</small></b></div>
+      <div className="test-top"><div><span className="eyebrow">QUICK TEST</span><PageUnitSelect units={units} unit={unit} onUnit={onUnit} label="测试单元" /><h1>选择正确的中文释义</h1></div><b>{index + 1}<small> / {questions.length}</small></b></div>
       <div className="test-progress"><i style={{ width: `${((index + (picked ? 1 : 0)) / questions.length) * 100}%` }} /></div>
       <section className="quiz-card">
         <span className="jp quiz-reading">{current.reading}</span>

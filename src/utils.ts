@@ -73,6 +73,11 @@ export function pronunciationScore(transcript: string, word: Word) {
   return Math.max(...scores)
 }
 
+export function matchesTypingAnswer(input: string, word: Word) {
+  const normalized = normalizeJapanese(input)
+  return Boolean(normalized) && [word.term, word.reading].some((answer) => normalizeJapanese(answer) === normalized)
+}
+
 export function shuffle<T>(items: T[]) {
   return [...items].sort(() => Math.random() - 0.5)
 }
