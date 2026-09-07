@@ -1,0 +1,78 @@
+import type { ImportDraft, Word } from './types'
+import { fallbackLexicon } from './data'
+
+export const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+
+export function parseVocabulary(raw: string): ImportDraft[] {
+  const trimmed = raw.trim()
+  if (!trimmed) return []
+  try {
+    const json = JSON.parse(trimmed)
+    const arr = Array.isArray(json) ? json : json.words
+    if (Array.isArray(arr)) {
+      return arr.map((item) => typeof item === 'string' ? { term: item } : {
+        term: String(item.term || item.word || item['单词'] || '').trim(),
+        reading: String(item.reading || item.kana || item['读音'] || '').trim() || undefined,
+        meaning: String(item.meaning || item.definition || item['释义'] || '').trim() || undefined,
+      }).filter((item) => item.term)
+    }
+  } catch { /* plain text or CSV */ }
+
+  return trimmed.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !/^(单词|word)[,\t]/i.test(line))
+    .map((line) => {
+      const cols = line.split(/\t|,|，/).map((part) => part.trim())
+      return { term: cols[0], reading: cols[1] || undefined, meaning: cols[2] || undefined }
+    })
+    .filter((item) => item.term)
+}
+
+export function makeFallbackWord(draft: ImportDraft): Word {
+  const known = fallbackLexicon[draft.term] || {}
+  const reading = draft.reading || known.reading || toHiragana(draft.term)
+  return {
+    id: uid(), term: draft.term, reading,
+    meaning: draft.meaning || known.meaning || '待补充释义',
+    partOfSpeech: known.partOfSpeech || '词性待确认',
+    example: known.example || `${draft.term}を勉強します。`,
+    exampleReading: known.exampleReading || `${reading}を べんきょうします。`,
+    translation: known.translation || `学习“${draft.term}”这个词。`,
+    mastered: false, createdAt: Date.now(),
+  }
+}
+
+export function toHiragana(input: string) {
+  return input.replace(/[ァ-ヶ]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0x60))
+}
+
+export function normalizeJapanese(input: string) {
+  return toHiragana(input)
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[\s。、！？,.!?・「」『』]/g, '')
+}
+
+export function levenshtein(a: string, b: string) {
+  const matrix = Array.from({ length: b.length + 1 }, (_, i) => [i])
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      matrix[i][j] = b[i - 1] === a[j - 1]
+        ? matrix[i - 1][j - 1]
+        : Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1)
+    }
+  }
+  return matrix[b.length][a.length]
+}
+
+export function pronunciationScore(transcript: string, word: Word) {
+  const candidates = [word.term, word.reading].map(normalizeJapanese)
+  const spoken = normalizeJapanese(transcript)
+  const scores = candidates.map((target) => Math.max(0, Math.round((1 - levenshtein(spoken, target) / Math.max(spoken.length, target.length, 1)) * 100)))
+  return Math.max(...scores)
+}
+
+export function shuffle<T>(items: T[]) {
+  return [...items].sort(() => Math.random() - 0.5)
+}
