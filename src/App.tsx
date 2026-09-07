@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import {
   AudioLines, BookMarked, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronLeft, ChevronRight,
   Clock3, FileText, GraduationCap, Import, LayoutGrid, LibraryBig, List, Menu,
-  Mic, MoreHorizontal, Pause, Plus, Search, Settings, Sparkles, SquarePen,
+  Mic, Pause, Plus, Search, Settings, Sparkles, SquarePen,
   Trash2, Trophy, UploadCloud, UserRound, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, AUTH_REQUIRED_EVENT, getAccessToken, setAccessToken } from './api'
@@ -29,6 +29,7 @@ function App() {
   const [importOpen, setImportOpen] = useState(false)
   const [importUnitId, setImportUnitId] = useState(unitId)
   const [newUnitOpen, setNewUnitOpen] = useState(false)
+  const [pendingDeleteUnit, setPendingDeleteUnit] = useState<Unit | null>(null)
   const [mobileNav, setMobileNav] = useState(false)
   const [toast, setToast] = useState('')
   const [databaseReady, setDatabaseReady] = useState(false)
@@ -137,6 +138,29 @@ function App() {
     setToast('单元已创建，请上传词汇')
   }
 
+  const requestDeleteUnit = (target: Unit) => {
+    if (units.length <= 1) {
+      setToast('至少需要保留一个单元，无法删除')
+      return
+    }
+    setPendingDeleteUnit(target)
+  }
+
+  const deleteUnit = (target: Unit) => {
+    if (units.length <= 1) {
+      setToast('至少需要保留一个单元，无法删除')
+      setPendingDeleteUnit(null)
+      return
+    }
+    const remaining = units.filter((item) => item.id !== target.id)
+    const nextId = remaining[0]?.id || ''
+    setUnits(remaining)
+    if (unitId === target.id) setUnitId(nextId)
+    if (importUnitId === target.id) setImportUnitId(nextId)
+    setPendingDeleteUnit(null)
+    setToast(`已删除单元「${target.name}」及其中 ${target.words.length} 个单词`)
+  }
+
   const nav = (next: View) => {
     setView(next)
     setMobileNav(false)
@@ -176,7 +200,7 @@ function App() {
         onMenu={() => setMobileNav((current) => !current)} onView={nav}
       />
       <main className="main">
-        {view === 'library' && <LibraryView units={units} unitId={unitId} onUnit={setUnitId} onImport={openImport} onNewUnit={() => setNewUnitOpen(true)} />}
+        {view === 'library' && <LibraryView units={units} unitId={unitId} onUnit={setUnitId} onImport={openImport} onNewUnit={() => setNewUnitOpen(true)} onDeleteUnit={requestDeleteUnit} />}
         {view === 'study' && unit && (
           <StudyView
             unit={unit} units={units} selectedWord={selectedWord} onUnit={setUnitId}
@@ -195,6 +219,7 @@ function App() {
 
       {importOpen && importUnit && <ImportModal unit={importUnit} onClose={() => setImportOpen(false)} onImported={(words, description) => addImportedWords(importUnit, words, description)} />}
       {newUnitOpen && <NewUnitModal onClose={() => setNewUnitOpen(false)} onCreate={addUnit} />}
+      {pendingDeleteUnit && <ConfirmDeleteUnitModal unit={pendingDeleteUnit} onlyUnit={units.length <= 1} onClose={() => setPendingDeleteUnit(null)} onConfirm={() => deleteUnit(pendingDeleteUnit)} />}
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
       {mobileNav && <button className="mobile-overlay" onClick={() => setMobileNav(false)} aria-label="关闭菜单" />}
     </div>
@@ -230,8 +255,8 @@ function PageUnitSelect({ units, unit, onUnit, label }: { units: Unit[]; unit: U
   return <label className="page-unit-select"><span>{label}</span><select aria-label={label} value={unit.id} onChange={(event) => onUnit(event.target.value)}>{units.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
 }
 
-function LibraryView({ units, unitId, onUnit, onImport, onNewUnit }: {
-  units: Unit[]; unitId: string; onUnit: (id: string) => void; onImport: (unitId?: string) => void; onNewUnit: () => void
+function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onDeleteUnit }: {
+  units: Unit[]; unitId: string; onUnit: (id: string) => void; onImport: (unitId?: string) => void; onNewUnit: () => void; onDeleteUnit: (unit: Unit) => void
 }) {
   const total = units.reduce((sum, item) => sum + item.words.length, 0)
   const mastered = units.reduce((sum, item) => sum + item.words.filter((word) => word.mastered).length, 0)
@@ -251,7 +276,10 @@ function LibraryView({ units, unitId, onUnit, onImport, onNewUnit }: {
             <h2>{item.name}</h2><p>{item.description}</p>
             <div className="unit-card-meta"><span>{item.words.length} 个单词</span><span>{learned} 个已掌握</span></div>
             <div className="unit-progress"><i style={{ width: `${percent}%`, background: item.color }} /></div>
-            <button onClick={(event) => { event.stopPropagation(); onUnit(item.id); onImport(item.id) }}><UploadCloud size={15} />上传词汇</button>
+            <div className="unit-card-actions">
+              <button onClick={(event) => { event.stopPropagation(); onUnit(item.id); onImport(item.id) }}><UploadCloud size={15} />上传词汇</button>
+              <button className="danger-button" onClick={(event) => { event.stopPropagation(); onDeleteUnit(item) }}><Trash2 size={15} />删除单元</button>
+            </div>
           </article>
         })}
         <button className="unit-card add-unit-card" onClick={onNewUnit}><Plus size={26} /><b>创建新单元</b><span>按主题整理你的学习内容</span></button>
@@ -397,7 +425,7 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
 
   return (
     <div className="detail-card">
-      <div className="detail-actions"><button onClick={onToggleStar} aria-label={word.starred ? '移出生词本' : '加入生词本'} className={word.starred ? 'starred' : ''}><BookMarked size={17} /></button><button onClick={() => setEditing(!editing)} aria-label="编辑词卡"><SquarePen size={17} /></button><button aria-label="更多操作"><MoreHorizontal size={19} /></button></div>
+      <div className="detail-actions"><button onClick={onToggleStar} aria-label={word.starred ? '移出生词本' : '加入生词本'} className={word.starred ? 'starred' : ''}><BookMarked size={17} /></button><button onClick={() => setEditing(!editing)} aria-label="编辑词卡"><SquarePen size={17} /></button></div>
       <div className="detail-main-word">
         <span className="jp">{word.reading}</span>
         <div><h2 className="jp">{word.term}</h2><VolumeButton word={word} /></div>
@@ -717,6 +745,38 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
           {notice && <div className="modal-notice">{notice}</div>}
           <button className="primary-button modal-submit" disabled={loading} onClick={enrich}>{loading ? <><span className="spinner" />AI 正在整理词卡…</> : <><Sparkles size={18} />生成并导入词卡</>}</button>
         </>}
+      </section>
+    </div>
+  )
+}
+
+function ConfirmDeleteUnitModal({ unit, onlyUnit, onClose, onConfirm }: {
+  unit: Unit; onlyUnit: boolean; onClose: () => void; onConfirm: () => void
+}) {
+  const starred = unit.words.filter((word) => word.starred).length
+  const due = unit.words.filter((word) => getReviewState(word).due).length
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="modal small-modal delete-modal">
+        <button className="modal-close" onClick={onClose} aria-label="关闭"><X /></button>
+        <span className="modal-icon danger"><Trash2 /></span>
+        <h2>删除单元？</h2>
+        {onlyUnit ? (
+          <p>词库至少需要保留一个单元，不能删除「{unit.name}」。</p>
+        ) : (
+          <>
+            <p>将删除单元「<b>{unit.name}</b>」及其全部词卡，此操作无法恢复。</p>
+            <ul className="delete-summary">
+              <li><b>{unit.words.length}</b> 个单词会一并删除</li>
+              {starred > 0 && <li>其中 <b>{starred}</b> 个在生词本中</li>}
+              {due > 0 && <li>其中 <b>{due}</b> 个仍在待复习</li>}
+            </ul>
+          </>
+        )}
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onClose}>{onlyUnit ? '我知道了' : '取消'}</button>
+          {!onlyUnit && <button className="primary-button danger-confirm" onClick={onConfirm}>确认删除</button>}
+        </div>
       </section>
     </div>
   )
