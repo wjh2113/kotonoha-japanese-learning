@@ -37,9 +37,8 @@ function App() {
   const [toast, setToast] = useState('')
   const [databaseReady, setDatabaseReady] = useState(false)
   const databaseErrorShown = useRef(false)
+  const persistPaused = useRef(true)
   const themeRequested = useRef(new Set<string>())
-  const meaningRequested = useRef(new Set<string>())
-  const meaningBusy = useRef(false)
   const [settings, setSettings] = useState<AppSettings>(() => {
     try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '') } } catch { return DEFAULT_SETTINGS }
   })
@@ -86,7 +85,24 @@ function App() {
         }
         localStorage.removeItem(STORAGE_KEY)
         localStorage.removeItem(SETTINGS_KEY)
+        persistPaused.current = true
         setDatabaseReady(true)
+        try {
+          for (let step = 0; step < 80; step += 1) {
+            const response = await apiFetch('/api/enrich-missing', { method: 'POST' })
+            const data = await response.json()
+            if (cancelled) return
+            if (Array.isArray(data.units) && data.units.length) setUnits(data.units)
+            if (data.settings) setSettings({ ...DEFAULT_SETTINGS, ...data.settings })
+            if (!response.ok) break
+            if (!data.remaining) break
+            if (!data.filled && data.remaining > 0) break
+          }
+        } catch { /* keep whatever the database already has */ }
+        if (!cancelled) {
+          persistPaused.current = false
+          setUnits((current) => current.map((item) => ({ ...item, words: [...item.words] })))
+        }
       } catch {
         if (!cancelled) setToast('PostgreSQL 暂时无法连接，本次修改不会被持久化')
       }
@@ -98,6 +114,7 @@ function App() {
   useEffect(() => {
     if (auth !== 'ok' || !databaseReady) return
     const timer = window.setTimeout(async () => {
+      if (persistPaused.current) return
       try {
         const response = await apiFetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ units, settings }) })
         if (!response.ok) throw new Error('DATABASE_WRITE_FAILED')
@@ -138,51 +155,6 @@ function App() {
         } catch {
           themeRequested.current.delete(item.id)
         }
-      }
-    })()
-  }, [auth, databaseReady, units])
-
-  useEffect(() => {
-    if (auth !== 'ok' || !databaseReady || meaningBusy.current) return
-    const snapshot = units.map((item) => ({
-      id: item.id,
-      name: item.name,
-      missing: item.words.filter((word) => isPlaceholderMeaning(word.meaning) && !meaningRequested.current.has(word.id)),
-    })).filter((item) => item.missing.length)
-    if (!snapshot.length) return
-    meaningBusy.current = true
-    void (async () => {
-      try {
-        for (const item of snapshot) {
-          for (let start = 0; start < item.missing.length; start += ENRICH_BATCH_SIZE) {
-            const chunk = item.missing.slice(start, start + ENRICH_BATCH_SIZE)
-            chunk.forEach((word) => meaningRequested.current.add(word.id))
-            try {
-              const response = await apiFetch('/api/enrich', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ unitName: item.name, words: chunk.map((word) => ({ term: word.term, reading: word.reading })) }),
-              })
-              const data = await response.json()
-              if (!response.ok || !Array.isArray(data.words)) throw new Error(data.error || '补全失败')
-              setUnits((current) => current.map((unit) => {
-                if (unit.id !== item.id) return unit
-                return {
-                  ...unit,
-                  words: unit.words.map((word) => {
-                    const index = chunk.findIndex((entry) => entry.id === word.id)
-                    if (index < 0) return word
-                    return mergeEnrichedWord(word, data.words[index] || {})
-                  }),
-                }
-              }))
-            } catch {
-              chunk.forEach((word) => meaningRequested.current.delete(word.id))
-            }
-          }
-        }
-      } finally {
-        meaningBusy.current = false
       }
     })()
   }, [auth, databaseReady, units])

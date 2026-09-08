@@ -180,6 +180,100 @@ async function callGateway(pathname, payload, timeoutMs = 90000) {
   }
 }
 
+function isPlaceholderMeaning(meaning) {
+  const text = String(meaning || '').trim()
+  if (!text) return true
+  return /待补充|未知|不明|暂无|未查询|词义缺失|n\/a|unknown/i.test(text)
+}
+
+async function enrichWordsWithModel(words, unitName) {
+  const system = [
+    '你是严谨的日语教师。为中文母语的日语初学者解析词汇。',
+    '释义简明准确；读音仅用平假名；词性使用中文；例句控制在 JLPT N5-N4 难度。',
+    '例句必须自然、短小，且包含目标词；提供准确中文翻译。',
+    '保持输入顺序，每个输入只返回一个结果。',
+    '根据整组词汇归纳一个简短准确的中文主题说明，控制在4到12个汉字，不要重复单元名称。',
+    '只返回一个 JSON 对象，不要 Markdown。格式严格为：',
+    '{"unitDescription":"","words":[{"term":"","reading":"","meaning":"","partOfSpeech":"","example":"","exampleReading":"","translation":""}]}',
+    'words 中所有字段必须是非空字符串。unitDescription 尽量给出。',
+  ].join('')
+  const { data, headers } = await callGateway('/api/ai/chat', {
+    tenantId,
+    capability: process.env.LLM_GATEWAY_CHAT_CAPABILITY || 'quality-chat',
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: `单元名称：${unitName || '未命名'}。请解析并归纳以下词汇：${JSON.stringify(words)}` },
+    ],
+    dataClass: 'internal',
+    fallback: true,
+    stream: false,
+    temperature: 0.2,
+    max_tokens: 6144,
+  })
+  const parsed = parseJsonContent(data?.choices?.[0]?.message?.content)
+  if (!Array.isArray(parsed.words) || parsed.words.length !== words.length) throw new Error('模型返回的词汇数量不匹配。')
+  const unitDescription = typeof parsed.unitDescription === 'string' ? parsed.unitDescription.trim().slice(0, 16) : ''
+  return { parsed: { ...parsed, unitDescription }, headers, gateway: data.gateway }
+}
+
+const skippedIncompleteIds = new Set()
+let backfillRunning = false
+let batchChain = Promise.resolve()
+
+function enqueueIncompleteBatch() {
+  const run = batchChain.then(() => enrichIncompleteBatch(), () => enrichIncompleteBatch())
+  batchChain = run.then(() => undefined, () => undefined)
+  return run
+}
+
+async function enrichIncompleteBatch() {
+  const rows = (await database.listIncompleteWords(40)).filter((row) => !skippedIncompleteIds.has(row.id))
+  if (!rows.length) return { filled: 0, remaining: await database.countIncompleteWords() }
+  const chunk = rows.filter((row) => row.unitId === rows[0].unitId).slice(0, 20)
+  try {
+    const { parsed } = await enrichWordsWithModel(chunk.map((row) => ({ term: row.term, reading: row.reading })), chunk[0].unitName)
+    let filled = 0
+    for (const [index, row] of chunk.entries()) {
+      const extra = parsed.words[index] || {}
+      const meaning = String(extra.meaning || '').trim()
+      if (isPlaceholderMeaning(meaning)) {
+        skippedIncompleteIds.add(row.id)
+        continue
+      }
+      await database.updateWordLexicon(row.id, {
+        reading: extra.reading || row.reading,
+        meaning,
+        partOfSpeech: extra.partOfSpeech,
+        example: extra.example,
+        exampleReading: extra.exampleReading,
+        translation: extra.translation,
+      })
+      filled += 1
+    }
+    return { filled, remaining: await database.countIncompleteWords() }
+  } catch (error) {
+    chunk.forEach((row) => skippedIncompleteIds.add(row.id))
+    console.error('Incomplete-word backfill batch failed:', error.message || error)
+    return { filled: 0, remaining: await database.countIncompleteWords() }
+  }
+}
+
+async function enrichIncompleteAll() {
+  if (backfillRunning) return
+  backfillRunning = true
+  try {
+    while (true) {
+      const before = await database.countIncompleteWords()
+      if (!before) break
+      const { remaining, filled } = await enqueueIncompleteBatch()
+      console.log(`KOTONOHA backfill: filled ${filled}, remaining ${remaining}`)
+      if (remaining >= before) break
+    }
+  } finally {
+    backfillRunning = false
+  }
+}
+
 app.post('/api/enrich', rateLimit(60_000, 40), async (req, res) => {
   // Cap one request so the model can finish valid JSON. The client sends the whole unit in batches.
   const words = Array.isArray(req.body?.words) ? req.body.words.slice(0, 20) : []
@@ -190,43 +284,36 @@ app.post('/api/enrich', rateLimit(60_000, 40), async (req, res) => {
   }
 
   try {
-    const system = [
-      '你是严谨的日语教师。为中文母语的日语初学者解析词汇。',
-      '释义简明准确；读音仅用平假名；词性使用中文；例句控制在 JLPT N5-N4 难度。',
-      '例句必须自然、短小，且包含目标词；提供准确中文翻译。',
-      '保持输入顺序，每个输入只返回一个结果。',
-      '根据整组词汇归纳一个简短准确的中文主题说明，控制在4到12个汉字，不要重复单元名称。',
-      '只返回一个 JSON 对象，不要 Markdown。格式严格为：',
-      '{"unitDescription":"","words":[{"term":"","reading":"","meaning":"","partOfSpeech":"","example":"","exampleReading":"","translation":""}]}',
-      'words 中所有字段必须是非空字符串。unitDescription 尽量给出。'
-    ].join('')
-    const { data, headers } = await callGateway('/api/ai/chat', {
-      tenantId,
-      capability: process.env.LLM_GATEWAY_CHAT_CAPABILITY || 'quality-chat',
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: `单元名称：${unitName || '未命名'}。请解析并归纳以下词汇：${JSON.stringify(words)}` },
-      ],
-      dataClass: 'internal',
-      fallback: true,
-      stream: false,
-      temperature: 0.2,
-      max_tokens: 6144,
-    })
-    const content = data?.choices?.[0]?.message?.content
-    const parsed = parseJsonContent(content)
-    if (!Array.isArray(parsed.words) || parsed.words.length !== words.length) throw new Error('模型返回的词汇数量不匹配。')
-    const unitDescription = typeof parsed.unitDescription === 'string' ? parsed.unitDescription.trim().slice(0, 16) : ''
+    const { parsed, headers, gateway } = await enrichWordsWithModel(words, unitName)
     res.json({
       ...parsed,
-      unitDescription,
       source: 'AIapiMgr',
-      gateway: data.gateway,
-      requestId: headers.get('x-request-id') || data.gateway?.requestId,
+      gateway,
+      requestId: headers.get('x-request-id') || gateway?.requestId,
     })
   } catch (error) {
     console.error(error)
     res.status(error.status || 500).json({ error: error.name === 'AbortError' ? '网关请求超时。' : error.message || 'AI 解析失败，请稍后再试。' })
+  }
+})
+
+app.get('/api/enrich-status', async (_req, res) => {
+  try {
+    res.json({ remaining: await database.countIncompleteWords(), running: backfillRunning })
+  } catch (error) {
+    res.status(500).json({ error: error.message || '无法读取补全进度。' })
+  }
+})
+
+app.post('/api/enrich-missing', rateLimit(60_000, 40), async (_req, res) => {
+  if (!gatewayKey) return res.status(503).json({ error: '尚未配置 AI 网关，无法补全单词。' })
+  try {
+    const result = await enqueueIncompleteBatch()
+    const state = await database.getState()
+    res.json({ ...result, running: backfillRunning, units: state.units, settings: state.settings })
+  } catch (error) {
+    console.error(error)
+    res.status(error.status || 500).json({ error: error.message || '补全已上传单词失败。' })
   }
 })
 
@@ -383,6 +470,7 @@ if (process.env.NODE_ENV === 'production') {
 async function start() {
   await database.initialize()
   app.listen(port, host, () => console.log(`KOTONOHA API listening on http://${host}:${port} with PostgreSQL`))
+  enrichIncompleteAll().catch((error) => console.error('KOTONOHA word backfill failed:', error.message || error))
 }
 
 start().catch((error) => {

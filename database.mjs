@@ -149,5 +149,54 @@ export function createDatabase(connectionString) {
     }
   }
 
-  return { initialize, health, getState, replaceState, listPassages, replacePassages, close: () => pool.end() }
+  const listIncompleteWords = async (limit = 20) => {
+    const result = await pool.query(
+      `SELECT w.id, w.unit_id, w.term, w.reading, w.meaning, u.name AS unit_name
+       FROM words w JOIN units u ON u.id = w.unit_id
+       WHERE btrim(w.meaning) = ''
+          OR w.meaning ~ '(待补充|未知|不明|暂无|未查询|词义缺失)'
+          OR lower(w.meaning) IN ('unknown', 'n/a', 'none')
+       ORDER BY u.sort_order, w.sort_order, w.id
+       LIMIT $1`,
+      [Math.max(1, Math.min(Number(limit) || 20, 50))],
+    )
+    return result.rows.map((row) => ({
+      id: row.id,
+      unitId: row.unit_id,
+      unitName: row.unit_name,
+      term: row.term,
+      reading: row.reading,
+      meaning: row.meaning,
+    }))
+  }
+
+  const countIncompleteWords = async () => {
+    const result = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM words
+       WHERE btrim(meaning) = ''
+          OR meaning ~ '(待补充|未知|不明|暂无|未查询|词义缺失)'
+          OR lower(meaning) IN ('unknown', 'n/a', 'none')`,
+    )
+    return result.rows[0]?.count || 0
+  }
+
+  const updateWordLexicon = async (id, fields) => {
+    await pool.query(
+      `UPDATE words
+       SET reading = $2, meaning = $3, part_of_speech = $4, example = $5,
+           example_reading = $6, translation = $7
+       WHERE id = $1`,
+      [
+        text(id),
+        text(fields.reading).slice(0, 80),
+        text(fields.meaning).slice(0, 80),
+        text(fields.partOfSpeech).slice(0, 40),
+        text(fields.example).slice(0, 200),
+        text(fields.exampleReading).slice(0, 200),
+        text(fields.translation).slice(0, 200),
+      ],
+    )
+  }
+
+  return { initialize, health, getState, replaceState, listIncompleteWords, countIncompleteWords, updateWordLexicon, listPassages, replacePassages, close: () => pool.end() }
 }
