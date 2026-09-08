@@ -293,6 +293,7 @@ function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImpo
   onToggleMastered: (word: Word) => void; onEdit: (word: Word, changes: Partial<Word>) => void
   onToggleStar: (word: Word) => void; onSearch: (value: string) => void
 }) {
+  const { voiceGender } = useContext(SettingsContext)
   const [layout, setLayout] = useState<'grid' | 'list'>('grid')
   const [filter, setFilter] = useState<'all' | 'learning' | 'mastered'>('all')
   const filtered = unit.words.filter((word) => {
@@ -343,8 +344,18 @@ function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImpo
             word={selectedWord} onToggle={() => onToggleMastered(selectedWord)} onToggleStar={() => onToggleStar(selectedWord)}
             onEdit={(changes) => onEdit(selectedWord, changes)}
             position={selectedIndex >= 0 ? selectedIndex + 1 : 0} total={filtered.length}
-            onPrevious={() => selectedIndex > 0 && onSelect(filtered[selectedIndex - 1].id)}
-            onNext={() => selectedIndex >= 0 && selectedIndex < filtered.length - 1 && onSelect(filtered[selectedIndex + 1].id)}
+            onPrevious={() => {
+              if (selectedIndex <= 0) return
+              const previous = filtered[selectedIndex - 1]
+              onSelect(previous.id)
+              void speakJapanese(previous.term, voiceGender)
+            }}
+            onNext={() => {
+              if (selectedIndex < 0 || selectedIndex >= filtered.length - 1) return
+              const next = filtered[selectedIndex + 1]
+              onSelect(next.id)
+              void speakJapanese(next.term, voiceGender)
+            }}
           /> : <EmptyDetail onImport={onImport} />}
         </aside>
       </div>
@@ -389,20 +400,30 @@ function selectJapaneseVoice(voices: SpeechSynthesisVoice[], voiceGender: AppSet
   return { voice: matched || japanese.find((voice) => !unwanted.test(`${voice.name} ${voice.voiceURI}`)) || japanese[0] || null, nativeMatch: Boolean(matched) }
 }
 
+async function speakJapanese(text: string, voiceGender: AppSettings['voiceGender'], options: { sentence?: boolean; onStart?: () => void; onEnd?: () => void } = {}) {
+  if (!text.trim() || typeof speechSynthesis === 'undefined') return
+  speechSynthesis.cancel()
+  const utterance = new SpeechSynthesisUtterance(text)
+  utterance.lang = 'ja-JP'
+  utterance.rate = options.sentence ? 0.82 : 0.72
+  utterance.pitch = voiceGender === 'male' ? 0.72 : 1.06
+  utterance.voice = selectJapaneseVoice(await loadSpeechVoices(), voiceGender).voice
+  utterance.onstart = () => options.onStart?.()
+  utterance.onend = () => options.onEnd?.()
+  utterance.onerror = () => options.onEnd?.()
+  speechSynthesis.speak(utterance)
+}
+
 function VolumeButton({ word, small = false, sentence = false }: { word: Word; small?: boolean; sentence?: boolean }) {
   const [speaking, setSpeaking] = useState(false)
   const { voiceGender } = useContext(SettingsContext)
   const speak = async (event: React.MouseEvent) => {
     event.stopPropagation()
-    speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(sentence ? word.example : word.term)
-    utterance.lang = 'ja-JP'; utterance.rate = sentence ? 0.82 : 0.72
-    utterance.pitch = voiceGender === 'male' ? 0.72 : 1.06
-    utterance.voice = selectJapaneseVoice(await loadSpeechVoices(), voiceGender).voice
-    utterance.onstart = () => setSpeaking(true)
-    utterance.onend = () => setSpeaking(false)
-    utterance.onerror = () => setSpeaking(false)
-    speechSynthesis.speak(utterance)
+    await speakJapanese(sentence ? word.example : word.term, voiceGender, {
+      sentence,
+      onStart: () => setSpeaking(true),
+      onEnd: () => setSpeaking(false),
+    })
   }
   return <button className={`volume-button ${small ? 'small' : ''} ${speaking ? 'speaking' : ''}`} onClick={speak} aria-label="朗读">{speaking ? <Pause size={small ? 14 : 19} /> : <Volume2 size={small ? 14 : 19} />}</button>
 }
