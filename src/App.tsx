@@ -293,8 +293,8 @@ function AppHeader({ open, view, settings, starredCount, reviewCount, onMenu, on
 }) {
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'library', label: '词库', icon: <LibraryBig size={17} /> },
-    { id: 'study', label: '学习', icon: <BookOpen size={17} /> },
     { id: 'passage', label: '课文', icon: <FileText size={17} /> },
+    { id: 'study', label: '学习', icon: <BookOpen size={17} /> },
     { id: 'test', label: '测试', icon: <GraduationCap size={17} /> },
     { id: 'wordbook', label: '生词本', icon: <BookMarked size={17} />, count: starredCount },
     { id: 'review', label: '待复习', icon: <Clock3 size={17} />, count: reviewCount },
@@ -328,8 +328,8 @@ function MobileTopBar({ view, settings, onView }: { view: View; settings: AppSet
 function MobileTabBar({ view, reviewCount, onView }: { view: View; reviewCount: number; onView: (view: View) => void }) {
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'study', label: '学习', icon: <BookOpen size={21} /> },
-    { id: 'passage', label: '课文', icon: <FileText size={21} /> },
     { id: 'library', label: '词库', icon: <LibraryBig size={21} /> },
+    { id: 'passage', label: '课文', icon: <FileText size={21} /> },
     { id: 'review', label: '复习', icon: <Clock3 size={21} />, count: reviewCount },
     { id: 'settings', label: '我的', icon: <UserRound size={21} /> },
   ]
