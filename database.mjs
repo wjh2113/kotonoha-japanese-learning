@@ -51,7 +51,8 @@ export function createDatabase(connectionString) {
     const [unitResult, wordResult, settingsResult] = await Promise.all([
       pool.query('SELECT id, name, description, color FROM units ORDER BY sort_order, created_at, id'),
       pool.query(`SELECT id, unit_id, term, reading, meaning, part_of_speech, example, example_reading,
-        translation, mastered, starred, review_stage, last_reviewed_at, next_review_at, created_at
+        translation, mastered, starred, review_stage, last_reviewed_at, next_review_at,
+        listening_wrong, meaning_wrong, listening_correct, meaning_correct, created_at
         FROM words ORDER BY unit_id, sort_order, created_at, id`),
       pool.query('SELECT avatar, voice_gender FROM app_settings WHERE id = 1'),
     ])
@@ -64,6 +65,8 @@ export function createDatabase(connectionString) {
         translation: row.translation, mastered: row.mastered, starred: row.starred,
         reviewStage: row.review_stage ?? undefined,
         lastReviewedAt: row.last_reviewed_at?.getTime(), nextReviewAt: row.next_review_at?.getTime(),
+        listeningWrong: row.listening_wrong || 0, meaningWrong: row.meaning_wrong || 0,
+        listeningCorrect: row.listening_correct || 0, meaningCorrect: row.meaning_correct || 0,
         createdAt: row.created_at.getTime(),
       })
       wordsByUnit.set(row.unit_id, words)
@@ -99,8 +102,9 @@ export function createDatabase(connectionString) {
           await client.query(
             `INSERT INTO words (id, unit_id, term, reading, meaning, part_of_speech, example,
               example_reading, translation, mastered, starred, review_stage, last_reviewed_at,
-              next_review_at, sort_order, created_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,COALESCE($16,NOW()))`,
+              next_review_at, listening_wrong, meaning_wrong, listening_correct, meaning_correct,
+              sort_order, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,COALESCE($20,NOW()))`,
             [text(word.id), text(unit.id), term, text(lex.reading || word.reading),
               placeholder && lex.meaning ? lex.meaning : meaning,
               text(word.partOfSpeech),
@@ -108,7 +112,12 @@ export function createDatabase(connectionString) {
               dirtyExample ? '' : text(word.exampleReading),
               dirtyExample ? `学习“${term}”这个词。` : text(word.translation),
               Boolean(word.mastered), Boolean(word.starred), Number.isInteger(word.reviewStage) ? word.reviewStage : null,
-              timestamp(word.lastReviewedAt), timestamp(word.nextReviewAt), wordIndex, timestamp(word.createdAt)],
+              timestamp(word.lastReviewedAt), timestamp(word.nextReviewAt),
+              Math.max(0, Math.min(99, Number(word.listeningWrong) || 0)),
+              Math.max(0, Math.min(99, Number(word.meaningWrong) || 0)),
+              Math.max(0, Math.min(99, Number(word.listeningCorrect) || 0)),
+              Math.max(0, Math.min(99, Number(word.meaningCorrect) || 0)),
+              wordIndex, timestamp(word.createdAt)],
           )
         }
       }

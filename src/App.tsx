@@ -13,7 +13,7 @@ import { SettingsContext, DEFAULT_SETTINGS } from './settings-context'
 import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fetchUnitTheme, isPlaceholderTheme } from './theme'
-import { buildQuizOptions, ENRICH_BATCH_SIZE, isPlaceholderMeaning, mergeEnrichedWord, optionLabel, sharedDistractors, usableQuizWords } from './quiz'
+import { buildQuizOptions, ENRICH_BATCH_SIZE, isPlaceholderMeaning, mergeEnrichedWord, optionLabel, orderQuizByWeakness, recordQuizAnswer, sharedDistractors, usableQuizWords } from './quiz'
 import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, shuffle, uid } from './utils'
 
 const STORAGE_KEY = 'kotonoha-units-v1'
@@ -266,7 +266,7 @@ function App() {
             onTest={() => setView('test')}
           />
         )}
-        {view === 'test' && unit && <TestView unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')} onAnswer={(word, correct) => updateWord(word.id, { mastered: correct || word.mastered, ...scheduleReview(word, correct) })} />}
+        {view === 'test' && unit && <TestView unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')} onAnswer={(word, kind, correct) => updateWord(word.id, recordQuizAnswer(word, kind, correct))} />}
         {view === 'wordbook' && <WordbookView units={units} onRemove={(wordId, targetUnitId) => { updateWord(wordId, { starred: false }, targetUnitId); setToast('已移出生词本') }} />}
         {view === 'review' && <ReviewView units={units} onReview={(word, targetUnitId, remembered) => { updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId); setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒') }} />}
         {view === 'passage' && <PassageView />}
@@ -660,7 +660,7 @@ function AccessGate({ onUnlock }: { onUnlock: () => void }) {
   )
 }
 
-function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units: Unit[]; onUnit: (id: string) => void; onBack: () => void; onAnswer: (word: Word, correct: boolean) => void }) {
+function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units: Unit[]; onUnit: (id: string) => void; onBack: () => void; onAnswer: (word: Word, kind: 'listening' | 'meaning', correct: boolean) => void }) {
   const { voiceGender } = useContext(SettingsContext)
   const [kind, setKind] = useState<'listening' | 'meaning' | null>(null)
   const [questions, setQuestions] = useState<Word[]>([])
@@ -672,7 +672,7 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
   const usableListening = usableQuizWords(unit.words, 'listening')
 
   const start = (nextKind: 'listening' | 'meaning') => {
-    const next = shuffle(usableQuizWords(unit.words, nextKind))
+    const next = orderQuizByWeakness(usableQuizWords(unit.words, nextKind), nextKind)
     setKind(nextKind)
     setQuestions(next)
     setIndex(0)
@@ -695,9 +695,9 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
     void speakJapanese(current.term, voiceGender)
   }, [kind, current, answers, voiceGender])
   const choose = (id: string) => {
-    if (!current || answers[current.id]) return
+    if (!current || !kind || answers[current.id]) return
     setAnswers({ ...answers, [current.id]: id })
-    onAnswer(current, id === current.id)
+    onAnswer(current, kind, id === current.id)
   }
   const next = () => index === questions.length - 1 ? setFinished(true) : setIndex(index + 1)
   const correct = questions.filter((word) => answers[word.id] === word.id).length
@@ -712,7 +712,7 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
             <span className="eyebrow">UNIT TEST</span>
             <PageUnitSelect units={units} unit={unit} onUnit={onUnit} label="测试单元" />
             <h1>选择测试方式</h1>
-            <p className="test-mode-copy">本轮会按随机顺序测完这个单元里可用的单词，一题一词。</p>
+            <p className="test-mode-copy">听错和词义错分开计数。弱项会排在本轮前面，其余单词仍会测到。</p>
           </div>
           <b>{Math.max(usableMeaning.length, usableListening.length)}<small> / {unit.words.length} 词</small></b>
         </div>
@@ -720,12 +720,12 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
           <button className="test-mode-card" disabled={usableListening.length < 1} onClick={() => start('listening')}>
             <Headphones size={28} />
             <b>听力测试</b>
-            <span>先听日语发音，再从四个单词里选出你听到的那一个。本单元 {usableListening.length} 个词都会考到。</span>
+            <span>先听日语发音，再从四个单词里选出你听到的那一个。听错过的词会优先出现。</span>
           </button>
           <button className="test-mode-card" disabled={usableMeaning.length < 1} onClick={() => start('meaning')}>
             <BookOpen size={28} />
             <b>单词词义测试</b>
-            <span>看到日语单词和读音后，选出正确的中文意思。本单元 {usableMeaning.length} 个词都会考到。</span>
+            <span>看到日语单词和读音后，选出正确的中文意思。词义错过的词会优先出现。</span>
           </button>
         </div>
         {usableMeaning.length < 1 && usableListening.length < 1 && <p className="test-hint">这个单元还没有可测的单词。请稍等 AI 补全，或先到学习页确认词卡。</p>}
@@ -739,7 +739,7 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
         <span className="result-icon"><Trophy /></span>
         <span className="eyebrow">TEST COMPLETE</span>
         <h1>{correct >= questions.length * .8 ? 'よくできました！' : 'もう一度、挑戦しよう。'}</h1>
-        <p>{kind === 'listening' ? '听力测试' : '词义测试'}已测完本单元 <b>{questions.length}</b> 个单词，答对 {correct} 题</p>
+        <p>{kind === 'listening' ? '听力测试' : '词义测试'}已测完 <b>{questions.length}</b> 个单词，答对 {correct} 题。错过的词会在下次同类型测试里优先出现。</p>
         <div className="result-score">{questions.length ? Math.round(correct / questions.length * 100) : 0}<small>分</small></div>
         <div className="result-actions">
           <button onClick={() => setKind(null)}>换一种测试</button>

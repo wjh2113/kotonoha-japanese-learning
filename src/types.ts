@@ -13,6 +13,10 @@ export type Word = {
   reviewStage?: number
   lastReviewedAt?: number
   nextReviewAt?: number
+  listeningWrong?: number
+  meaningWrong?: number
+  listeningCorrect?: number
+  meaningCorrect?: number
 }
 
 export type Unit = {

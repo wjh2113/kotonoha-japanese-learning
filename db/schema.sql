@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS words (
   review_stage INTEGER CHECK (review_stage IS NULL OR review_stage BETWEEN 0 AND 5),
   last_reviewed_at TIMESTAMPTZ,
   next_review_at TIMESTAMPTZ,
+  listening_wrong INTEGER NOT NULL DEFAULT 0,
+  meaning_wrong INTEGER NOT NULL DEFAULT 0,
+  listening_correct INTEGER NOT NULL DEFAULT 0,
+  meaning_correct INTEGER NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -29,6 +33,11 @@ CREATE TABLE IF NOT EXISTS words (
 CREATE INDEX IF NOT EXISTS words_unit_order_idx ON words(unit_id, sort_order);
 CREATE INDEX IF NOT EXISTS words_review_due_idx ON words(next_review_at) WHERE next_review_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS words_starred_idx ON words(starred) WHERE starred = TRUE;
+
+ALTER TABLE words ADD COLUMN IF NOT EXISTS listening_wrong INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE words ADD COLUMN IF NOT EXISTS meaning_wrong INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE words ADD COLUMN IF NOT EXISTS listening_correct INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE words ADD COLUMN IF NOT EXISTS meaning_correct INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS app_settings (
   id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),

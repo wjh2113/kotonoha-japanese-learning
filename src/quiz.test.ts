@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildQuizOptions, isPlaceholderMeaning, optionLabel, usableQuizWords } from './quiz'
+import { buildQuizOptions, isPlaceholderMeaning, optionLabel, orderQuizByWeakness, recordQuizAnswer, usableQuizWords } from './quiz'
 import { makeFallbackWord } from './utils'
 
 describe('quiz meaning filters', () => {
@@ -49,5 +49,32 @@ describe('quiz meaning filters', () => {
     const options = buildQuizOptions(current, pool, [], 'listening')
     expect(options.map((word) => optionLabel(word, 'listening')).sort()).toEqual(['友達', '新聞', '学校', '水'].sort())
     expect(options.every((word) => !/okiru|machi/.test(optionLabel(word, 'listening')))).toBe(true)
+  })
+})
+
+describe('quiz weakness weighting', () => {
+  it('counts listening and meaning mistakes separately', () => {
+    const word = { ...makeFallbackWord({ term: '新聞', meaning: '报纸' }), listeningWrong: 2, meaningWrong: 0 }
+    const afterListenWrong = recordQuizAnswer(word, 'listening', false, 1000)
+    expect(afterListenWrong.listeningWrong).toBe(3)
+    expect(afterListenWrong.meaningWrong).toBeUndefined()
+    const afterMeaningRight = recordQuizAnswer({ ...word, ...afterListenWrong, meaningWrong: 2 }, 'meaning', true, 1000)
+    expect(afterMeaningRight.meaningWrong).toBe(1)
+    expect(afterMeaningRight.listeningWrong).toBeUndefined()
+  })
+
+  it('puts listening mistakes before new and known words in a listening test', () => {
+    const weak = { ...makeFallbackWord({ term: '新聞', meaning: '报纸' }), listeningWrong: 4 }
+    const fresh = makeFallbackWord({ term: '学校', meaning: '学校' })
+    const known = { ...makeFallbackWord({ term: '水', meaning: '水' }), listeningCorrect: 5 }
+    const ordered = orderQuizByWeakness([known, fresh, weak], 'listening')
+    expect(ordered.map((word) => word.term)).toEqual(['新聞', '学校', '水'])
+  })
+
+  it('does not let meaning mistakes reorder a listening test', () => {
+    const meaningWeak = { ...makeFallbackWord({ term: '町', meaning: '街道' }), meaningWrong: 9 }
+    const listeningWeak = { ...makeFallbackWord({ term: '起きる', meaning: '起床' }), listeningWrong: 2 }
+    const ordered = orderQuizByWeakness([meaningWeak, listeningWeak], 'listening')
+    expect(ordered[0].term).toBe('起きる')
   })
 })
