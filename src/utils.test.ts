@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { formatReviewTime, getReviewState, levenshtein, makeFallbackWord, matchesTypingAnswer, normalizeJapanese, parseVocabulary, pronunciationScore, pronunciationScoreFor, scheduleReview, splitJapaneseSentences, toHiragana } from './utils'
+import { isPlaceholderTheme } from './theme'
 
 describe('parseVocabulary', () => {
   it('parses one-word-per-line text', () => {
@@ -84,6 +85,14 @@ describe('typing practice', () => {
   it('rejects a different word and empty input', () => {
     expect(matchesTypingAnswer('水', word)).toBe(false)
     expect(matchesTypingAnswer('  ', word)).toBe(false)
+  })
+})
+
+describe('unit theme placeholders', () => {
+  it('treats empty and default copy as needing AI summary', () => {
+    expect(isPlaceholderTheme('')).toBe(true)
+    expect(isPlaceholderTheme('上传词汇后由 AI 自动归纳主题')).toBe(true)
+    expect(isPlaceholderTheme('校园与日常')).toBe(false)
   })
 })
 

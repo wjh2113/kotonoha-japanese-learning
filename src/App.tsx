@@ -12,6 +12,7 @@ import { PassageView } from './PassageView'
 import { SettingsContext, DEFAULT_SETTINGS } from './settings-context'
 import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
+import { DEFAULT_UNIT_THEME, fetchUnitTheme, isPlaceholderTheme } from './theme'
 import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, shuffle, uid } from './utils'
 
 const STORAGE_KEY = 'kotonoha-units-v1'
@@ -35,6 +36,7 @@ function App() {
   const [toast, setToast] = useState('')
   const [databaseReady, setDatabaseReady] = useState(false)
   const databaseErrorShown = useRef(false)
+  const themeRequested = useRef(new Set<string>())
   const [settings, setSettings] = useState<AppSettings>(() => {
     try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '') } } catch { return DEFAULT_SETTINGS }
   })
@@ -116,10 +118,29 @@ function App() {
     return () => window.clearTimeout(id)
   }, [toast])
 
+  useEffect(() => {
+    if (auth !== 'ok' || !databaseReady) return
+    const pending = units.filter((item) => item.words.length > 0 && isPlaceholderTheme(item.description) && !themeRequested.current.has(item.id))
+    if (!pending.length) return
+    pending.forEach((item) => themeRequested.current.add(item.id))
+    void (async () => {
+      for (const item of pending) {
+        try {
+          const description = await fetchUnitTheme(item.name, item.words)
+          if (!description) {
+            themeRequested.current.delete(item.id)
+            continue
+          }
+          setUnits((current) => current.map((unit) => unit.id === item.id && isPlaceholderTheme(unit.description) ? { ...unit, description } : unit))
+        } catch {
+          themeRequested.current.delete(item.id)
+        }
+      }
+    })()
+  }, [auth, databaseReady, units])
+
   const unit = units.find((item) => item.id === unitId) || units[0]
   const selectedWord = unit?.words.find((word) => word.id === selectedId) || unit?.words[0]
-  const totalWords = units.reduce((sum, item) => sum + item.words.length, 0)
-  const mastered = units.reduce((sum, item) => sum + item.words.filter((word) => word.mastered).length, 0)
   const starredCount = units.reduce((sum, item) => sum + item.words.filter((word) => word.starred).length, 0)
   const reviewCount = units.reduce((sum, item) => sum + item.words.filter((word) => getReviewState(word).due).length, 0)
 
@@ -130,7 +151,7 @@ function App() {
   }
 
   const addUnit = (name: string) => {
-    const newUnit: Unit = { id: uid(), name, description: '上传词汇后由 AI 自动归纳主题', color: COLORS[units.length % COLORS.length], words: [] }
+    const newUnit: Unit = { id: uid(), name, description: DEFAULT_UNIT_THEME, color: COLORS[units.length % COLORS.length], words: [] }
     setUnits((current) => [...current, newUnit])
     setUnitId(newUnit.id)
     setImportUnitId(newUnit.id)
@@ -172,7 +193,14 @@ function App() {
     : { mastered: true, ...scheduleReview(word, true) })
 
   const addImportedWords = (targetUnit: Unit, words: Word[], description?: string) => {
-    setUnits((current) => current.map((item) => item.id === targetUnit.id ? { ...item, description: description?.trim() || item.description, words: [...item.words, ...words] } : item))
+    const nextDescription = description?.trim()
+    setUnits((current) => current.map((item) => item.id === targetUnit.id ? {
+      ...item,
+      description: nextDescription || item.description,
+      words: [...item.words, ...words],
+    } : item))
+    if (nextDescription) themeRequested.current.add(targetUnit.id)
+    else themeRequested.current.delete(targetUnit.id)
     if (words[0]) setSelectedId(words[0].id)
     setImportOpen(false)
     setToast(`已导入 ${words.length} 个单词到「${targetUnit.name}」`)
@@ -200,6 +228,7 @@ function App() {
         starredCount={starredCount} reviewCount={reviewCount}
         onMenu={() => setMobileNav((current) => !current)} onView={nav}
       />
+      <MobileTopBar view={view} settings={settings} onView={nav} />
       <main className="main">
         {view === 'library' && <LibraryView units={units} unitId={unitId} onUnit={setUnitId} onImport={openImport} onNewUnit={() => setNewUnitOpen(true)} onDeleteUnit={requestDeleteUnit} />}
         {view === 'study' && unit && (
@@ -210,14 +239,16 @@ function App() {
             onEdit={(word, changes) => updateWord(word.id, changes)}
             onToggleStar={(word) => { updateWord(word.id, { starred: !word.starred }); setToast(word.starred ? '已移出生词本' : '已加入生词本') }}
             search={search} onSearch={setSearch}
+            onTest={() => setView('test')}
           />
         )}
         {view === 'test' && unit && <TestView unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')} onAnswer={(word, correct) => updateWord(word.id, { mastered: correct || word.mastered, ...scheduleReview(word, correct) })} />}
         {view === 'wordbook' && <WordbookView units={units} onRemove={(wordId, targetUnitId) => { updateWord(wordId, { starred: false }, targetUnitId); setToast('已移出生词本') }} />}
         {view === 'review' && <ReviewView units={units} onReview={(word, targetUnitId, remembered) => { updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId); setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒') }} />}
         {view === 'passage' && <PassageView />}
-        {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} />}
+        {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} starredCount={starredCount} onView={nav} />}
       </main>
+      <MobileTabBar view={view} reviewCount={reviewCount} onView={nav} />
 
       {importOpen && importUnit && <ImportModal unit={importUnit} onClose={() => setImportOpen(false)} onImported={(words, description) => addImportedWords(importUnit, words, description)} />}
       {newUnitOpen && <NewUnitModal onClose={() => setNewUnitOpen(false)} onCreate={addUnit} />}
@@ -254,6 +285,40 @@ function AppHeader({ open, view, settings, starredCount, reviewCount, onMenu, on
   )
 }
 
+const VIEW_TITLES: Record<View, string> = {
+  library: '词库', study: '学习', passage: '课文', test: '测试', wordbook: '生词本', review: '待复习', settings: '我的',
+}
+
+function MobileTopBar({ view, settings, onView }: { view: View; settings: AppSettings; onView: (view: View) => void }) {
+  return (
+    <header className="mobile-topbar">
+      <div className="mobile-brand"><span>語</span><b>{VIEW_TITLES[view]}</b></div>
+      <button className="header-avatar" onClick={() => onView('settings')} aria-label="打开我的"><span>{settings.avatar}</span></button>
+    </header>
+  )
+}
+
+function MobileTabBar({ view, reviewCount, onView }: { view: View; reviewCount: number; onView: (view: View) => void }) {
+  const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
+    { id: 'study', label: '学习', icon: <BookOpen size={21} /> },
+    { id: 'passage', label: '课文', icon: <FileText size={21} /> },
+    { id: 'library', label: '词库', icon: <LibraryBig size={21} /> },
+    { id: 'review', label: '复习', icon: <Clock3 size={21} />, count: reviewCount },
+    { id: 'settings', label: '我的', icon: <UserRound size={21} /> },
+  ]
+  const active = view === 'wordbook' || view === 'test' ? 'settings' : view
+  return (
+    <nav className="mobile-tabbar" aria-label="应用导航">
+      {items.map((item) => (
+        <button key={item.id} className={active === item.id ? 'active' : ''} onClick={() => onView(item.id)}>
+          <span className="tab-icon">{item.icon}{Boolean(item.count) && <em>{(item.count || 0) > 99 ? '99+' : item.count}</em>}</span>
+          <span>{item.label}</span>
+        </button>
+      ))}
+    </nav>
+  )
+}
+
 function PageUnitSelect({ units, unit, onUnit, label }: { units: Unit[]; unit: Unit; onUnit: (id: string) => void; label: string }) {
   return <label className="page-unit-select"><span>{label}</span><select aria-label={label} value={unit.id} onChange={(event) => onUnit(event.target.value)}>{units.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
 }
@@ -276,7 +341,10 @@ function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onDeleteUnit 
           const percent = Math.round(learned / Math.max(item.words.length, 1) * 100)
           return <article key={item.id} className={`unit-card ${item.id === unitId ? 'active' : ''}`} onClick={() => onUnit(item.id)}>
             <div className="unit-card-top"><span style={{ background: item.color }}>{String(index + 1).padStart(2, '0')}</span><em>{item.id === unitId ? '当前单元' : '选择单元'}</em></div>
-            <h2>{item.name}</h2><p>{item.description}</p>
+            <h2>{item.name}</h2>
+            <p className={isPlaceholderTheme(item.description) ? 'unit-theme pending' : 'unit-theme'}>
+              {item.words.length && isPlaceholderTheme(item.description) ? 'AI 正在根据词汇归纳主题…' : item.description}
+            </p>
             <div className="unit-card-meta"><span>{item.words.length} 个单词</span><span>{learned} 个已掌握</span></div>
             <div className="unit-progress"><i style={{ width: `${percent}%`, background: item.color }} /></div>
             <div className="unit-card-actions">
@@ -291,10 +359,10 @@ function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onDeleteUnit 
   )
 }
 
-function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onToggleMastered, onEdit, onToggleStar, onSearch }: {
+function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onToggleMastered, onEdit, onToggleStar, onSearch, onTest }: {
   unit: Unit; units: Unit[]; selectedWord?: Word; search: string; onUnit: (id: string) => void; onSelect: (id: string) => void; onImport: () => void
   onToggleMastered: (word: Word) => void; onEdit: (word: Word, changes: Partial<Word>) => void
-  onToggleStar: (word: Word) => void; onSearch: (value: string) => void
+  onToggleStar: (word: Word) => void; onSearch: (value: string) => void; onTest: () => void
 }) {
   const { voiceGender } = useContext(SettingsContext)
   const [layout, setLayout] = useState<'grid' | 'list'>('grid')
@@ -313,9 +381,12 @@ function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImpo
         <div>
           <div className="eyebrow"><span style={{ background: unit.color }} /> VOCABULARY UNIT</div>
           <PageUnitSelect units={units} unit={unit} onUnit={onUnit} label="学习单元" />
-          <p>{unit.description} · 共 {unit.words.length} 个单词</p>
+          <p>{isPlaceholderTheme(unit.description) ? '主题归纳中' : unit.description} · 共 {unit.words.length} 个单词</p>
         </div>
-        <button className="primary-button" onClick={onImport}><UploadCloud size={18} />导入单词</button>
+        <div className="hero-actions">
+          <button className="secondary-button" onClick={onTest}><GraduationCap size={18} />单元测试</button>
+          <button className="primary-button" onClick={onImport}><UploadCloud size={18} />导入单词</button>
+        </div>
       </section>
 
       <label className="study-search"><Search size={17} /><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="搜索当前单元的单词、假名或释义…" /></label>
@@ -654,7 +725,9 @@ function ReviewView({ units, onReview }: { units: Unit[]; onReview: (word: Word,
   )
 }
 
-function SettingsView({ settings, onChange }: { settings: AppSettings; onChange: (settings: AppSettings) => void }) {
+function SettingsView({ settings, onChange, starredCount = 0, onView }: {
+  settings: AppSettings; onChange: (settings: AppSettings) => void; starredCount?: number; onView?: (view: View) => void
+}) {
   const avatars = ['ゆ', '桜', '語', '猫', '旅', '月']
   const sample = makeFallbackWord({ term: 'こんにちは', reading: 'こんにちは', meaning: '你好' })
   const [voiceStatus, setVoiceStatus] = useState('正在检测设备音色…')
@@ -671,7 +744,13 @@ function SettingsView({ settings, onChange }: { settings: AppSettings; onChange:
   }, [settings.voiceGender])
   return (
     <div className="page settings-page">
-      <section className="hub-hero"><div><span className="eyebrow">PREFERENCES</span><h1>个人设置</h1><p>设置头像和日语朗读音色，选择会保存到 PostgreSQL。</p></div></section>
+      <section className="hub-hero"><div><span className="eyebrow">PREFERENCES</span><h1>个人设置</h1><p>设置头像和日语朗读音色。安卓可用 Chrome 菜单「添加到主屏幕」，像应用一样打开。</p></div></section>
+      {onView && (
+        <div className="me-shortcuts">
+          <button onClick={() => onView('wordbook')}><BookMarked size={18} /><span>生词本</span><em>{starredCount}</em></button>
+          <button onClick={() => onView('test')}><GraduationCap size={18} /><span>单元测试</span></button>
+        </div>
+      )}
       <div className="settings-layout">
         <section className="settings-card"><div className="settings-title"><UserRound /><div><h2>头像</h2><p>选择一个代表你的文字头像。</p></div></div><div className="avatar-options">{avatars.map((avatar) => <button key={avatar} className={settings.avatar === avatar ? 'active' : ''} onClick={() => onChange({ ...settings, avatar })}>{avatar}{settings.avatar === avatar && <CheckCircle2 />}</button>)}</div><label className="custom-avatar">自定义<input maxLength={2} value={settings.avatar} onChange={(event) => onChange({ ...settings, avatar: event.target.value || 'ゆ' })} /></label></section>
         <section className="settings-card"><div className="settings-title"><AudioLines /><div><h2>日语朗读音色</h2><p>系统会优先匹配设备中对应性别的日语语音。</p></div></div><div className="voice-options"><button className={settings.voiceGender === 'female' ? 'active' : ''} onClick={() => onChange({ ...settings, voiceGender: 'female' })}><span>女</span><div><b>女声</b><small>清晰、柔和</small></div>{settings.voiceGender === 'female' && <CheckCircle2 />}</button><button className={settings.voiceGender === 'male' ? 'active' : ''} onClick={() => onChange({ ...settings, voiceGender: 'male' })}><span>男</span><div><b>男声</b><small>沉稳、自然</small></div>{settings.voiceGender === 'male' && <CheckCircle2 />}</button></div><div className="voice-preview"><span><b>试听当前音色</b><small className="jp">こんにちは</small><em>{voiceStatus}</em></span><VolumeButton word={sample} /></div></section>
@@ -701,15 +780,27 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
   const enrich = async () => {
     if (!drafts.length) return
     setLoading(true); setNotice('')
+    const finish = async (words: Word[]) => {
+      let theme = ''
+      try { theme = await fetchUnitTheme(unit.name, [...unit.words, ...words]) } catch { /* App will retry placeholder units */ }
+      onImported(words, theme)
+    }
     try {
-      const response = await apiFetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ words: drafts, unitName: unit.name }) })
-      if (!response.ok) throw new Error((await response.json()).error)
+      const response = await apiFetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ words: drafts.slice(0, 40), unitName: unit.name }) })
       const data = await response.json()
-      const words: Word[] = data.words.map((item: Partial<Word>, index: number) => ({ ...makeFallbackWord(drafts[index] || { term: item.term || '' }), ...item, id: uid(), mastered: false, createdAt: Date.now() }))
-      onImported(words, data.unitDescription)
+      if (!response.ok) throw new Error(data.error || 'AI 解析失败')
+      const enriched = Array.isArray(data.words) ? data.words as Partial<Word>[] : []
+      const words: Word[] = drafts.map((draft, index) => ({
+        ...makeFallbackWord(draft),
+        ...(enriched[index] || {}),
+        id: uid(),
+        mastered: false,
+        createdAt: Date.now(),
+      }))
+      await finish(words)
     } catch {
-      setNotice('当前未配置 LLM，已使用本地词典与模板生成。你可以稍后在 .env 中配置密钥。')
-      window.setTimeout(() => onImported(drafts.map(makeFallbackWord)), 750)
+      setNotice('词卡已用本地模板生成，正在尝试单独归纳单元主题…')
+      await finish(drafts.map(makeFallbackWord))
     } finally { setLoading(false) }
   }
 
@@ -730,7 +821,7 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
           <div className="preview-heading"><b>识别到 {drafts.length} 个单词</b><button onClick={() => setDrafts([])}>重新编辑</button></div>
           <div className="import-preview">{drafts.map((draft, i) => <div key={`${draft.term}-${i}`}><span>{i + 1}</span><b className="jp">{draft.term}</b><small>{draft.reading || 'AI 自动识别读音'}</small><em>{draft.meaning || 'AI 自动查询释义'}</em></div>)}</div>
           {notice && <div className="modal-notice">{notice}</div>}
-          <button className="primary-button modal-submit" disabled={loading} onClick={enrich}>{loading ? <><span className="spinner" />AI 正在整理词卡…</> : <><Sparkles size={18} />生成并导入词卡</>}</button>
+          <button className="primary-button modal-submit" disabled={loading} onClick={enrich}>{loading ? <><span className="spinner" />AI 正在整理词卡并归纳主题…</> : <><Sparkles size={18} />生成并导入词卡</>}</button>
         </>}
       </section>
     </div>

@@ -179,7 +179,7 @@ app.post('/api/enrich', rateLimit(60_000, 20), async (req, res) => {
       '根据整组词汇归纳一个简短准确的中文主题说明，控制在4到12个汉字，不要重复单元名称。',
       '只返回一个 JSON 对象，不要 Markdown。格式严格为：',
       '{"unitDescription":"","words":[{"term":"","reading":"","meaning":"","partOfSpeech":"","example":"","exampleReading":"","translation":""}]}',
-      '所有字段必须是非空字符串。'
+      'words 中所有字段必须是非空字符串。unitDescription 尽量给出。'
     ].join('')
     const { data, headers } = await callGateway('/api/ai/chat', {
       tenantId,
@@ -197,9 +197,10 @@ app.post('/api/enrich', rateLimit(60_000, 20), async (req, res) => {
     const content = data?.choices?.[0]?.message?.content
     const parsed = parseJsonContent(content)
     if (!Array.isArray(parsed.words) || parsed.words.length !== words.length) throw new Error('模型返回的词汇数量不匹配。')
-    if (typeof parsed.unitDescription !== 'string' || !parsed.unitDescription.trim()) throw new Error('模型没有返回单元主题。')
+    const unitDescription = typeof parsed.unitDescription === 'string' ? parsed.unitDescription.trim().slice(0, 16) : ''
     res.json({
       ...parsed,
+      unitDescription,
       source: 'AIapiMgr',
       gateway: data.gateway,
       requestId: headers.get('x-request-id') || data.gateway?.requestId,
@@ -207,6 +208,41 @@ app.post('/api/enrich', rateLimit(60_000, 20), async (req, res) => {
   } catch (error) {
     console.error(error)
     res.status(error.status || 500).json({ error: error.name === 'AbortError' ? '网关请求超时。' : error.message || 'AI 解析失败，请稍后再试。' })
+  }
+})
+
+app.post('/api/unit-theme', rateLimit(60_000, 20), async (req, res) => {
+  const unitName = String(req.body?.unitName || '').trim().slice(0, 80)
+  const terms = Array.isArray(req.body?.terms)
+    ? [...new Set(req.body.terms.map((item) => String(item || '').trim()).filter(Boolean))].slice(0, 80)
+    : []
+  const meanings = Array.isArray(req.body?.meanings)
+    ? req.body.meanings.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 40)
+    : []
+  if (!terms.length) return res.status(400).json({ error: '请提供单词以便归纳主题。' })
+  if (!gatewayKey) return res.status(503).json({ error: '尚未配置 AI 网关，无法归纳主题。' })
+  try {
+    const { data } = await callGateway('/api/ai/chat', {
+      tenantId,
+      capability: process.env.LLM_GATEWAY_CHAT_CAPABILITY || 'quality-chat',
+      messages: [
+        { role: 'system', content: '你是日语教材编辑。根据单词列表归纳这个单元的学习主题。只返回一个 JSON 对象：{"unitDescription":""}。unitDescription 必须是 4 到 12 个汉字的中文短语，概括词汇所属生活场景、话题或语法主题，不要重复单元名称，不要标点，不要解释。' },
+        { role: 'user', content: `单元名称：${unitName || '未命名'}\n单词：${terms.join('、')}${meanings.length ? `\n部分释义：${meanings.slice(0, 20).join('、')}` : ''}` },
+      ],
+      dataClass: 'internal',
+      fallback: true,
+      stream: false,
+      temperature: 0.2,
+      max_tokens: 200,
+    }, 30000)
+    const parsed = parseJsonContent(data?.choices?.[0]?.message?.content)
+    const unitDescription = String(parsed.unitDescription || '').replace(/[。．，、.!！？?\s]/g, '').slice(0, 16)
+    if (unitDescription.length < 2) throw new Error('模型没有返回单元主题。')
+    res.json({ unitDescription })
+  } catch (error) {
+    console.error(error)
+    const message = error.message === 'LLM_NOT_CONFIGURED' ? '尚未配置 AI 网关，无法归纳主题。' : error.message || '归纳主题失败。'
+    res.status(error.status || 500).json({ error: error.name === 'AbortError' ? '归纳主题超时。' : message })
   }
 })
 
