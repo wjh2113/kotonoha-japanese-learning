@@ -14,7 +14,7 @@ import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fetchUnitTheme, isPlaceholderTheme } from './theme'
 import { buildQuizOptions, ENRICH_BATCH_SIZE, isPlaceholderMeaning, mergeEnrichedWord, optionLabel, orderQuizByWeakness, recordQuizAnswer, sharedDistractors, usableQuizWords } from './quiz'
-import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, shuffle, uid } from './utils'
+import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, uid } from './utils'
 
 const STORAGE_KEY = 'kotonoha-units-v1'
 const SETTINGS_KEY = 'kotonoha-settings-v1'

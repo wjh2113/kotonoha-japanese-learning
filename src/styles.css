@@ -416,15 +416,28 @@ body { background: var(--cream); color: var(--ink); }
 .passage-layout { display: grid; grid-template-columns: 220px 1fr; gap: 16px; align-items: start; }
 .passage-list { background: white; border: 1px solid var(--line); border-radius: 12px; padding: 16px 12px; display: grid; gap: 6px; }
 .passage-list > b { padding: 0 8px 8px; font-size: 12px; }
+.passage-search { height: 36px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; background: #fff; font-size: 13px; }
+.passage-list-empty { padding: 8px; color: #8d8e89; }
 .passage-list button { border: 0; background: #faf8f4; border-radius: 8px; padding: 10px 11px; text-align: left; cursor: pointer; display: grid; }
 .passage-list button span, .passage-list button small { display: block; }
 .passage-list button span { font-size: 13px; font-weight: 700; }
 .passage-list button small { margin-top: 3px; color: #8d8e89; font-size: 10px; }
 .passage-list button.active { background: #fff3ef; color: var(--red); }
 .passage-stage { min-width: 0; }
-.passage-toolbar { display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px; }
+.passage-toolbar { display: flex; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 12px; }
 .passage-toolbar h2 { margin: 0; font-size: 20px; }
 .passage-toolbar small { color: #8d8e89; font-size: 11px; }
+.passage-title-label { display: flex; align-items: center; gap: 8px; color: #a39f98; }
+.passage-title-input { flex: 1; min-width: 0; width: min(420px, 100%); height: 36px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; font-size: 18px; font-weight: 700; }
+.passage-toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.passage-toolbar-actions button { height: 36px; padding: 0 12px; border: 1px solid #e5e0d8; border-radius: 8px; background: white; cursor: pointer; font-size: 12px; }
+.passage-source-card { display: grid; gap: 12px; }
+.passage-source-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.passage-source-actions button { height: 36px; padding: 0 12px; border: 1px solid #e5e0d8; border-radius: 8px; background: white; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+.passage-source { margin: 0; white-space: pre-wrap; line-height: 1.9; font-size: 18px; }
+.passage-source-editor { width: 100%; min-height: 280px; border: 1px solid var(--line); border-radius: 8px; padding: 12px; line-height: 1.8; font-size: 16px; resize: vertical; }
+.passage-add-title { display: grid; gap: 6px; margin: 0 0 14px; font-size: 12px; color: #6e7278; }
+.passage-add-title input { height: 42px; border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; font-size: 14px; }
 .passage-modes { display: flex; gap: 8px; margin-bottom: 12px; }
 .passage-modes button { height: 36px; padding: 0 14px; border: 1px solid #e5e0d8; border-radius: 8px; background: white; cursor: pointer; font-size: 12px; font-weight: 700; }
 .passage-modes button.active { background: var(--red); border-color: var(--red); color: white; }
@@ -532,9 +545,12 @@ body { background: var(--cream); color: var(--ink); }
   .passage-modes button { flex: 1; min-height: 42px; }
   .passage-sentences { max-height: 140px; }
   .passage-card h3 { font-size: 22px; }
-  .passage-list { display: flex; gap: 8px; overflow: auto; padding: 12px; }
+  .passage-list { display: flex; gap: 8px; overflow: auto; padding: 12px; align-items: center; }
   .passage-list > b { display: none; }
+  .passage-search { min-width: 120px; flex: 0 0 auto; }
   .passage-list button { min-width: 140px; }
+  .passage-title-input { width: 100%; font-size: 16px; }
+  .passage-toolbar { flex-direction: column; }
   .quiz-card { padding: 28px 18px; border-radius: 18px; }
   .quiz-card h2 { font-size: 36px; }
   .quiz-options button { min-height: 48px; font-size: 16px; }
