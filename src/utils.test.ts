@@ -109,4 +109,11 @@ describe('splitJapaneseSentences', () => {
       '友達に会いました！',
     ])
   })
+
+  it('keeps dialogue turns on separate lines', () => {
+    expect(splitJapaneseSentences('A: 忙しいですか。\nB: いいえ、忙しくないです。')).toEqual([
+      'A: 忙しいですか。',
+      'B: いいえ、忙しくないです。',
+    ])
+  })
 })

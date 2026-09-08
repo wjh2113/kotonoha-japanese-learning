@@ -1,14 +1,19 @@
 import { useContext, useEffect, useRef, useState, type ClipboardEvent } from 'react'
 import {
-  ChevronLeft, ChevronRight, Copy, FileText, Mic, Pause,
+  BookOpen, BookmarkPlus, ChevronLeft, ChevronRight, Copy, FileText, LoaderCircle, Mic, Pause,
   ScrollText, Sparkles, SquarePen, Trash2, UploadCloud, Volume2, X,
 } from 'lucide-react'
 import { apiFetch } from './api'
 import { extractDocxPassage, htmlToPassageText, readPassageSource } from './docx'
+import {
+  chunkItems, extractPassageVocab, hasChineseTranslation, mergeAnalyzedSentences, mergePassageBooks,
+  normalizePassageSentence, passageProgressSummary, recordSentenceScore,
+  sentenceNeedsAnalysis, unusedPassageVocab,
+} from './passage'
 import { SettingsContext } from './settings-context'
-import { speakJapanese } from './speech'
-import type { Passage, PassageSentence } from './types'
-import { pronunciationScoreFor, splitJapaneseSentences, uid } from './utils'
+import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
+import type { ImportDraft, Passage, PassageBook, PassageSentence, Unit, Word } from './types'
+import { makeFallbackWord, pronunciationScoreFor, splitJapaneseSentences, uid } from './utils'
 
 type Mode = 'read' | 'explain' | 'grammar' | 'source'
 
@@ -16,30 +21,18 @@ function passageTitle(value?: string, fallback = '课文') {
   return String(value || '').trim().slice(0, 80) || fallback
 }
 
-function normalizeAnalyzed(parsed: Partial<Passage> & { sentences?: any[] }, sourceText: string): Passage {
-  const sentences = Array.isArray(parsed.sentences) ? parsed.sentences.slice(0, 80) : []
-  return {
-    id: uid(),
-    title: passageTitle(parsed.title),
-    sourceText,
-    createdAt: Date.now(),
-    sentences: sentences.map((item) => ({
-      id: uid(),
-      text: String(item?.text || '').trim(),
-      reading: String(item?.reading || '').trim(),
-      translation: String(item?.translation || '').trim(),
-      tokens: Array.isArray(item?.tokens) ? item.tokens.slice(0, 60).map((token: any) => ({
-        surface: String(token?.surface || '').trim(),
-        reading: String(token?.reading || '').trim(),
-        meaning: String(token?.meaning || '').trim(),
-      })).filter((token: { surface: string }) => token.surface) : [],
-      grammar: Array.isArray(item?.grammar) ? item.grammar.slice(0, 8).map((point: any) => ({
-        name: String(point?.name || '').trim(),
-        pattern: String(point?.pattern || '').trim(),
-        explanation: String(point?.explanation || '').trim(),
-      })).filter((point: { name: string }) => point.name) : [],
-    })).filter((item) => item.text),
+function hydrateProgress(value: unknown) {
+  if (!value || typeof value !== 'object') return {}
+  const next: NonNullable<Passage['progress']> = {}
+  for (const [id, row] of Object.entries(value as Record<string, any>)) {
+    if (!id || !row || typeof row !== 'object') continue
+    next[id] = {
+      attempts: Math.max(0, Number(row.attempts) || 0),
+      lastScore: Math.max(0, Math.min(100, Number(row.lastScore) || 0)),
+      bestScore: Math.max(0, Math.min(100, Number(row.bestScore) || 0)),
+    }
   }
+  return next
 }
 
 function fallbackPassage(sourceText: string): Passage {
@@ -48,6 +41,7 @@ function fallbackPassage(sourceText: string): Passage {
     title: '课文',
     sourceText,
     createdAt: Date.now(),
+    status: 'processing',
     sentences: splitJapaneseSentences(sourceText).map((text) => ({
       id: uid(), text, reading: '', translation: '', tokens: [], grammar: [],
     })),
@@ -59,33 +53,28 @@ function hydratePassage(item: unknown): Passage | null {
   const record = item as Partial<Passage> & { sentences?: unknown[] }
   const id = String(record.id || '').trim()
   if (!id) return null
-  const title = passageTitle(record.title)
   const sentences = Array.isArray(record.sentences) ? record.sentences : []
+  const status = record.status === 'processing' || record.status === 'error' ? record.status : 'ready'
   return {
     id,
-    title,
+    title: passageTitle(record.title),
     sourceText: String(record.sourceText || ''),
     createdAt: Number(record.createdAt) || Date.now(),
+    bookId: String(record.bookId || '').trim(),
+    bookName: String(record.bookName || '').trim(),
+    progress: hydrateProgress(record.progress),
+    status,
+    statusText: String(record.statusText || ''),
     sentences: sentences.map((sentence) => {
-      const row = (sentence && typeof sentence === 'object') ? sentence as Record<string, any> : {}
-      return {
-        id: String(row.id || uid()),
-        text: String(row.text || '').trim(),
-        reading: String(row.reading || '').trim(),
-        translation: String(row.translation || '').trim(),
-        tokens: Array.isArray(row.tokens) ? row.tokens.slice(0, 60).map((token: any) => ({
-          surface: String(token?.surface || '').trim(),
-          reading: String(token?.reading || '').trim(),
-          meaning: String(token?.meaning || '').trim(),
-        })).filter((token: { surface: string }) => token.surface) : [],
-        grammar: Array.isArray(row.grammar) ? row.grammar.slice(0, 8).map((point: any) => ({
-          name: String(point?.name || '').trim(),
-          pattern: String(point?.pattern || '').trim(),
-          explanation: String(point?.explanation || '').trim(),
-        })).filter((point: { name: string }) => point.name) : [],
-      }
+      const next = normalizePassageSentence(sentence, uid())
+      return { ...next, id: next.id || uid() }
     }).filter((sentence) => sentence.text),
   }
+}
+
+function isPasteField(target: EventTarget | null) {
+  const tag = (target as HTMLElement | null)?.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA'
 }
 
 async function fileToBase64(blob: Blob) {
@@ -118,23 +107,95 @@ async function fileToCompressedJpeg(file: File) {
   }
 }
 
-export function PassageView() {
+export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: (unitId: string, words: Word[]) => void }) {
   const { voiceGender } = useContext(SettingsContext)
   const [passages, setPassages] = useState<Passage[]>([])
+  const [books, setBooks] = useState<PassageBook[]>([])
   const [ready, setReady] = useState(false)
   const [selectedId, setSelectedId] = useState('')
   const [mode, setMode] = useState<Mode>('read')
   const [sentenceIndex, setSentenceIndex] = useState(0)
   const [raw, setRaw] = useState('')
   const [draftTitle, setDraftTitle] = useState('')
+  const [draftBookId, setDraftBookId] = useState('')
   const [query, setQuery] = useState('')
   const [sourceEditing, setSourceEditing] = useState(false)
   const [sourceDraft, setSourceDraft] = useState('')
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState('')
   const [uploadOpen, setUploadOpen] = useState(false)
+  const [vocabOpen, setVocabOpen] = useState(false)
+  const [vocabUnitId, setVocabUnitId] = useState('')
+  const [vocabPicked, setVocabPicked] = useState<Record<string, boolean>>({})
+  const [playingFull, setPlayingFull] = useState(false)
   const persistError = useRef(false)
   const persistEnabled = useRef(false)
+  const ingesting = useRef(false)
+  const analyzing = useRef(new Set<string>())
+  const resumed = useRef(false)
+  const passagesRef = useRef<Passage[]>([])
+  const fillPassageRef = useRef<(id: string) => Promise<void>>(async () => undefined)
+
+  useEffect(() => { passagesRef.current = passages }, [passages])
+  useEffect(() => () => stopSpeaking(), [])
+
+  const patchPassage = (id: string, changes: Partial<Passage>) => {
+    setPassages((current) => {
+      const next = current.map((item) => item.id === id ? { ...item, ...changes } : item)
+      passagesRef.current = next
+      return next
+    })
+  }
+
+  const fillPassage = async (passageId: string) => {
+    if (analyzing.current.has(passageId)) return
+    analyzing.current.add(passageId)
+    try {
+      const current = passagesRef.current.find((item) => item.id === passageId)
+      if (!current?.sentences.length) return
+      const pending = current.sentences.filter(sentenceNeedsAnalysis)
+      if (!pending.length) {
+        patchPassage(passageId, { status: 'ready', statusText: '' })
+        return
+      }
+      const total = current.sentences.length
+      let finished = total - pending.length
+      for (const chunk of chunkItems(pending)) {
+        if (!passagesRef.current.some((item) => item.id === passageId)) return
+        patchPassage(passageId, { status: 'processing', statusText: `正在生成整句翻译 ${finished}/${total}` })
+        const response = await apiFetch('/api/passage/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sentences: chunk.map((sentence) => ({ text: sentence.text })) }),
+        })
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || '解析失败')
+        const latest = passagesRef.current.find((item) => item.id === passageId)
+        if (!latest) return
+        finished = Math.min(total, finished + chunk.length)
+        patchPassage(passageId, {
+          sentences: mergeAnalyzedSentences(latest.sentences, data.sentences),
+          status: 'processing',
+          statusText: `正在生成整句翻译 ${finished}/${total}`,
+        })
+      }
+      const latest = passagesRef.current.find((item) => item.id === passageId)
+      if (!latest) return
+      const missing = latest.sentences.filter((sentence) => !hasChineseTranslation(sentence.translation)).length
+      patchPassage(passageId, {
+        status: missing ? 'error' : 'ready',
+        statusText: missing ? `还有 ${missing} 句没有中文翻译，可点重试` : '',
+      })
+    } catch (reason) {
+      patchPassage(passageId, {
+        status: 'error',
+        statusText: reason instanceof Error ? reason.message : '课文解析失败',
+      })
+    } finally {
+      analyzing.current.delete(passageId)
+    }
+  }
+  fillPassageRef.current = fillPassage
 
   useEffect(() => {
     let cancelled = false
@@ -144,6 +205,7 @@ export function PassageView() {
       const next = (Array.isArray(data.passages) ? data.passages as unknown[] : []).map(hydratePassage).filter((item): item is Passage => Boolean(item))
       persistEnabled.current = true
       setPassages(next)
+      setBooks(mergePassageBooks(Array.isArray(data.books) ? data.books : [], next))
       setSelectedId(next[0]?.id || '')
       setReady(true)
     }).catch(() => {
@@ -153,10 +215,19 @@ export function PassageView() {
   }, [])
 
   useEffect(() => {
+    if (!ready || resumed.current) return
+    resumed.current = true
+    const pending = passages.filter((item) => item.status === 'processing' || item.sentences.some((sentence) => !hasChineseTranslation(sentence.translation)))
+    void (async () => {
+      for (const item of pending) await fillPassageRef.current(item.id)
+    })()
+  }, [ready, passages])
+
+  useEffect(() => {
     if (!ready || !persistEnabled.current) return
     const timer = window.setTimeout(async () => {
       try {
-        const response = await apiFetch('/api/passages', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passages }) })
+        const response = await apiFetch('/api/passages', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passages, books }) })
         if (!response.ok) throw new Error('WRITE_FAILED')
         persistError.current = false
       } catch {
@@ -167,25 +238,33 @@ export function PassageView() {
       }
     }, 400)
     return () => window.clearTimeout(timer)
-  }, [passages, ready])
+  }, [passages, books, ready])
 
   const passage = passages.find((item) => item.id === selectedId) || passages[0]
   const sentence = passage?.sentences[sentenceIndex]
   const visiblePassages = passages.filter((item) => {
     const needle = query.trim()
     if (!needle) return true
-    return item.title.includes(needle) || item.sourceText.includes(needle)
+    return item.title.includes(needle) || item.sourceText.includes(needle) || (item.bookName || '').includes(needle)
   })
+  const summary = passage ? passageProgressSummary(passage) : { total: 0, practiced: 0, average: 0 }
+  const vocabUnit = units.find((item) => item.id === vocabUnitId) || units[0]
 
-  useEffect(() => { setSentenceIndex(0); setSourceEditing(false); setMode('read') }, [selectedId])
-
-  const updatePassage = (id: string, changes: Partial<Passage>) => {
-    setPassages((current) => current.map((item) => item.id === id ? { ...item, ...changes } : item))
-  }
+  useEffect(() => {
+    setSentenceIndex(0)
+    setSourceEditing(false)
+    setMode('read')
+    setPlayingFull(false)
+    stopSpeaking()
+  }, [selectedId])
 
   const addPassage = (next: Passage) => {
     persistEnabled.current = true
-    setPassages((current) => [next, ...current].slice(0, 50))
+    setPassages((current) => {
+      const following = [next, ...current].slice(0, 50)
+      passagesRef.current = following
+      return following
+    })
     setSelectedId(next.id)
     setUploadOpen(false)
     setRaw('')
@@ -193,26 +272,48 @@ export function PassageView() {
     setNotice('')
   }
 
-  const analyzeText = async (text: string, title?: string) => {
-    const sourceText = text.trim()
-    if (!sourceText) return
-    setBusy('AI 正在拆句、释义并标注语法…')
-    setNotice('')
+  const processIngest = async (passageId: string, text: string, images: Blob[]) => {
     try {
-      const response = await apiFetch('/api/passage/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: sourceText }) })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || '解析失败')
-      const next = normalizeAnalyzed(data, sourceText)
-      addPassage({ ...next, title: passageTitle(title, next.title) })
-    } catch (reason) {
-      const fallback = fallbackPassage(sourceText)
-      if (!fallback.sentences.length) {
-        setNotice(reason instanceof Error ? reason.message : '课文解析失败。')
-        return
+      const parts: string[] = []
+      if (text.trim()) parts.push(text.trim())
+      for (const [index, image] of images.slice(0, 4).entries()) {
+        if (!passagesRef.current.some((item) => item.id === passageId)) return
+        patchPassage(passageId, { status: 'processing', statusText: `正在识别课文图片 ${index + 1}/${Math.min(images.length, 4)}…` })
+        const recognized = await ocrImage(image)
+        if (recognized) parts.push(recognized)
       }
-      addPassage({ ...fallback, title: passageTitle(title, fallback.title) })
-      setNotice('AI 解析暂不可用，已按句号拆开。你可以稍后重试。')
-    } finally { setBusy('') }
+      const sourceText = parts.join('\n\n').trim()
+      if (!sourceText) throw new Error('没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
+      const sentences = fallbackPassage(sourceText).sentences
+      patchPassage(passageId, {
+        sourceText,
+        sentences,
+        status: 'processing',
+        statusText: `正在生成整句翻译 0/${Math.max(sentences.length, 1)}`,
+      })
+      await fillPassage(passageId)
+    } catch (reason) {
+      patchPassage(passageId, {
+        status: 'error',
+        statusText: reason instanceof Error ? reason.message : '课文读取失败。',
+      })
+      setNotice(reason instanceof Error ? reason.message : '课文读取失败。')
+    }
+  }
+
+  const queueIngest = (text: string, images: Blob[] = [], title?: string) => {
+    const book = books.find((item) => item.id === draftBookId)
+    const sourceText = text.trim()
+    const stub = {
+      ...fallbackPassage(sourceText || '（正在识别课文…）'),
+      title: passageTitle(title),
+      status: 'processing' as const,
+      statusText: images.length ? '正在识别课文图片…' : '正在生成整句翻译…',
+      bookId: book?.id || '',
+      bookName: book?.name || '',
+    }
+    addPassage(stub)
+    void processIngest(stub.id, sourceText, images)
   }
 
   const ocrImage = async (blob: Blob) => {
@@ -224,36 +325,25 @@ export function PassageView() {
     return String(data.text || '').trim()
   }
 
-  const ingestSource = async (text: string, images: Blob[] = []) => {
-    const parts: string[] = []
-    if (text.trim()) parts.push(text.trim())
-    const pictureCount = images.length
-    for (const [index, image] of images.slice(0, 4).entries()) {
-      setBusy(pictureCount > 1 ? `正在识别课文图片 ${index + 1}/${Math.min(pictureCount, 4)}…` : '正在识别课文图片…')
-      const recognized = await ocrImage(image)
-      if (recognized) parts.push(recognized)
-    }
-    const sourceText = parts.join('\n\n').trim()
-    if (!sourceText) throw new Error('没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
-    setRaw(sourceText)
-    await analyzeText(sourceText, draftTitle)
-  }
-
   const readUpload = async (file?: File) => {
-    if (!file || busy) return
+    if (!file || ingesting.current) return
+    ingesting.current = true
     setBusy('正在读取课文…')
     setNotice('')
     try {
       const source = await readPassageSource(file)
-      await ingestSource(source.text, source.images)
+      queueIngest(source.text, source.images, draftTitle)
     } catch (reason) {
       setNotice(reason instanceof Error ? reason.message : '课文读取失败。')
       setBusy('')
+    } finally {
+      ingesting.current = false
     }
   }
 
   const pasteClipboard = async (event: ClipboardEvent<HTMLElement>, immediate = true) => {
-    if (busy) return
+    event.stopPropagation()
+    if (ingesting.current) return
     const clipboard = event.clipboardData
     if (!clipboard) return
     const files = Array.from(clipboard.files || [])
@@ -264,28 +354,48 @@ export function PassageView() {
     const htmlText = html ? htmlToPassageText(html) : ''
     const text = (htmlText.length > plain.trim().length ? htmlText : plain).trim()
     if (!imageFiles.length && !wordFile && !(immediate && text)) return
+    ingesting.current = true
     event.preventDefault()
-    setBusy('正在读取粘贴内容…')
     setNotice('')
     try {
       if (wordFile) {
         const source = await extractDocxPassage(wordFile)
-        await ingestSource(source.text, source.images)
+        queueIngest(source.text, source.images, draftTitle)
         return
       }
-      await ingestSource(text, imageFiles)
+      queueIngest(text, imageFiles, draftTitle)
     } catch (reason) {
       if (plain.trim()) setRaw(plain)
       setNotice(reason instanceof Error ? reason.message : '粘贴内容无法识别。')
+    } finally {
+      ingesting.current = false
       setBusy('')
     }
   }
 
   const goSentence = (index: number, speak = false) => {
     if (!passage || index < 0 || index >= passage.sentences.length) return
+    setPlayingFull(false)
+    stopSpeaking()
     setSentenceIndex(index)
     const next = passage.sentences[index]
     if (speak) void speakJapanese(next.text, voiceGender, { sentence: true })
+  }
+
+  const playAll = () => {
+    if (!passage?.sentences.length) return
+    if (playingFull) {
+      stopSpeaking()
+      setPlayingFull(false)
+      return
+    }
+    setMode('read')
+    setPlayingFull(true)
+    void speakJapaneseQueue(passage.sentences.map((item) => item.text), voiceGender, {
+      sentence: true,
+      onIndex: (index) => setSentenceIndex(index),
+      onAllEnd: () => setPlayingFull(false),
+    })
   }
 
   const copySource = async () => {
@@ -302,29 +412,92 @@ export function PassageView() {
     if (!passage) return
     const sourceText = sourceDraft.trim()
     if (!sourceText) { setNotice('原文不能为空。'); return }
-    updatePassage(passage.id, { sourceText })
+    patchPassage(passage.id, { sourceText })
     setSourceEditing(false)
     setNotice('原文已保存。如需按新原文重新拆句，请点「重新解析」。')
   }
 
-  const reanalyze = async () => {
+  const reanalyze = () => {
     if (!passage) return
     const sourceText = (sourceEditing ? sourceDraft : passage.sourceText).trim()
     if (!sourceText) { setNotice('没有原文可以重新解析。'); return }
-    setBusy('正在按原文重新拆句…')
-    setNotice('')
-    try {
-      const response = await apiFetch('/api/passage/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: sourceText }) })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || '解析失败')
-      const next = normalizeAnalyzed(data, sourceText)
-      updatePassage(passage.id, { sourceText, sentences: next.sentences, title: passage.title })
-      setSourceEditing(false)
-      setSentenceIndex(0)
-      setMode('read')
-    } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : '重新解析失败。')
-    } finally { setBusy('') }
+    setSourceEditing(false)
+    patchPassage(passage.id, {
+      sourceText,
+      sentences: fallbackPassage(sourceText).sentences,
+      progress: {},
+      status: 'processing',
+      statusText: '正在按原文重新翻译…',
+    })
+    setSentenceIndex(0)
+    setMode('read')
+    void fillPassage(passage.id)
+  }
+
+  const createBook = (assignCurrent = false) => {
+    const name = window.prompt('课本名称，例如：大家的日语 第1册', '大家的日语 第1册')?.trim().slice(0, 80)
+    if (!name) return
+    const next = { id: uid(), name }
+    setBooks((current) => [...current, next])
+    setDraftBookId(next.id)
+    if (assignCurrent && passage) patchPassage(passage.id, { bookId: next.id, bookName: next.name })
+  }
+
+  const renameBook = (book: PassageBook) => {
+    const name = window.prompt('课本名称', book.name)?.trim().slice(0, 80)
+    if (!name) return
+    setBooks((current) => current.map((item) => item.id === book.id ? { ...item, name } : item))
+    setPassages((current) => current.map((item) => item.bookId === book.id ? { ...item, bookName: name } : item))
+  }
+
+  const deleteBook = (book: PassageBook) => {
+    if (!window.confirm(`删除课本「${book.name}」？课文会回到未分组，不会被删。`)) return
+    setBooks((current) => current.filter((item) => item.id !== book.id))
+    setPassages((current) => current.map((item) => item.bookId === book.id ? { ...item, bookId: '', bookName: '' } : item))
+    if (draftBookId === book.id) setDraftBookId('')
+  }
+
+  const movePassage = (bookId: string) => {
+    if (!passage) return
+    const book = books.find((item) => item.id === bookId)
+    patchPassage(passage.id, { bookId: book?.id || '', bookName: book?.name || '' })
+  }
+
+  const openVocab = () => {
+    if (!passage) return
+    if (passage.status === 'processing') { setNotice('整句翻译还在生成，完成后再抽生词。'); return }
+    const drafts = unusedPassageVocab(passage, vocabUnit?.words.map((word) => word.term) || [])
+    if (!drafts.length) { setNotice(extractPassageVocab(passage).length ? '这些词已经在当前词库里了。' : '这一课还没有可抽出的生词。'); return }
+    setVocabUnitId(vocabUnit?.id || units[0]?.id || '')
+    setVocabPicked(Object.fromEntries(drafts.map((draft) => [draft.term, true])))
+    setVocabOpen(true)
+  }
+
+  const addDrafts = (drafts: ImportDraft[]) => {
+    const unit = units.find((item) => item.id === (vocabUnitId || vocabUnit?.id)) || units[0]
+    if (!unit) { setNotice('请先创建一个词库单元。'); return }
+    const have = new Set(unit.words.map((word) => word.term))
+    const words = drafts.filter((draft) => draft.term && !have.has(draft.term)).map(makeFallbackWord)
+    if (!words.length) { setNotice('这些词已经在词库里了。'); return }
+    onAddWords(unit.id, words)
+    setVocabOpen(false)
+    setNotice(`已把 ${words.length} 张词卡放入「${unit.name}」`)
+  }
+
+  const vocabDrafts = passage && vocabUnit ? unusedPassageVocab(passage, vocabUnit.words.map((word) => word.term)) : []
+
+  const renderPassageButton = (item: Passage) => {
+    const progress = passageProgressSummary(item)
+    return (
+      <button key={item.id} className={`passage-item ${item.id === passage?.id ? 'active' : ''}`} onClick={() => setSelectedId(item.id)}>
+        <span>{item.title}</span>
+        <small>
+          {item.status === 'processing' ? (item.statusText || '处理中…')
+            : item.status === 'error' ? (item.statusText || '处理失败')
+              : `${item.sentences.length} 句${progress.practiced ? ` · 已跟读 ${progress.practiced}/${progress.total}` : ''}`}
+        </small>
+      </button>
+    )
   }
 
   return (
@@ -333,7 +506,7 @@ export function PassageView() {
         <div>
           <span className="eyebrow">TEXTBOOK PASSAGE</span>
           <h1>课文学习</h1>
-          <p>管理课文库：自定义标题、查看上传原文、增删课文。也可粘贴或上传 Word / 照片，由 AI 拆句跟读。</p>
+          <p>粘贴后立刻进入课文库，后台拆句并补整句翻译。可按课本分组，一键抽生词，整篇朗读并记录跟读进度。</p>
         </div>
         <div className="hero-actions">
           <button className="primary-button" onClick={() => setUploadOpen(true)}><UploadCloud size={17} />添加课文</button>
@@ -347,16 +520,41 @@ export function PassageView() {
           <aside className="passage-list">
             <b>课文库 {passages.length}</b>
             <input className="passage-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题或原文" />
-            {visiblePassages.map((item) => (
-              <button key={item.id} className={item.id === passage?.id ? 'active' : ''} onClick={() => setSelectedId(item.id)}>
-                <span>{item.title}</span>
-                <small>{item.sentences.length} 句</small>
-              </button>
-            ))}
+            <button type="button" className="passage-book-new" onClick={() => createBook(false)}><BookOpen size={14} />新建课本</button>
+            {books.map((book) => {
+              const items = visiblePassages.filter((item) => item.bookId === book.id)
+              if (query.trim() && !items.length && !book.name.includes(query.trim())) return null
+              return (
+                <div key={book.id} className="passage-book">
+                  <div className="passage-book-head">
+                    <strong>{book.name}</strong>
+                    <span>
+                      <button type="button" onClick={() => renameBook(book)}>改</button>
+                      <button type="button" onClick={() => deleteBook(book)}>删</button>
+                    </span>
+                  </div>
+                  {items.map(renderPassageButton)}
+                  {!items.length && <small className="passage-list-empty">还没有课文</small>}
+                </div>
+              )
+            })}
+            <div className="passage-book">
+              <div className="passage-book-head"><strong>未分组</strong></div>
+              {visiblePassages.filter((item) => !item.bookId).map(renderPassageButton)}
+            </div>
             {query.trim() && !visiblePassages.length && <small className="passage-list-empty">没有匹配的课文</small>}
           </aside>
           {passage && (
             <section className="passage-stage">
+              {passage.status === 'processing' && (
+                <div className="passage-status processing"><LoaderCircle size={16} className="spin" />{passage.statusText || '正在后台处理课文…'}</div>
+              )}
+              {passage.status === 'error' && (
+                <div className="passage-status error">
+                  {passage.statusText || '处理失败'}
+                  <button type="button" onClick={() => void fillPassage(passage.id)}>重试</button>
+                </div>
+              )}
               <div className="passage-toolbar">
                 <div>
                   <label className="passage-title-label">
@@ -366,13 +564,22 @@ export function PassageView() {
                       value={passage.title}
                       maxLength={80}
                       aria-label="课文标题"
-                      onChange={(event) => updatePassage(passage.id, { title: event.target.value.slice(0, 80) })}
-                      onBlur={(event) => updatePassage(passage.id, { title: passageTitle(event.target.value) })}
+                      onChange={(event) => patchPassage(passage.id, { title: event.target.value.slice(0, 80) })}
+                      onBlur={(event) => patchPassage(passage.id, { title: passageTitle(event.target.value) })}
                     />
                   </label>
-                  <small>{passage.sentences.length} 句 · 可改标题</small>
+                  <small>{passage.sentences.length} 句 · 已跟读 {summary.practiced}/{summary.total}{summary.practiced ? ` · 平均最高分 ${summary.average}` : ''} · 可改标题</small>
+                  <label className="passage-book-assign">课本
+                    <select value={passage.bookId || ''} onChange={(event) => movePassage(event.target.value)}>
+                      <option value="">未分组</option>
+                      {books.map((book) => <option key={book.id} value={book.id}>{book.name}</option>)}
+                    </select>
+                    <button type="button" onClick={() => createBook(true)}>新建</button>
+                  </label>
                 </div>
                 <div className="passage-toolbar-actions">
+                  <button type="button" onClick={playAll}>{playingFull ? '停止朗读' : '朗读全文'}</button>
+                  <button type="button" onClick={openVocab}><BookmarkPlus size={15} />抽生词</button>
                   <button type="button" onClick={() => { setMode('source'); setSourceDraft(passage.sourceText); setSourceEditing(false) }}>原文</button>
                   <button className="remove-word" onClick={() => {
                     if (!window.confirm(`删除课文「${passage.title}」？此操作不可恢复。`)) return
@@ -395,7 +602,7 @@ export function PassageView() {
                   <div className="passage-source-actions">
                     <button type="button" onClick={() => { setSourceDraft(passage.sourceText); setSourceEditing(true) }}><SquarePen size={15} />编辑原文</button>
                     <button type="button" disabled={!passage.sourceText} onClick={() => void copySource()}><Copy size={15} />复制原文</button>
-                    <button type="button" disabled={Boolean(busy) || !(sourceEditing ? sourceDraft : passage.sourceText).trim()} onClick={() => void reanalyze()}>重新解析</button>
+                    <button type="button" disabled={passage.status === 'processing' || !(sourceEditing ? sourceDraft : passage.sourceText).trim()} onClick={reanalyze}>重新解析</button>
                   </div>
                   {sourceEditing ? (
                     <>
@@ -412,31 +619,47 @@ export function PassageView() {
               ) : sentence ? (
               <>
               <ol className="passage-sentences">
-                {passage.sentences.map((item, index) => (
-                  <li key={item.id}>
-                    <button className={index === sentenceIndex ? 'active' : ''} onClick={() => goSentence(index, mode === 'read')}>
-                      <em>{index + 1}</em>
-                      <span className="jp">{item.text}</span>
-                    </button>
-                  </li>
-                ))}
+                {passage.sentences.map((item, index) => {
+                  const practice = passage.progress?.[item.id]
+                  return (
+                    <li key={item.id}>
+                      <button className={`${index === sentenceIndex ? 'active' : ''} ${playingFull && index === sentenceIndex ? 'speaking' : ''}`} onClick={() => goSentence(index, mode === 'read')}>
+                        <em>{index + 1}</em>
+                        <span className="jp">{item.text}</span>
+                        <small className={`sentence-progress ${practice?.attempts ? 'done' : ''}`}>
+                          {practice?.attempts ? `${practice.bestScore}分` : '未跟读'}
+                        </small>
+                      </button>
+                    </li>
+                  )
+                })}
               </ol>
               <article className="passage-card">
                 <div className="passage-card-head">
-                  <span className="jp reading">{sentence.reading || '读音由 AI 生成'}</span>
+                  <span className="jp reading">{sentence.reading || (passage.status === 'processing' ? '读音生成中…' : '读音由 AI 生成')}</span>
                   <button className="volume-button" onClick={() => void speakJapanese(sentence.text, voiceGender, { sentence: true })} aria-label="朗读这句"><Volume2 size={19} /></button>
                 </div>
                 <h3 className="jp">{sentence.text}</h3>
-                {mode === 'read' && <SentencePronunciation sentence={sentence} />}
+                {(mode === 'read' || mode === 'explain') && (
+                  hasChineseTranslation(sentence.translation)
+                    ? <p className="translation">{sentence.translation}</p>
+                    : <p className="translation muted">{passage.status === 'processing' ? '整句翻译生成中…' : '暂无整句翻译'}</p>
+                )}
+                {mode === 'read' && (
+                  <SentencePronunciation
+                    sentence={sentence}
+                    onScore={(score) => patchPassage(passage.id, { progress: recordSentenceScore(passage.progress, sentence.id, score) })}
+                  />
+                )}
                 {mode === 'explain' && (
                   <div className="passage-explain">
-                    <p className="translation">{sentence.translation || '暂无整句翻译'}</p>
                     <div className="token-grid">
                       {(sentence.tokens.length ? sentence.tokens : [{ surface: sentence.text, reading: sentence.reading, meaning: sentence.translation || '待补充' }]).map((token, index) => (
                         <div key={`${token.surface}-${index}`}>
                           <b className="jp">{token.surface}</b>
                           <small className="jp">{token.reading}</small>
                           <span>{token.meaning}</span>
+                          <button type="button" className="token-add" onClick={() => addDrafts([{ term: token.surface, reading: token.reading, meaning: token.meaning }])}>做成词卡</button>
                         </div>
                       ))}
                     </div>
@@ -450,7 +673,7 @@ export function PassageView() {
                         {point.pattern && <code className="jp">{point.pattern}</code>}
                         <p>{point.explanation}</p>
                       </article>
-                    )) : <p className="empty-grammar">这一句没有标出特别的语法点。</p>}
+                    )) : <p className="empty-grammar">{passage.status === 'processing' ? '语法标注生成中…' : '这一句没有标出特别的语法点。'}</p>}
                   </div>
                 )}
                 <div className="detail-nav">
@@ -468,27 +691,35 @@ export function PassageView() {
         <div className="wide-empty">
           <ScrollText />
           <h2>还没有课文</h2>
-          <p>粘贴日语课文、上传 Word 文档，或拍一张教材照片。AI 会帮你拆句、释义并标出语法。</p>
+          <p>粘贴日语课文、上传 Word 文档，或拍一张教材照片。会先进入课文库，再在后台拆句并补整句翻译。</p>
           <button onClick={() => setUploadOpen(true)}>添加课文</button>
         </div>
       )}
 
       {uploadOpen && (
         <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !busy && setUploadOpen(false)}>
-          <section className="modal import-modal" onPaste={(event) => { if ((event.target as HTMLElement).tagName !== 'TEXTAREA') void pasteClipboard(event) }}>
+          <section className="modal import-modal" onPaste={(event) => { if (!isPasteField(event.target)) void pasteClipboard(event) }}>
             <button className="modal-close" onClick={() => !busy && setUploadOpen(false)}><X /></button>
             <span className="modal-icon"><FileText /></span>
             <span className="eyebrow">PASSAGE IMPORT</span>
             <h2>添加课文</h2>
-            <p>可以先写标题，再粘贴正文或上传 Word / 照片。标题可随时在课文库里修改。</p>
+            <p>粘贴后会马上出现在课文库，翻译在后台完成，不用盯着弹窗等。</p>
             <label className="passage-add-title">课文标题
               <input value={draftTitle} maxLength={80} onChange={(event) => setDraftTitle(event.target.value)} placeholder="例如：第一课 自己紹介（可不填，由 AI 归纳）" disabled={Boolean(busy)} />
+            </label>
+            <label className="passage-add-title">课本/分组
+              <span className="passage-book-row">
+                <select value={draftBookId} onChange={(event) => setDraftBookId(event.target.value)}>
+                  <option value="">未分组</option>
+                  {books.map((book) => <option key={book.id} value={book.id}>{book.name}</option>)}
+                </select>
+                <button type="button" onClick={() => createBook(false)}>新建课本</button>
+              </span>
             </label>
             <label
               className="drop-zone"
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => { event.preventDefault(); if (!busy) void readUpload(event.dataTransfer.files[0]) }}
-              onPaste={(event) => { void pasteClipboard(event) }}
             >
               <input type="file" accept="image/jpeg,image/png,image/webp,image/*,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.txt,text/plain" hidden disabled={Boolean(busy)} onChange={(event) => { void readUpload(event.target.files?.[0]); event.target.value = '' }} />
               {busy ? <span className="spinner dark" /> : <UploadCloud />}
@@ -504,7 +735,39 @@ export function PassageView() {
               placeholder="在这里粘贴日语课文，例如：昨日、学校で日本語を勉強しました。"
               disabled={Boolean(busy)}
             />
-            <button className="primary-button modal-submit" disabled={Boolean(busy) || !raw.trim()} onClick={() => analyzeText(raw, draftTitle)}>{busy ? busy : <><Sparkles size={18} />生成学习内容</>}</button>
+            <button className="primary-button modal-submit" disabled={Boolean(busy) || ingesting.current || !raw.trim()} onClick={() => {
+              if (ingesting.current || !raw.trim()) return
+              ingesting.current = true
+              queueIngest(raw, [], draftTitle)
+              ingesting.current = false
+            }}>{busy ? busy : <><Sparkles size={18} />生成学习内容</>}</button>
+          </section>
+        </div>
+      )}
+
+      {vocabOpen && passage && vocabUnit && (
+        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setVocabOpen(false)}>
+          <section className="modal import-modal vocab-modal">
+            <button className="modal-close" onClick={() => setVocabOpen(false)}><X /></button>
+            <span className="eyebrow">PASSAGE VOCAB</span>
+            <h2>抽生词进词库</h2>
+            <p>把「{passage.title}」里的单词做成词卡，例如 友達、学校。</p>
+            <label className="passage-add-title">放入单元
+              <select value={vocabUnit.id} onChange={(event) => setVocabUnitId(event.target.value)}>
+                {units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}
+              </select>
+            </label>
+            <div className="vocab-pick-list">
+              {vocabDrafts.map((draft) => (
+                <label key={draft.term}>
+                  <input type="checkbox" checked={Boolean(vocabPicked[draft.term])} onChange={(event) => setVocabPicked((current) => ({ ...current, [draft.term]: event.target.checked }))} />
+                  <b className="jp">{draft.term}</b>
+                  <span>{draft.reading}</span>
+                  <em>{draft.meaning}</em>
+                </label>
+              ))}
+            </div>
+            <button className="primary-button modal-submit" onClick={() => addDrafts(vocabDrafts.filter((draft) => vocabPicked[draft.term]))}>做成词卡</button>
           </section>
         </div>
       )}
@@ -512,7 +775,7 @@ export function PassageView() {
   )
 }
 
-function SentencePronunciation({ sentence }: { sentence: PassageSentence }) {
+function SentencePronunciation({ sentence, onScore }: { sentence: PassageSentence; onScore?: (score: number) => void }) {
   const [recording, setRecording] = useState(false)
   const [evaluating, setEvaluating] = useState(false)
   const [transcript, setTranscript] = useState('')
@@ -532,8 +795,10 @@ function SentencePronunciation({ sentence }: { sentence: PassageSentence }) {
   }, [sentence.id])
 
   const finish = (text: string) => {
+    const next = pronunciationScoreFor(text, sentence.text, sentence.reading)
     setTranscript(text)
-    setScore(pronunciationScoreFor(text, sentence.text, sentence.reading))
+    setScore(next)
+    onScore?.(next)
     setRecording(false)
     setEvaluating(false)
   }

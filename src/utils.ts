@@ -90,7 +90,8 @@ export function pronunciationScore(transcript: string, word: Word) {
 export function splitJapaneseSentences(raw: string) {
   return raw
     .replace(/\r\n/g, '\n')
-    .split(/(?<=[。．！？!?])/u)
+    .split(/\n+/)
+    .flatMap((line) => line.split(/(?<=[。．！？!?])/u))
     .map((line) => line.replace(/\s+/g, ' ').trim())
     .filter(Boolean)
 }

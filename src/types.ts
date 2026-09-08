@@ -27,6 +27,11 @@ export type Unit = {
   words: Word[]
 }
 
+export type PassageBook = {
+  id: string
+  name: string
+}
+
 export type View = 'library' | 'study' | 'passage' | 'test' | 'wordbook' | 'review' | 'settings'
 
 export type VoiceGender = 'female' | 'male'
@@ -63,10 +68,23 @@ export type PassageSentence = {
   grammar: PassageGrammar[]
 }
 
+export type SentenceProgress = {
+  attempts: number
+  lastScore: number
+  bestScore: number
+}
+
+export type PassageStatus = 'ready' | 'processing' | 'error'
+
 export type Passage = {
   id: string
   title: string
   sourceText: string
   sentences: PassageSentence[]
   createdAt: number
+  bookId?: string
+  bookName?: string
+  progress?: Record<string, SentenceProgress>
+  status?: PassageStatus
+  statusText?: string
 }

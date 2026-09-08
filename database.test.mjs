@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { validatePassages, validateState } from './database.mjs'
+import { normalizePassageBooks, validatePassages, validateState } from './database.mjs'
 
 const validState = {
   units: [{ id: 'unit-1', name: '第一单元', words: [{ id: 'word-1', term: '水' }] }],
@@ -29,5 +29,12 @@ describe('passage validation', () => {
   it('rejects missing ids and oversized libraries', () => {
     expect(() => validatePassages({ passages: [{ id: '', title: '第一课' }] })).toThrow('INVALID_PASSAGE')
     expect(() => validatePassages({ passages: Array.from({ length: 51 }, (_, index) => ({ id: `p${index}`, title: '课' })) })).toThrow('TOO_MANY_PASSAGES')
+  })
+
+  it('keeps textbook groups even when no lesson is assigned yet', () => {
+    expect(normalizePassageBooks({
+      books: [{ id: 'book-1', name: '大家的日语 第1册' }],
+      passages: [{ id: 'p1', title: '第一课' }],
+    })).toEqual([{ id: 'book-1', name: '大家的日语 第1册' }])
   })
 })

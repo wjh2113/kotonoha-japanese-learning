@@ -25,12 +25,30 @@ export function validateState(input) {
   return { units, settings }
 }
 
+const BOOKS_META_ID = '__kotonoha_books__'
+
 export function validatePassages(input) {
-  const passages = Array.isArray(input?.passages) ? input.passages : null
+  const passages = Array.isArray(input?.passages)
+    ? input.passages.filter((item) => text(item?.id) !== BOOKS_META_ID)
+    : null
   if (!passages) throw new Error('INVALID_PASSAGES')
   if (passages.length > 50) throw new Error('TOO_MANY_PASSAGES')
   if (passages.some((item) => !text(item?.id) || !text(item?.title))) throw new Error('INVALID_PASSAGE')
   return passages
+}
+
+export function normalizePassageBooks(input, passages = []) {
+  const map = new Map()
+  const rows = [
+    ...(Array.isArray(input?.books) ? input.books : []),
+    ...passages.map((passage) => ({ id: passage?.bookId, name: passage?.bookName })),
+  ]
+  for (const book of rows) {
+    const id = text(book?.id).slice(0, 40)
+    if (!id || id === BOOKS_META_ID) continue
+    map.set(id, text(book?.name).slice(0, 80) || map.get(id) || '未命名课本')
+  }
+  return [...map.entries()].map(([id, name]) => ({ id, name })).slice(0, 40)
 }
 
 export function createDatabase(connectionString) {
@@ -138,29 +156,55 @@ export function createDatabase(connectionString) {
 
   const listPassages = async () => {
     const result = await pool.query('SELECT id, title, source_text, analysis, created_at FROM passages ORDER BY sort_order, created_at, id')
-    return result.rows.map((row) => ({
+    const meta = result.rows.find((row) => row.id === BOOKS_META_ID)
+    const books = Array.isArray(meta?.analysis?.books)
+      ? meta.analysis.books
+        .map((book) => ({ id: text(book?.id).slice(0, 40), name: text(book?.name).slice(0, 80) }))
+        .filter((book) => book.id && book.name)
+        .slice(0, 40)
+      : []
+    const passages = result.rows.filter((row) => row.id !== BOOKS_META_ID).map((row) => ({
       id: row.id,
       title: row.title,
       sourceText: row.source_text,
       sentences: Array.isArray(row.analysis?.sentences) ? row.analysis.sentences : [],
+      bookId: row.analysis?.bookId || '',
+      bookName: row.analysis?.bookName || '',
+      progress: row.analysis?.progress && typeof row.analysis.progress === 'object' ? row.analysis.progress : {},
+      status: row.analysis?.status === 'processing' || row.analysis?.status === 'error' ? row.analysis.status : 'ready',
+      statusText: row.analysis?.statusText || '',
       createdAt: row.created_at.getTime(),
     }))
+    return { passages, books }
   }
 
   const replacePassages = async (input) => {
     const passages = validatePassages(input)
+    const books = normalizePassageBooks(input, passages)
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
       await client.query('DELETE FROM passages')
       for (const [index, passage] of passages.entries()) {
         const sentences = Array.isArray(passage.sentences) ? passage.sentences.slice(0, 80) : []
+        const progress = passage.progress && typeof passage.progress === 'object' ? passage.progress : {}
         await client.query(
           'INSERT INTO passages (id, title, source_text, analysis, sort_order, created_at) VALUES ($1, $2, $3, $4, $5, COALESCE($6, NOW()))',
           [text(passage.id), text(passage.title).slice(0, 80), text(passage.sourceText).slice(0, 20_000),
-            JSON.stringify({ sentences }), index, timestamp(passage.createdAt)],
+            JSON.stringify({
+              sentences,
+              bookId: text(passage.bookId).slice(0, 40),
+              bookName: text(passage.bookName).slice(0, 80),
+              progress,
+              status: passage.status === 'processing' || passage.status === 'error' ? passage.status : 'ready',
+              statusText: text(passage.statusText).slice(0, 120),
+            }), index, timestamp(passage.createdAt)],
         )
       }
+      await client.query(
+        'INSERT INTO passages (id, title, source_text, analysis, sort_order, created_at) VALUES ($1, $2, $3, $4, $5, NOW())',
+        [BOOKS_META_ID, '课本分组', '', JSON.stringify({ books, sentences: [] }), passages.length],
+      )
       await client.query('COMMIT')
       return listPassages()
     } catch (error) {

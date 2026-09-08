@@ -36,3 +36,31 @@ export async function speakJapanese(text: string, voiceGender: VoiceGender, opti
   utterance.onerror = () => options.onEnd?.()
   speechSynthesis.speak(utterance)
 }
+
+export function stopSpeaking() {
+  if (typeof speechSynthesis === 'undefined') return
+  speechSynthesis.cancel()
+}
+
+export async function speakJapaneseQueue(texts: string[], voiceGender: VoiceGender, options: {
+  sentence?: boolean
+  onIndex?: (index: number) => void
+  onAllEnd?: () => void
+} = {}) {
+  if (typeof speechSynthesis === 'undefined') return
+  const lines = texts.map((item) => item.trim()).filter(Boolean)
+  if (!lines.length) return
+  speechSynthesis.cancel()
+  const voice = selectJapaneseVoice(await loadSpeechVoices(), voiceGender).voice
+  lines.forEach((text, index) => {
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.lang = 'ja-JP'
+    utterance.rate = options.sentence ? 0.82 : 0.72
+    utterance.pitch = voiceGender === 'male' ? 0.72 : 1.06
+    utterance.voice = voice
+    utterance.onstart = () => options.onIndex?.(index)
+    utterance.onend = () => { if (index === lines.length - 1) options.onAllEnd?.() }
+    utterance.onerror = () => { if (index === lines.length - 1) options.onAllEnd?.() }
+    speechSynthesis.speak(utterance)
+  })
+}

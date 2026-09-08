@@ -418,11 +418,25 @@ body { background: var(--cream); color: var(--ink); }
 .passage-list > b { padding: 0 8px 8px; font-size: 12px; }
 .passage-search { height: 36px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; background: #fff; font-size: 13px; }
 .passage-list-empty { padding: 8px; color: #8d8e89; }
-.passage-list button { border: 0; background: #faf8f4; border-radius: 8px; padding: 10px 11px; text-align: left; cursor: pointer; display: grid; }
-.passage-list button span, .passage-list button small { display: block; }
-.passage-list button span { font-size: 13px; font-weight: 700; }
-.passage-list button small { margin-top: 3px; color: #8d8e89; font-size: 10px; }
-.passage-list button.active { background: #fff3ef; color: var(--red); }
+.passage-book-new { height: 34px; border: 1px dashed #e5e0d8; border-radius: 8px; background: #fff; color: #6e7278; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.passage-book { display: grid; gap: 4px; padding: 6px 0 8px; border-top: 1px solid #f0ece4; }
+.passage-book-head { display: flex; justify-content: space-between; align-items: center; padding: 2px 8px; }
+.passage-book-head strong { font-size: 11px; color: #6e7278; }
+.passage-book-head button { height: auto; padding: 0 6px; border: 0; background: none; color: #a39f98; font-size: 11px; cursor: pointer; min-width: auto; }
+.passage-item { border: 0; background: #faf8f4; border-radius: 8px; padding: 10px 11px; text-align: left; cursor: pointer; display: grid; width: 100%; }
+.passage-item span, .passage-item small { display: block; }
+.passage-item span { font-size: 13px; font-weight: 700; }
+.passage-item small { margin-top: 3px; color: #8d8e89; font-size: 10px; }
+.passage-item.active { background: #fff3ef; color: var(--red); }
+.passage-status { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; font-size: 12px; display: flex; align-items: center; gap: 8px; }
+.passage-status.processing { background: #f4f7f2; color: #4f6d55; }
+.passage-status.error { background: #fff6f3; color: #8a534c; justify-content: space-between; }
+.passage-status.error button { border: 0; background: none; color: inherit; cursor: pointer; font-weight: 700; }
+.passage-status .spin { animation: passage-spin 1s linear infinite; }
+@keyframes passage-spin { to { transform: rotate(360deg); } }
+.passage-book-assign, .passage-book-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: #6e7278; }
+.passage-book-assign select, .passage-book-row select { height: 32px; border: 1px solid var(--line); border-radius: 8px; padding: 0 8px; background: white; }
+.passage-book-assign button, .passage-book-row button { height: 32px; padding: 0 10px; border: 1px solid #e5e0d8; border-radius: 8px; background: white; cursor: pointer; font-size: 12px; }
 .passage-stage { min-width: 0; }
 .passage-toolbar { display: flex; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 12px; }
 .passage-toolbar h2 { margin: 0; font-size: 20px; }
@@ -442,9 +456,20 @@ body { background: var(--cream); color: var(--ink); }
 .passage-modes button { height: 36px; padding: 0 14px; border: 1px solid #e5e0d8; border-radius: 8px; background: white; cursor: pointer; font-size: 12px; font-weight: 700; }
 .passage-modes button.active { background: var(--red); border-color: var(--red); color: white; }
 .passage-sentences { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; max-height: 180px; overflow: auto; }
-.passage-sentences button { width: 100%; border: 1px solid var(--line); background: white; border-radius: 8px; padding: 9px 11px; display: flex; gap: 10px; text-align: left; cursor: pointer; }
+.passage-sentences button { width: 100%; border: 1px solid var(--line); background: white; border-radius: 8px; padding: 9px 11px; display: flex; gap: 10px; align-items: center; text-align: left; cursor: pointer; }
 .passage-sentences button.active { border-color: #f08f7f; background: #fff8f5; }
+.passage-sentences button.speaking { box-shadow: inset 3px 0 var(--red); }
 .passage-sentences em { min-width: 22px; color: #a39f98; font-style: normal; font-size: 11px; }
+.passage-sentences .jp { flex: 1; }
+.sentence-progress { margin-left: auto; color: #b0aaa3; font-size: 10px; white-space: nowrap; }
+.sentence-progress.done { color: #6f8e89; font-weight: 700; }
+.translation.muted { color: #a39f98; }
+.token-add { margin-top: 8px; border: 0; background: none; color: var(--red); cursor: pointer; font-size: 11px; padding: 0; }
+.vocab-pick-list { display: grid; gap: 8px; max-height: 320px; overflow: auto; margin: 0 0 16px; }
+.vocab-pick-list label { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.vocab-pick-list input { grid-row: span 2; }
+.vocab-pick-list b { font-size: 16px; }
+.vocab-pick-list span, .vocab-pick-list em { color: #8d8e89; font-size: 12px; font-style: normal; }
 .passage-card { background: white; border: 1px solid var(--line); border-radius: 14px; padding: 22px 22px 18px; }
 .passage-card-head { display: flex; justify-content: space-between; align-items: center; }
 .passage-card-head .reading { color: #a56f65; font-size: 13px; }
@@ -548,7 +573,8 @@ body { background: var(--cream); color: var(--ink); }
   .passage-list { display: flex; gap: 8px; overflow: auto; padding: 12px; align-items: center; }
   .passage-list > b { display: none; }
   .passage-search { min-width: 120px; flex: 0 0 auto; }
-  .passage-list button { min-width: 140px; }
+  .passage-item { min-width: 140px; }
+  .passage-book { min-width: 200px; border-top: 0; border-right: 1px solid #f0ece4; padding-right: 8px; }
   .passage-title-input { width: 100%; font-size: 16px; }
   .passage-toolbar { flex-direction: column; }
   .quiz-card { padding: 28px 18px; border-radius: 18px; }

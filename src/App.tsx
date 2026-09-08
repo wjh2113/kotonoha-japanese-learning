@@ -269,7 +269,10 @@ function App() {
         {view === 'test' && unit && <TestView unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')} onAnswer={(word, kind, correct) => updateWord(word.id, recordQuizAnswer(word, kind, correct))} />}
         {view === 'wordbook' && <WordbookView units={units} onRemove={(wordId, targetUnitId) => { updateWord(wordId, { starred: false }, targetUnitId); setToast('已移出生词本') }} />}
         {view === 'review' && <ReviewView units={units} onReview={(word, targetUnitId, remembered) => { updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId); setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒') }} />}
-        {view === 'passage' && <PassageView />}
+        {view === 'passage' && <PassageView units={units} onAddWords={(targetUnitId, words) => {
+          const target = units.find((item) => item.id === targetUnitId)
+          if (target) addImportedWords(target, words)
+        }} />}
         {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} starredCount={starredCount} onView={nav} />}
       </main>
       <MobileTabBar view={view} reviewCount={reviewCount} onView={nav} />

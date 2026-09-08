@@ -440,7 +440,7 @@ app.post('/api/transcribe', rateLimit(60_000, 12), async (req, res) => {
 
 app.get('/api/passages', async (_req, res) => {
   try {
-    res.json({ passages: await database.listPassages() })
+    res.json(await database.listPassages())
   } catch (error) {
     console.error(error)
     res.status(500).json({ error: '读取课文失败。' })
@@ -449,7 +449,7 @@ app.get('/api/passages', async (_req, res) => {
 
 app.put('/api/passages', async (req, res) => {
   try {
-    res.json({ passages: await database.replacePassages(req.body) })
+    res.json(await database.replacePassages(req.body))
   } catch (error) {
     console.error(error)
     const clientError = ['INVALID_PASSAGES', 'TOO_MANY_PASSAGES', 'INVALID_PASSAGE'].includes(error.message)
@@ -488,34 +488,56 @@ app.post('/api/passage/ocr', rateLimit(60_000, 8), async (req, res) => {
   }
 })
 
-app.post('/api/passage/analyze', rateLimit(60_000, 10), async (req, res) => {
+async function analyzePassageWithModel(sourceText, exactSentences) {
+  const lines = Array.isArray(exactSentences)
+    ? exactSentences.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 6)
+    : []
+  const system = [
+    '你是严谨的日语教师，服务中文母语的日语初学者。',
+    '把课文拆成句子。每句给出：原文、平假名读音、中文整句翻译、逐词注释、语法点。',
+    'tokens 按出现顺序覆盖整句；surface 用原文字形；reading 用平假名；meaning 用简明中文。',
+    'grammar 只标对理解有帮助的语法（助词、活用、句型），name 用日语或通用语法名，explanation 用中文。',
+    'translation 必须是完整中文句子，禁止留空，禁止只用日语或罗马音。对话行保留 A/B 角色。',
+    '只返回一个 JSON 对象，不要 Markdown。格式：',
+    '{"title":"","sentences":[{"text":"","reading":"","translation":"","tokens":[{"surface":"","reading":"","meaning":""}],"grammar":[{"name":"","pattern":"","explanation":""}]}]}',
+  ]
+  if (lines.length) {
+    system.push('必须按给定句子逐条解析，不要合并、拆分、改写或省略。sentences 数量必须等于输入句数，text 必须与输入完全一致。')
+  }
+  const { data } = await callGateway('/api/ai/chat', {
+    tenantId,
+    capability: process.env.LLM_GATEWAY_CHAT_CAPABILITY || 'quality-chat',
+    messages: [
+      { role: 'system', content: system.join('') },
+      { role: 'user', content: lines.length
+        ? `请解析这些已经拆好的日语句子：\n${lines.map((text, index) => `${index + 1}. ${text}`).join('\n')}`
+        : `请解析下面的日语课文：\n${sourceText}` },
+    ],
+    dataClass: 'internal',
+    fallback: true,
+    stream: false,
+    temperature: 0.15,
+    max_tokens: lines.length ? 4096 : 8192,
+  }, lines.length ? 90_000 : 120_000)
+  const parsed = parseJsonContent(data?.choices?.[0]?.message?.content)
+  if (!Array.isArray(parsed.sentences) || !parsed.sentences.length) throw new Error('模型没有返回句子。')
+  if (lines.length) {
+    parsed.sentences = lines.map((text, index) => {
+      const match = parsed.sentences.find((item) => String(item?.text || '').trim() === text) || parsed.sentences[index] || {}
+      return { ...match, text }
+    })
+  }
+  return parsed
+}
+
+app.post('/api/passage/analyze', rateLimit(60_000, 30), async (req, res) => {
   const sourceText = String(req.body?.text || '').trim().slice(0, 8000)
-  if (!sourceText) return res.status(400).json({ error: '请提供课文内容。' })
+  const requested = Array.isArray(req.body?.sentences)
+    ? req.body.sentences.map((item) => String(item?.text || item || '').trim()).filter(Boolean).slice(0, 6)
+    : []
+  if (!sourceText && !requested.length) return res.status(400).json({ error: '请提供课文内容。' })
   try {
-    const system = [
-      '你是严谨的日语教师，服务中文母语的日语初学者。',
-      '把课文拆成句子。每句给出：原文、平假名读音、中文整句翻译、逐词注释、语法点。',
-      'tokens 按出现顺序覆盖整句；surface 用原文字形；reading 用平假名；meaning 用简明中文。',
-      'grammar 只标对理解有帮助的语法（助词、活用、句型），name 用日语或通用语法名，explanation 用中文。',
-      '只返回一个 JSON 对象，不要 Markdown。格式：',
-      '{"title":"","sentences":[{"text":"","reading":"","translation":"","tokens":[{"surface":"","reading":"","meaning":""}],"grammar":[{"name":"","pattern":"","explanation":""}]}]}',
-    ].join('')
-    const { data } = await callGateway('/api/ai/chat', {
-      tenantId,
-      capability: process.env.LLM_GATEWAY_CHAT_CAPABILITY || 'quality-chat',
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: `请解析下面的日语课文：\n${sourceText}` },
-      ],
-      dataClass: 'internal',
-      fallback: true,
-      stream: false,
-      temperature: 0.15,
-      max_tokens: 8192,
-    }, 120000)
-    const parsed = parseJsonContent(data?.choices?.[0]?.message?.content)
-    if (!Array.isArray(parsed.sentences) || !parsed.sentences.length) throw new Error('模型没有返回句子。')
-    res.json(parsed)
+    res.json(await analyzePassageWithModel(sourceText, requested))
   } catch (error) {
     console.error(error)
     const message = error.message === 'LLM_NOT_CONFIGURED' ? '尚未配置 AI 网关，无法解析课文。' : error.message || '课文解析失败。'
