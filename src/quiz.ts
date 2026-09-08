@@ -1,33 +1,39 @@
 import { initialUnits } from './data'
+import { isChineseGloss, looksLikeVocabularyTerm, quizGloss } from './lexeme'
 import type { Word } from './types'
 import { shuffle } from './utils'
 
 export const ENRICH_BATCH_SIZE = 20
 
 export function isPlaceholderMeaning(meaning?: string) {
-  const text = String(meaning || '').trim()
-  if (!text) return true
-  return /待补充|未知|不明|暂无|未查询|词义缺失|n\/a|unknown/i.test(text)
+  return !isChineseGloss(meaning)
 }
 
-export function usableQuizWords(words: Word[]) {
-  return words.filter((word) => word.term.trim() && !isPlaceholderMeaning(word.meaning))
+export function usableQuizWords(words: Word[], kind: 'listening' | 'meaning' = 'meaning') {
+  return words.filter((word) => kind === 'listening'
+    ? looksLikeVocabularyTerm(word.term)
+    : Boolean(word.term.trim()) && isChineseGloss(word.meaning))
 }
 
-export function buildQuizOptions(current: Word, pool: Word[], extra: Word[] = []) {
-  const wanted = current.meaning.trim()
+export function optionLabel(word: Word, kind: 'listening' | 'meaning') {
+  return kind === 'listening' ? word.term.trim() : quizGloss(word.meaning)
+}
+
+export function buildQuizOptions(current: Word, pool: Word[], extra: Word[] = [], kind: 'listening' | 'meaning' = 'meaning') {
+  const wanted = optionLabel(current, kind)
   const seen = new Set<string>([wanted])
   const candidates = shuffle([...pool, ...extra])
   const distractors: Word[] = []
   for (const word of candidates) {
-    const meaning = word.meaning.trim()
-    if (word.id === current.id || isPlaceholderMeaning(meaning) || seen.has(meaning)) continue
-    seen.add(meaning)
+    if (word.id === current.id) continue
+    if (kind === 'listening' ? !looksLikeVocabularyTerm(word.term) : !isChineseGloss(word.meaning)) continue
+    const label = optionLabel(word, kind)
+    if (!label || seen.has(label)) continue
+    seen.add(label)
     distractors.push(word)
     if (distractors.length >= 3) break
   }
-  const options = [current, ...distractors]
-  return shuffle(options)
+  return shuffle([current, ...distractors])
 }
 
 export function sharedDistractors() {
@@ -39,7 +45,7 @@ export function mergeEnrichedWord(word: Word, extra: Partial<Word> = {}): Word {
   return {
     ...word,
     reading: String(extra.reading || word.reading).trim() || word.reading,
-    meaning: isPlaceholderMeaning(meaning) ? word.meaning : meaning,
+    meaning: isChineseGloss(meaning) ? meaning : word.meaning,
     partOfSpeech: String(extra.partOfSpeech || word.partOfSpeech).trim() || word.partOfSpeech,
     example: String(extra.example || word.example).trim() || word.example,
     exampleReading: String(extra.exampleReading || word.exampleReading).trim() || word.exampleReading,

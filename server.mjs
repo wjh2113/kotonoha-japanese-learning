@@ -3,7 +3,7 @@ import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createDatabase } from './database.mjs'
-import { extractUploadedLexeme, looksLikeVocabularyTerm, normalizeImportDrafts } from './lexeme.mjs'
+import { extractUploadedLexeme, isChineseGloss, looksLikeVocabularyTerm, normalizeImportDrafts } from './lexeme.mjs'
 
 const app = express()
 const port = Number(process.env.PORT || 8787)
@@ -182,14 +182,13 @@ async function callGateway(pathname, payload, timeoutMs = 90000) {
 }
 
 function isPlaceholderMeaning(meaning) {
-  const text = String(meaning || '').trim()
-  if (!text) return true
-  return /待补充|未知|不明|暂无|未查询|词义缺失|n\/a|unknown/i.test(text)
+  return !isChineseGloss(meaning)
 }
 
 async function enrichWordsWithModel(words, unitName) {
   const system = [
     '你是严谨的日语教师。为中文母语的日语初学者解析词汇。',
+    '释义必须用简短中文（2到12个汉字），禁止罗马音、英文、假名当释义。',
     '释义简明准确；读音仅用平假名；词性使用中文；例句控制在 JLPT N5-N4 难度。',
     '例句必须自然、短小，且包含目标词；提供准确中文翻译。',
     '保持输入顺序，每个输入只返回一个结果。',

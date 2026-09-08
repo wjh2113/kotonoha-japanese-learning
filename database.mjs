@@ -94,7 +94,7 @@ export function createDatabase(connectionString) {
           if (!term || seenTerms.has(term)) continue
           seenTerms.add(term)
           const meaning = text(word.meaning)
-          const placeholder = !meaning || /待补充|未知|不明|暂无|未查询|词义缺失|n\/a|unknown/i.test(meaning)
+          const placeholder = !meaning || /待补充|未知|不明|暂无|未查询|词义缺失|n\/a|unknown/i.test(meaning) || !/[一-鿿]/.test(meaning)
           const dirtyExample = /笔记|批注|手写/.test(`${word.example || ''}${word.translation || ''}`)
           await client.query(
             `INSERT INTO words (id, unit_id, term, reading, meaning, part_of_speech, example,
@@ -169,6 +169,7 @@ export function createDatabase(connectionString) {
        WHERE btrim(w.meaning) = ''
           OR w.meaning ~ '(待补充|未知|不明|暂无|未查询|词义缺失)'
           OR lower(w.meaning) IN ('unknown', 'n/a', 'none')
+          OR w.meaning !~ '[一-鿿]'
        ORDER BY u.sort_order, w.sort_order, w.id
        LIMIT $1`,
       [Math.max(1, Math.min(Number(limit) || 20, 50))],
@@ -188,7 +189,8 @@ export function createDatabase(connectionString) {
       `SELECT COUNT(*)::int AS count FROM words
        WHERE btrim(meaning) = ''
           OR meaning ~ '(待补充|未知|不明|暂无|未查询|词义缺失)'
-          OR lower(meaning) IN ('unknown', 'n/a', 'none')`,
+          OR lower(meaning) IN ('unknown', 'n/a', 'none')
+          OR meaning !~ '[一-鿿]'`,
     )
     return result.rows[0]?.count || 0
   }

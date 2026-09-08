@@ -29,6 +29,27 @@ export function looksLikeVocabularyTerm(term?: string) {
   )
 }
 
+export function isChineseGloss(meaning?: string) {
+  const text = String(meaning || '').trim()
+  if (!text) return false
+  if (/待补充|未知|不明|暂无|未查询|词义缺失|n\/a|unknown/i.test(text)) return false
+  if (!/[\u4e00-\u9fff]/.test(text)) return false
+  const compact = text.replace(/\s/g, '')
+  const letters = (compact.match(/[A-Za-z]/g) || []).length
+  if (letters >= 3 && letters * 2 >= compact.length) return false
+  if (text.length > 24) return false
+  return true
+}
+
+export function quizGloss(meaning?: string) {
+  return String(meaning || '')
+    .trim()
+    .split(/[；;。]/)[0]
+    .replace(/（[^）]*[A-Za-z][^）]*）/g, '')
+    .trim()
+    .slice(0, 16)
+}
+
 function uniqueDrafts(items: Array<{ term?: string; reading?: string; meaning?: string }>): ImportLexeme[] {
   const out: ImportLexeme[] = []
   const seen: string[] = []

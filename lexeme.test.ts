@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractImportDrafts, extractUploadedLexeme, looksLikeVocabularyTerm, normalizeImportDrafts } from './src/lexeme'
+import { extractImportDrafts, extractUploadedLexeme, isChineseGloss, looksLikeVocabularyTerm, normalizeImportDrafts } from './src/lexeme'
 
 describe('extractUploadedLexeme', () => {
   it('keeps a short vocabulary term', () => {
@@ -59,5 +59,14 @@ describe('normalizeImportDrafts', () => {
       { term: '降る', reading: 'ふる' },
     ])
     expect(drafts.map((item) => item.term)).toEqual(['猫', '降る'])
+  })
+})
+
+describe('isChineseGloss', () => {
+  it('rejects romaji and accepts short Chinese glosses', () => {
+    expect(isChineseGloss('okiru')).toBe(false)
+    expect(isChineseGloss('pan')).toBe(false)
+    expect(isChineseGloss('报纸')).toBe(true)
+    expect(isChineseGloss('下（雨、雪等）')).toBe(true)
   })
 })

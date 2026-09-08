@@ -13,7 +13,7 @@ import { SettingsContext, DEFAULT_SETTINGS } from './settings-context'
 import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fetchUnitTheme, isPlaceholderTheme } from './theme'
-import { buildQuizOptions, ENRICH_BATCH_SIZE, isPlaceholderMeaning, mergeEnrichedWord, sharedDistractors, usableQuizWords } from './quiz'
+import { buildQuizOptions, ENRICH_BATCH_SIZE, isPlaceholderMeaning, mergeEnrichedWord, optionLabel, sharedDistractors, usableQuizWords } from './quiz'
 import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, shuffle, uid } from './utils'
 
 const STORAGE_KEY = 'kotonoha-units-v1'
@@ -668,10 +668,11 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [options, setOptions] = useState<Word[]>([])
   const [finished, setFinished] = useState(false)
-  const usable = usableQuizWords(unit.words)
+  const usableMeaning = usableQuizWords(unit.words, 'meaning')
+  const usableListening = usableQuizWords(unit.words, 'listening')
 
   const start = (nextKind: 'listening' | 'meaning') => {
-    const next = shuffle(usable)
+    const next = shuffle(usableQuizWords(unit.words, nextKind))
     setKind(nextKind)
     setQuestions(next)
     setIndex(0)
@@ -687,8 +688,8 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
   const current = questions[index]
   useEffect(() => {
     if (!current) return
-    setOptions(buildQuizOptions(current, unit.words, sharedDistractors()))
-  }, [current, unit.words])
+    setOptions(buildQuizOptions(current, unit.words, sharedDistractors(), kind || 'meaning'))
+  }, [current, unit.words, kind])
   useEffect(() => {
     if (kind !== 'listening' || !current || answers[current.id]) return
     void speakJapanese(current.term, voiceGender)
@@ -711,24 +712,24 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
             <span className="eyebrow">UNIT TEST</span>
             <PageUnitSelect units={units} unit={unit} onUnit={onUnit} label="测试单元" />
             <h1>选择测试方式</h1>
-            <p className="test-mode-copy">本轮会按随机顺序测完这个单元里每一个已有中文释义的单词，一题一词，不再只抽 10 题。</p>
+            <p className="test-mode-copy">本轮会按随机顺序测完这个单元里可用的单词，一题一词。</p>
           </div>
-          <b>{usable.length}<small> / {unit.words.length} 题</small></b>
+          <b>{Math.max(usableMeaning.length, usableListening.length)}<small> / {unit.words.length} 词</small></b>
         </div>
         <div className="test-mode-grid">
-          <button className="test-mode-card" disabled={usable.length < 1} onClick={() => start('listening')}>
+          <button className="test-mode-card" disabled={usableListening.length < 1} onClick={() => start('listening')}>
             <Headphones size={28} />
             <b>听力测试</b>
-            <span>先听日语发音，再选出正确的中文意思。本单元 {usable.length} 个词都会考到。</span>
+            <span>先听日语发音，再从四个单词里选出你听到的那一个。本单元 {usableListening.length} 个词都会考到。</span>
           </button>
-          <button className="test-mode-card" disabled={usable.length < 1} onClick={() => start('meaning')}>
+          <button className="test-mode-card" disabled={usableMeaning.length < 1} onClick={() => start('meaning')}>
             <BookOpen size={28} />
             <b>单词词义测试</b>
-            <span>看到日语单词和读音后，选出正确的中文意思。本单元 {usable.length} 个词都会考到。</span>
+            <span>看到日语单词和读音后，选出正确的中文意思。本单元 {usableMeaning.length} 个词都会考到。</span>
           </button>
         </div>
-        {usable.length < 1 && <p className="test-hint">这个单元还没有可用的中文释义。请稍等 AI 补全，或先到学习页确认词卡。</p>}
-        {usable.length > 0 && usable.length < unit.words.length && <p className="test-hint">还有 {unit.words.length - usable.length} 个词正在补全释义。当前先测已补全的 {usable.length} 个，补完后请再测一次即可覆盖全部。</p>}
+        {usableMeaning.length < 1 && usableListening.length < 1 && <p className="test-hint">这个单元还没有可测的单词。请稍等 AI 补全，或先到学习页确认词卡。</p>}
+        {usableMeaning.length > 0 && usableMeaning.length < unit.words.length && <p className="test-hint">还有 {unit.words.length - usableMeaning.length} 个词的中文释义不合格或正在补全。词义测试先测 {usableMeaning.length} 个；听力仍可测全部日语单词。</p>}
       </div>
     )
   }
@@ -758,7 +759,7 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
         <div>
           <span className="eyebrow">{listening ? 'LISTENING TEST' : 'MEANING TEST'}</span>
           <PageUnitSelect units={units} unit={unit} onUnit={onUnit} label="测试单元" />
-          <h1>{listening ? '听发音，选择中文意思' : '选择正确的中文释义'}</h1>
+          <h1>{listening ? '听发音，选出单词' : '选择正确的中文释义'}</h1>
         </div>
         <b>{index + 1}<small> / {questions.length}</small></b>
       </div>
@@ -775,14 +776,14 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
               <Volume2 size={32} />
             </button>
             <b>点击播放</b>
-            <span>听完后选择下面的中文意思</span>
+            <span>听完后选择下面的单词</span>
           </div>
         )}
         <div className="quiz-options">{options.map((option, i) => {
           const selected = picked === option.id
           const showCorrect = picked && option.id === current.id
           const wrong = selected && option.id !== current.id
-          return <button key={`${option.id}-${i}`} className={`${showCorrect ? 'correct' : ''} ${wrong ? 'wrong' : ''}`} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + i)}</span>{option.meaning}{showCorrect && <CheckCircle2 />}{wrong && <X />}</button>
+          return <button key={`${option.id}-${i}`} className={`${showCorrect ? 'correct' : ''} ${wrong ? 'wrong' : ''}`} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + i)}</span>{listening ? <strong className="jp">{optionLabel(option, 'listening')}</strong> : optionLabel(option, 'meaning')}{showCorrect && <CheckCircle2 />}{wrong && <X />}</button>
         })}</div>
         {picked && <div className={`answer-feedback ${picked === current.id ? 'correct' : 'wrong'}`}><b>{picked === current.id ? '回答正确' : '再记一次'}</b><span className="jp">{current.example}</span><small>{current.translation}</small></div>}
         <button className="primary-button quiz-next" disabled={!picked} onClick={next}>{index === questions.length - 1 ? '查看结果' : '下一题'}<ChevronRight size={18} /></button>
