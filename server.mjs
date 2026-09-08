@@ -180,8 +180,9 @@ async function callGateway(pathname, payload, timeoutMs = 90000) {
   }
 }
 
-app.post('/api/enrich', rateLimit(60_000, 20), async (req, res) => {
-  const words = Array.isArray(req.body?.words) ? req.body.words.slice(0, 40) : []
+app.post('/api/enrich', rateLimit(60_000, 40), async (req, res) => {
+  // Cap one request so the model can finish valid JSON. The client sends the whole unit in batches.
+  const words = Array.isArray(req.body?.words) ? req.body.words.slice(0, 20) : []
   const unitName = String(req.body?.unitName || '').trim().slice(0, 80)
   if (!words.length) return res.status(400).json({ error: '请至少提供一个单词。' })
   if (!gatewayKey) {
@@ -210,7 +211,7 @@ app.post('/api/enrich', rateLimit(60_000, 20), async (req, res) => {
       fallback: true,
       stream: false,
       temperature: 0.2,
-      max_tokens: 4096,
+      max_tokens: 6144,
     })
     const content = data?.choices?.[0]?.message?.content
     const parsed = parseJsonContent(content)

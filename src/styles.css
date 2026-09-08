@@ -557,6 +557,11 @@ body { background: var(--cream); color: var(--ink); }
   .filter-tabs button { min-height: 36px; }
 }
 
+.enrich-banner {
+  margin: 0 16px; padding: 10px 14px; border: 1px solid #f3d9d3; border-radius: 10px;
+  background: #fff6f3; color: #8a534c; font-size: 12px; line-height: 1.5;
+}
+.app-shell > .enrich-banner { margin: 10px 16px 0; }
 .test-mode-copy { margin: 8px 0 0; color: #85878c; font-size: 13px; line-height: 1.6; max-width: 36em; }
 .test-mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 8px; }
 .test-mode-card {

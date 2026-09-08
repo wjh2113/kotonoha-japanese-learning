@@ -10,14 +10,14 @@ describe('quiz meaning filters', () => {
     expect(isPlaceholderMeaning('图书馆')).toBe(false)
   })
 
-  it('keeps one word per distinct meaning and drops placeholders', () => {
+  it('includes every word that already has a real gloss', () => {
     const words = [
       makeFallbackWord({ term: '図書館', meaning: '图书馆' }),
       makeFallbackWord({ term: '学校', meaning: '学校' }),
       makeFallbackWord({ term: '未知語' }),
-      makeFallbackWord({ term: '図書館2', meaning: '图书馆' }),
+      makeFallbackWord({ term: '図書室', meaning: '图书馆' }),
     ]
-    expect(usableQuizWords(words).map((word) => word.term)).toEqual(['図書館', '学校'])
+    expect(usableQuizWords(words).map((word) => word.term)).toEqual(['図書館', '学校', '図書室'])
   })
 
   it('never puts placeholder copy into quiz options', () => {

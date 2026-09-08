@@ -2,6 +2,8 @@ import { initialUnits } from './data'
 import type { Word } from './types'
 import { shuffle } from './utils'
 
+export const ENRICH_BATCH_SIZE = 20
+
 export function isPlaceholderMeaning(meaning?: string) {
   const text = String(meaning || '').trim()
   if (!text) return true
@@ -9,13 +11,7 @@ export function isPlaceholderMeaning(meaning?: string) {
 }
 
 export function usableQuizWords(words: Word[]) {
-  const seen = new Set<string>()
-  return words.filter((word) => {
-    const meaning = word.meaning.trim()
-    if (!word.term.trim() || isPlaceholderMeaning(meaning) || seen.has(meaning)) return false
-    seen.add(meaning)
-    return true
-  })
+  return words.filter((word) => word.term.trim() && !isPlaceholderMeaning(word.meaning))
 }
 
 export function buildQuizOptions(current: Word, pool: Word[], extra: Word[] = []) {
