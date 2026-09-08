@@ -133,6 +133,24 @@ function parseJsonContent(content) {
   return JSON.parse(cleaned.slice(first, last + 1))
 }
 
+function parseThemeDescription(content) {
+  try {
+    const parsed = parseJsonContent(content)
+    const text = String(parsed.unitDescription || parsed.theme || parsed.description || '').trim()
+    if (text) return text
+  } catch { /* some models return a bare Chinese phrase */ }
+  const compact = String(content || '')
+    .replace(/```(?:json)?/gi, '')
+    .replace(/["'`“”]/g, '')
+    .split(/\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !/^[{}[\]]+$/.test(line) && !/^unitDescription/i.test(line))
+    .pop() || ''
+  const theme = compact.replace(/[。．，、.!！？?\s]/g, '')
+  if (theme.length >= 2 && theme.length <= 16) return theme
+  throw new Error('模型没有返回单元主题。')
+}
+
 async function callGateway(pathname, payload, timeoutMs = 90000) {
   if (!gatewayKey) {
     const error = new Error('LLM_NOT_CONFIGURED')
@@ -226,17 +244,17 @@ app.post('/api/unit-theme', rateLimit(60_000, 20), async (req, res) => {
       tenantId,
       capability: process.env.LLM_GATEWAY_CHAT_CAPABILITY || 'quality-chat',
       messages: [
-        { role: 'system', content: '你是日语教材编辑。根据单词列表归纳这个单元的学习主题。只返回一个 JSON 对象：{"unitDescription":""}。unitDescription 必须是 4 到 12 个汉字的中文短语，概括词汇所属生活场景、话题或语法主题，不要重复单元名称，不要标点，不要解释。' },
+        { role: 'system', content: '你是日语教材编辑。根据单词列表归纳这个单元的学习主题。必须只返回 JSON：{"unitDescription":"校园生活"}。unitDescription 用 4 到 12 个汉字概括词汇所属生活场景或话题，不要重复单元名称，不要标点，不要解释，不要 Markdown。' },
         { role: 'user', content: `单元名称：${unitName || '未命名'}\n单词：${terms.join('、')}${meanings.length ? `\n部分释义：${meanings.slice(0, 20).join('、')}` : ''}` },
       ],
       dataClass: 'internal',
       fallback: true,
       stream: false,
       temperature: 0.2,
-      max_tokens: 200,
+      max_tokens: 400,
     }, 30000)
-    const parsed = parseJsonContent(data?.choices?.[0]?.message?.content)
-    const unitDescription = String(parsed.unitDescription || '').replace(/[。．，、.!！？?\s]/g, '').slice(0, 16)
+    const parsed = parseThemeDescription(data?.choices?.[0]?.message?.content)
+    const unitDescription = String(parsed || '').replace(/[。．，、.!！？?\s]/g, '').slice(0, 16)
     if (unitDescription.length < 2) throw new Error('模型没有返回单元主题。')
     res.json({ unitDescription })
   } catch (error) {
