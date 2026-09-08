@@ -15,7 +15,7 @@ const accessPassword = process.env.ACCESS_PASSWORD || ''
 const database = createDatabase(process.env.DATABASE_URL)
 
 app.set('trust proxy', 1)
-app.use(express.json({ limit: '8mb' }))
+app.use(express.json({ limit: '12mb' }))
 
 function sha256buf(value) {
   return crypto.createHash('sha256').update(String(value), 'utf8').digest()
@@ -133,14 +133,14 @@ function parseJsonContent(content) {
   return JSON.parse(cleaned.slice(first, last + 1))
 }
 
-async function callGateway(pathname, payload) {
+async function callGateway(pathname, payload, timeoutMs = 90000) {
   if (!gatewayKey) {
     const error = new Error('LLM_NOT_CONFIGURED')
     error.status = 503
     throw error
   }
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 90000)
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const response = await fetch(`${gatewayUrl}${pathname}`, {
       method: 'POST',
@@ -229,6 +229,91 @@ app.post('/api/transcribe', rateLimit(60_000, 12), async (req, res) => {
   } catch (error) {
     console.error(error)
     res.status(error.status || 500).json({ error: error.name === 'AbortError' ? '语音转写超时。' : error.message || '语音转写失败。' })
+  }
+})
+
+app.get('/api/passages', async (_req, res) => {
+  try {
+    res.json({ passages: await database.listPassages() })
+  } catch (error) {
+    console.error(error)
+    res.status(500).json({ error: '读取课文失败。' })
+  }
+})
+
+app.put('/api/passages', async (req, res) => {
+  try {
+    res.json({ passages: await database.replacePassages(req.body) })
+  } catch (error) {
+    console.error(error)
+    const clientError = ['INVALID_PASSAGES', 'TOO_MANY_PASSAGES', 'INVALID_PASSAGE'].includes(error.message)
+    res.status(clientError ? 400 : 500).json({ error: clientError ? '提交的课文数据无效。' : '写入课文失败。' })
+  }
+})
+
+app.post('/api/passage/ocr', rateLimit(60_000, 8), async (req, res) => {
+  const { imageBase64, mimeType = 'image/jpeg' } = req.body || {}
+  if (typeof imageBase64 !== 'string' || !imageBase64) return res.status(400).json({ error: '请上传课文图片。' })
+  if (imageBase64.length > 8_000_000) return res.status(413).json({ error: '图片过大，请压缩后重试。' })
+  try {
+    const { data } = await callGateway('/api/ai/chat', {
+      tenantId,
+      capability: process.env.LLM_GATEWAY_VISION_CAPABILITY || 'vision',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: '你是日语教师。请识别这张课文/教材照片中的全部日语正文。只输出识别到的原文，保留换行，不要翻译，不要解释，不要Markdown。若几乎没有日语，请输出空字符串。' },
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+        ],
+      }],
+      dataClass: 'internal',
+      fallback: true,
+      stream: false,
+      temperature: 0,
+      max_tokens: 4096,
+    }, 120000)
+    const text = String(data?.choices?.[0]?.message?.content || '').trim()
+    if (!text) return res.status(422).json({ error: '没有识别到日语课文，请换更清晰的照片或直接粘贴文本。' })
+    res.json({ text })
+  } catch (error) {
+    console.error(error)
+    const message = error.message === 'LLM_NOT_CONFIGURED' ? '尚未配置 AI 网关，无法识别图片。' : error.message || '图片识别失败。'
+    res.status(error.status || 500).json({ error: error.name === 'AbortError' ? '图片识别超时。' : message })
+  }
+})
+
+app.post('/api/passage/analyze', rateLimit(60_000, 10), async (req, res) => {
+  const sourceText = String(req.body?.text || '').trim().slice(0, 8000)
+  if (!sourceText) return res.status(400).json({ error: '请提供课文内容。' })
+  try {
+    const system = [
+      '你是严谨的日语教师，服务中文母语的日语初学者。',
+      '把课文拆成句子。每句给出：原文、平假名读音、中文整句翻译、逐词注释、语法点。',
+      'tokens 按出现顺序覆盖整句；surface 用原文字形；reading 用平假名；meaning 用简明中文。',
+      'grammar 只标对理解有帮助的语法（助词、活用、句型），name 用日语或通用语法名，explanation 用中文。',
+      '只返回一个 JSON 对象，不要 Markdown。格式：',
+      '{"title":"","sentences":[{"text":"","reading":"","translation":"","tokens":[{"surface":"","reading":"","meaning":""}],"grammar":[{"name":"","pattern":"","explanation":""}]}]}',
+    ].join('')
+    const { data } = await callGateway('/api/ai/chat', {
+      tenantId,
+      capability: process.env.LLM_GATEWAY_CHAT_CAPABILITY || 'quality-chat',
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: `请解析下面的日语课文：\n${sourceText}` },
+      ],
+      dataClass: 'internal',
+      fallback: true,
+      stream: false,
+      temperature: 0.15,
+      max_tokens: 8192,
+    }, 120000)
+    const parsed = parseJsonContent(data?.choices?.[0]?.message?.content)
+    if (!Array.isArray(parsed.sentences) || !parsed.sentences.length) throw new Error('模型没有返回句子。')
+    res.json(parsed)
+  } catch (error) {
+    console.error(error)
+    const message = error.message === 'LLM_NOT_CONFIGURED' ? '尚未配置 AI 网关，无法解析课文。' : error.message || '课文解析失败。'
+    res.status(error.status || 500).json({ error: error.name === 'AbortError' ? '课文解析超时。' : message })
   }
 })
 

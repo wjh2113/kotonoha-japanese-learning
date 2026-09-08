@@ -23,7 +23,7 @@ export type Unit = {
   words: Word[]
 }
 
-export type View = 'library' | 'study' | 'test' | 'wordbook' | 'review' | 'settings'
+export type View = 'library' | 'study' | 'passage' | 'test' | 'wordbook' | 'review' | 'settings'
 
 export type VoiceGender = 'female' | 'male'
 
@@ -36,4 +36,33 @@ export type ImportDraft = {
   term: string
   reading?: string
   meaning?: string
+}
+
+export type PassageToken = {
+  surface: string
+  reading: string
+  meaning: string
+}
+
+export type PassageGrammar = {
+  name: string
+  pattern: string
+  explanation: string
+}
+
+export type PassageSentence = {
+  id: string
+  text: string
+  reading: string
+  translation: string
+  tokens: PassageToken[]
+  grammar: PassageGrammar[]
+}
+
+export type Passage = {
+  id: string
+  title: string
+  sourceText: string
+  sentences: PassageSentence[]
+  createdAt: number
 }

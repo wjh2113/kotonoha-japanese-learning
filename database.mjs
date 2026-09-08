@@ -24,6 +24,14 @@ export function validateState(input) {
   return { units, settings }
 }
 
+export function validatePassages(input) {
+  const passages = Array.isArray(input?.passages) ? input.passages : null
+  if (!passages) throw new Error('INVALID_PASSAGES')
+  if (passages.length > 50) throw new Error('TOO_MANY_PASSAGES')
+  if (passages.some((item) => !text(item?.id) || !text(item?.title))) throw new Error('INVALID_PASSAGE')
+  return passages
+}
+
 export function createDatabase(connectionString) {
   if (!connectionString) throw new Error('DATABASE_URL is required')
   const pool = new Pool({ connectionString, max: 10, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 5_000 })
@@ -106,5 +114,40 @@ export function createDatabase(connectionString) {
     }
   }
 
-  return { initialize, health, getState, replaceState, close: () => pool.end() }
+  const listPassages = async () => {
+    const result = await pool.query('SELECT id, title, source_text, analysis, created_at FROM passages ORDER BY sort_order, created_at, id')
+    return result.rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      sourceText: row.source_text,
+      sentences: Array.isArray(row.analysis?.sentences) ? row.analysis.sentences : [],
+      createdAt: row.created_at.getTime(),
+    }))
+  }
+
+  const replacePassages = async (input) => {
+    const passages = validatePassages(input)
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('DELETE FROM passages')
+      for (const [index, passage] of passages.entries()) {
+        const sentences = Array.isArray(passage.sentences) ? passage.sentences.slice(0, 80) : []
+        await client.query(
+          'INSERT INTO passages (id, title, source_text, analysis, sort_order, created_at) VALUES ($1, $2, $3, $4, $5, COALESCE($6, NOW()))',
+          [text(passage.id), text(passage.title).slice(0, 80), text(passage.sourceText).slice(0, 20_000),
+            JSON.stringify({ sentences }), index, timestamp(passage.createdAt)],
+        )
+      }
+      await client.query('COMMIT')
+      return listPassages()
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
+  }
+
+  return { initialize, health, getState, replaceState, listPassages, replacePassages, close: () => pool.end() }
 }

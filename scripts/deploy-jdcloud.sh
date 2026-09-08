@@ -72,6 +72,7 @@ set_env LLM_GATEWAY_URL https://aiapimgrapi.aidigitcloud.cn
 set_env LLM_GATEWAY_TENANT Japan
 set_env LLM_GATEWAY_CHAT_CAPABILITY quality-chat
 set_env LLM_GATEWAY_SPEECH_CAPABILITY speech
+set_env LLM_GATEWAY_VISION_CAPABILITY vision
 set_env DATABASE_URL 'postgresql://kotonoha_app:kotonoha_app@127.0.0.1:5433/kotonoha'
 if ! sudo grep -q '^ACCESS_PASSWORD=.' "\${REMOTE_DIR}/.env"; then
   set_env ACCESS_PASSWORD "\${ACCESS_PASSWORD}"
@@ -95,7 +96,10 @@ sudo -u postgres psql -d kotonoha -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA pub
 
 ensure_japan_tenant() {
   local admin_password
-  admin_password="\$(sudo grep -E '^ADMIN_PASSWORD=' /opt/AIapiMgr/backend/.env 2>/dev/null | cut -d= -f2- | tr -d '\\r' || true)"
+  admin_password="\$(sudo docker exec aiapimgr-api-1 printenv ADMIN_PASSWORD 2>/dev/null | tr -d '\\r' || true)"
+  if [[ -z "\${admin_password}" ]]; then
+    admin_password="\$(sudo grep -E '^ADMIN_PASSWORD=' /opt/AIapiMgr/backend/.env 2>/dev/null | cut -d= -f2- | tr -d '\\r' || true)"
+  fi
   if [[ -z "\${admin_password}" ]]; then
     echo "AIapiMgr admin password not found; skip Japan tenant bootstrap"
     return
@@ -125,7 +129,7 @@ ensure_japan_tenant() {
   if [[ -n "\${existing_id}" ]]; then
     curl -fsS -X PUT "http://127.0.0.1:8001/admin/api/tenants/\${existing_id}/capabilities" \
       -H "Authorization: Bearer \${token}" -H 'content-type: application/json' \
-      -d '{"capabilities":["quality-chat","speech"]}' >/dev/null || true
+      -d '{"capabilities":["quality-chat","speech","vision"]}' >/dev/null || true
   fi
   if [[ -n "\${key}" ]]; then
     sudo sed -i "s|^LLM_GATEWAY_API_KEY=.*|LLM_GATEWAY_API_KEY=\${key}|" "\${REMOTE_DIR}/.env"
@@ -165,7 +169,7 @@ server {
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
 
-    client_max_body_size 8m;
+    client_max_body_size 12m;
 
     location / {
         proxy_pass http://127.0.0.1:8791;
@@ -175,8 +179,8 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header Connection "";
-        proxy_read_timeout 120s;
-        proxy_send_timeout 120s;
+        proxy_read_timeout 150s;
+        proxy_send_timeout 150s;
     }
 }
 NGINX

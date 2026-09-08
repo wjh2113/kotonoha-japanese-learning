@@ -188,6 +188,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .mobile-overlay{display:none}
 
 @media (max-width: 1180px) {
+  .header-nav button { padding: 0 9px; font-size: 11px; }
+  .header-nav button svg { display: none; }
   .word-grid { grid-template-columns: repeat(3,minmax(130px,1fr)); }
   .content-columns { grid-template-columns: minmax(430px,1fr) 320px; }
   .daily-progress { grid-template-columns:35px 95px 70px }
@@ -403,4 +405,44 @@ body { background: var(--cream); color: var(--ink); }
 @media (max-width: 470px) {
   .page-unit-select select { min-width: 170px; font-size: 20px; }
   .detail-main-word h2 { font-size: 30px; }
+}
+
+.passage-notice { margin: 0 0 16px; padding: 10px 12px; border: 1px solid #f3d9d3; border-radius: 8px; background: #fff6f3; color: #8a534c; display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; }
+.passage-notice button { border: 0; background: none; color: inherit; cursor: pointer; }
+.passage-layout { display: grid; grid-template-columns: 220px 1fr; gap: 16px; align-items: start; }
+.passage-list { background: white; border: 1px solid var(--line); border-radius: 12px; padding: 16px 12px; display: grid; gap: 6px; }
+.passage-list > b { padding: 0 8px 8px; font-size: 12px; }
+.passage-list button { border: 0; background: #faf8f4; border-radius: 8px; padding: 10px 11px; text-align: left; cursor: pointer; display: grid; }
+.passage-list button span, .passage-list button small { display: block; }
+.passage-list button span { font-size: 13px; font-weight: 700; }
+.passage-list button small { margin-top: 3px; color: #8d8e89; font-size: 10px; }
+.passage-list button.active { background: #fff3ef; color: var(--red); }
+.passage-stage { min-width: 0; }
+.passage-toolbar { display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px; }
+.passage-toolbar h2 { margin: 0; font-size: 20px; }
+.passage-toolbar small { color: #8d8e89; font-size: 11px; }
+.passage-modes { display: flex; gap: 8px; margin-bottom: 12px; }
+.passage-modes button { height: 36px; padding: 0 14px; border: 1px solid #e5e0d8; border-radius: 8px; background: white; cursor: pointer; font-size: 12px; font-weight: 700; }
+.passage-modes button.active { background: var(--red); border-color: var(--red); color: white; }
+.passage-sentences { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; max-height: 180px; overflow: auto; }
+.passage-sentences button { width: 100%; border: 1px solid var(--line); background: white; border-radius: 8px; padding: 9px 11px; display: flex; gap: 10px; text-align: left; cursor: pointer; }
+.passage-sentences button.active { border-color: #f08f7f; background: #fff8f5; }
+.passage-sentences em { min-width: 22px; color: #a39f98; font-style: normal; font-size: 11px; }
+.passage-card { background: white; border: 1px solid var(--line); border-radius: 14px; padding: 22px 22px 18px; }
+.passage-card-head { display: flex; justify-content: space-between; align-items: center; }
+.passage-card-head .reading { color: #a56f65; font-size: 13px; }
+.passage-card h3 { margin: 8px 0 16px; font-size: 28px; line-height: 1.45; }
+.token-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin-top: 14px; }
+.token-grid > div { border: 1px solid #efeae3; border-radius: 8px; padding: 10px 9px; background: #fbfaf6; }
+.token-grid b { display: block; font-size: 16px; }
+.token-grid small { display: block; color: #a56f65; font-size: 10px; margin: 3px 0; }
+.token-grid span { color: #65676c; font-size: 11px; }
+.grammar-list { display: grid; gap: 10px; }
+.grammar-list article { border: 1px solid #efeae3; border-radius: 10px; padding: 12px 14px; background: #fbfaf6; }
+.grammar-list b { display: block; font-size: 14px; }
+.grammar-list code { display: inline-block; margin-top: 6px; color: #a56f65; font-size: 12px; }
+.grammar-list p { margin: 8px 0 0; color: #65676c; font-size: 12px; line-height: 1.6; }
+.empty-grammar, .passage-explain .translation { color: #555960; font-size: 14px; line-height: 1.7; }
+@media (max-width: 900px) {
+  .passage-layout { grid-template-columns: 1fr; }
 }

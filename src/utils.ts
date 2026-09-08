@@ -66,11 +66,24 @@ export function levenshtein(a: string, b: string) {
   return matrix[b.length][a.length]
 }
 
-export function pronunciationScore(transcript: string, word: Word) {
-  const candidates = [word.term, word.reading].map(normalizeJapanese)
+export function pronunciationScoreFor(transcript: string, ...targets: string[]) {
   const spoken = normalizeJapanese(transcript)
+  const candidates = targets.map(normalizeJapanese).filter(Boolean)
+  if (!candidates.length) return 0
   const scores = candidates.map((target) => Math.max(0, Math.round((1 - levenshtein(spoken, target) / Math.max(spoken.length, target.length, 1)) * 100)))
   return Math.max(...scores)
+}
+
+export function pronunciationScore(transcript: string, word: Word) {
+  return pronunciationScoreFor(transcript, word.term, word.reading)
+}
+
+export function splitJapaneseSentences(raw: string) {
+  return raw
+    .replace(/\r\n/g, '\n')
+    .split(/(?<=[。．！？!?])/u)
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
 }
 
 export function matchesTypingAnswer(input: string, word: Word) {

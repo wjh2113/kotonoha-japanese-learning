@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatReviewTime, getReviewState, levenshtein, makeFallbackWord, matchesTypingAnswer, normalizeJapanese, parseVocabulary, pronunciationScore, scheduleReview, toHiragana } from './utils'
+import { formatReviewTime, getReviewState, levenshtein, makeFallbackWord, matchesTypingAnswer, normalizeJapanese, parseVocabulary, pronunciationScore, pronunciationScoreFor, scheduleReview, splitJapaneseSentences, toHiragana } from './utils'
 
 describe('parseVocabulary', () => {
   it('parses one-word-per-line text', () => {
@@ -31,6 +31,11 @@ describe('Japanese pronunciation helpers', () => {
   it('gives a perfect score for matching kana', () => {
     const word = makeFallbackWord({ term: '猫', reading: 'ねこ', meaning: '猫' })
     expect(pronunciationScore('ねこ。', word)).toBe(100)
+  })
+
+  it('scores sentence shadowing against the original line', () => {
+    expect(pronunciationScoreFor('昨日学校へ行きました。', '昨日学校へ行きました。', 'きのうがっこうへいきました')).toBe(100)
+    expect(pronunciationScoreFor('きのうがっこうへいきました', '昨日学校へ行きました。', 'きのうがっこうへいきました')).toBe(100)
   })
 
   it('uses the built-in fallback lexicon', () => {
@@ -79,5 +84,14 @@ describe('typing practice', () => {
   it('rejects a different word and empty input', () => {
     expect(matchesTypingAnswer('水', word)).toBe(false)
     expect(matchesTypingAnswer('  ', word)).toBe(false)
+  })
+})
+
+describe('splitJapaneseSentences', () => {
+  it('splits textbook Japanese on sentence punctuation', () => {
+    expect(splitJapaneseSentences('昨日学校へ行きました。友達に会いました！')).toEqual([
+      '昨日学校へ行きました。',
+      '友達に会いました！',
+    ])
   })
 })

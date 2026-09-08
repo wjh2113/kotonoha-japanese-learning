@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
 import {
   AudioLines, BookMarked, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronLeft, ChevronRight,
   Clock3, FileText, GraduationCap, Import, LayoutGrid, LibraryBig, List, Menu,
@@ -8,14 +8,15 @@ import {
 import { apiFetch, AUTH_REQUIRED_EVENT, getAccessToken, setAccessToken } from './api'
 import { initialUnits } from './data'
 import { readVocabularyFile } from './docx'
+import { PassageView } from './PassageView'
+import { SettingsContext, DEFAULT_SETTINGS } from './settings-context'
+import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
 import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, shuffle, uid } from './utils'
 
 const STORAGE_KEY = 'kotonoha-units-v1'
 const SETTINGS_KEY = 'kotonoha-settings-v1'
 const COLORS = ['#dd5b43', '#668b87', '#d39a43', '#786f95', '#6d8d55']
-const DEFAULT_SETTINGS: AppSettings = { avatar: 'ゆ', voiceGender: 'female' }
-const SettingsContext = createContext<AppSettings>(DEFAULT_SETTINGS)
 
 function App() {
   const [auth, setAuth] = useState<'checking' | 'needed' | 'ok'>('checking')
@@ -214,6 +215,7 @@ function App() {
         {view === 'test' && unit && <TestView unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')} onAnswer={(word, correct) => updateWord(word.id, { mastered: correct || word.mastered, ...scheduleReview(word, correct) })} />}
         {view === 'wordbook' && <WordbookView units={units} onRemove={(wordId, targetUnitId) => { updateWord(wordId, { starred: false }, targetUnitId); setToast('已移出生词本') }} />}
         {view === 'review' && <ReviewView units={units} onReview={(word, targetUnitId, remembered) => { updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId); setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒') }} />}
+        {view === 'passage' && <PassageView />}
         {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} />}
       </main>
 
@@ -234,6 +236,7 @@ function AppHeader({ open, view, settings, starredCount, reviewCount, onMenu, on
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'library', label: '词库', icon: <LibraryBig size={17} /> },
     { id: 'study', label: '学习', icon: <BookOpen size={17} /> },
+    { id: 'passage', label: '课文', icon: <FileText size={17} /> },
     { id: 'test', label: '测试', icon: <GraduationCap size={17} /> },
     { id: 'wordbook', label: '生词本', icon: <BookMarked size={17} />, count: starredCount },
     { id: 'review', label: '待复习', icon: <Clock3 size={17} />, count: reviewCount },
@@ -375,43 +378,6 @@ function WordCard({ word, active, onClick }: { word: Word; active: boolean; onCl
       <span className="card-bottom"><em>{word.partOfSpeech.split('・')[0]}</em><VolumeButton word={word} small /></span>
     </div>
   )
-}
-
-async function loadSpeechVoices() {
-  const current = speechSynthesis.getVoices()
-  if (current.length) return current
-  return new Promise<SpeechSynthesisVoice[]>((resolve) => {
-    const timeout = window.setTimeout(() => resolve(speechSynthesis.getVoices()), 1200)
-    speechSynthesis.addEventListener('voiceschanged', () => {
-      window.clearTimeout(timeout)
-      resolve(speechSynthesis.getVoices())
-    }, { once: true })
-  })
-}
-
-const MALE_VOICE_HINT = /ichiro|keita|takumi|haruto|daichi|naoki|otoya|male|man|男性|男声/i
-const FEMALE_VOICE_HINT = /nanami|ayumi|haruka|kyoko|sayaka|female|woman|女性|女声/i
-
-function selectJapaneseVoice(voices: SpeechSynthesisVoice[], voiceGender: AppSettings['voiceGender']) {
-  const japanese = voices.filter((voice) => voice.lang.toLowerCase().startsWith('ja'))
-  const wanted = voiceGender === 'male' ? MALE_VOICE_HINT : FEMALE_VOICE_HINT
-  const unwanted = voiceGender === 'male' ? FEMALE_VOICE_HINT : MALE_VOICE_HINT
-  const matched = japanese.find((voice) => wanted.test(`${voice.name} ${voice.voiceURI}`))
-  return { voice: matched || japanese.find((voice) => !unwanted.test(`${voice.name} ${voice.voiceURI}`)) || japanese[0] || null, nativeMatch: Boolean(matched) }
-}
-
-async function speakJapanese(text: string, voiceGender: AppSettings['voiceGender'], options: { sentence?: boolean; onStart?: () => void; onEnd?: () => void } = {}) {
-  if (!text.trim() || typeof speechSynthesis === 'undefined') return
-  speechSynthesis.cancel()
-  const utterance = new SpeechSynthesisUtterance(text)
-  utterance.lang = 'ja-JP'
-  utterance.rate = options.sentence ? 0.82 : 0.72
-  utterance.pitch = voiceGender === 'male' ? 0.72 : 1.06
-  utterance.voice = selectJapaneseVoice(await loadSpeechVoices(), voiceGender).voice
-  utterance.onstart = () => options.onStart?.()
-  utterance.onend = () => options.onEnd?.()
-  utterance.onerror = () => options.onEnd?.()
-  speechSynthesis.speak(utterance)
 }
 
 function VolumeButton({ word, small = false, sentence = false }: { word: Word; small?: boolean; sentence?: boolean }) {
