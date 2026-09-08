@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import {
   AudioLines, BookMarked, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronLeft, ChevronRight,
-  Clock3, FileText, GraduationCap, Import, LayoutGrid, LibraryBig, List, Menu,
+  Clock3, FileText, GraduationCap, Headphones, Import, LayoutGrid, LibraryBig, List, Menu,
   Mic, Pause, Plus, Search, Settings, Sparkles, SquarePen,
   Trash2, Trophy, UploadCloud, UserRound, Volume2, X,
 } from 'lucide-react'
@@ -13,6 +13,7 @@ import { SettingsContext, DEFAULT_SETTINGS } from './settings-context'
 import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fetchUnitTheme, isPlaceholderTheme } from './theme'
+import { buildQuizOptions, isPlaceholderMeaning, mergeEnrichedWord, sharedDistractors, usableQuizWords } from './quiz'
 import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, shuffle, uid } from './utils'
 
 const STORAGE_KEY = 'kotonoha-units-v1'
@@ -37,6 +38,7 @@ function App() {
   const [databaseReady, setDatabaseReady] = useState(false)
   const databaseErrorShown = useRef(false)
   const themeRequested = useRef(new Set<string>())
+  const meaningRequested = useRef(new Set<string>())
   const [settings, setSettings] = useState<AppSettings>(() => {
     try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '') } } catch { return DEFAULT_SETTINGS }
   })
@@ -135,6 +137,39 @@ function App() {
         } catch {
           themeRequested.current.delete(item.id)
         }
+      }
+    })()
+  }, [auth, databaseReady, units])
+
+  useEffect(() => {
+    if (auth !== 'ok' || !databaseReady) return
+    const target = units.find((item) => item.words.some((word) => isPlaceholderMeaning(word.meaning) && !meaningRequested.current.has(word.id)))
+    if (!target) return
+    const chunk = target.words.filter((word) => isPlaceholderMeaning(word.meaning) && !meaningRequested.current.has(word.id)).slice(0, 20)
+    if (!chunk.length) return
+    chunk.forEach((word) => meaningRequested.current.add(word.id))
+    void (async () => {
+      try {
+        const response = await apiFetch('/api/enrich', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ unitName: target.name, words: chunk.map((word) => ({ term: word.term, reading: word.reading })) }),
+        })
+        const data = await response.json()
+        if (!response.ok || !Array.isArray(data.words)) throw new Error(data.error || '补全失败')
+        setUnits((current) => current.map((item) => {
+          if (item.id !== target.id) return item
+          return {
+            ...item,
+            words: item.words.map((word) => {
+              const index = chunk.findIndex((entry) => entry.id === word.id)
+              if (index < 0) return word
+              return mergeEnrichedWord(word, data.words[index] || {})
+            }),
+          }
+        }))
+      } catch {
+        chunk.forEach((word) => meaningRequested.current.delete(word.id))
       }
     })()
   }, [auth, databaseReady, units])
@@ -637,22 +672,38 @@ function AccessGate({ onUnlock }: { onUnlock: () => void }) {
 }
 
 function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units: Unit[]; onUnit: (id: string) => void; onBack: () => void; onAnswer: (word: Word, correct: boolean) => void }) {
+  const { voiceGender } = useContext(SettingsContext)
+  const [kind, setKind] = useState<'listening' | 'meaning' | null>(null)
   const [questions, setQuestions] = useState<Word[]>([])
   const [index, setIndex] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [options, setOptions] = useState<Word[]>([])
   const [finished, setFinished] = useState(false)
+  const usable = usableQuizWords(unit.words)
 
-  const start = () => {
-    const next = shuffle(unit.words).slice(0, Math.min(10, unit.words.length))
-    setQuestions(next); setIndex(0); setAnswers({}); setFinished(false)
+  const start = (nextKind: 'listening' | 'meaning') => {
+    const next = shuffle(usable).slice(0, Math.min(10, usable.length))
+    setKind(nextKind)
+    setQuestions(next)
+    setIndex(0)
+    setAnswers({})
+    setFinished(false)
   }
-  useEffect(() => { start() }, [unit.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setKind(null)
+    setQuestions([])
+    setFinished(false)
+    setAnswers({})
+  }, [unit.id])
   const current = questions[index]
   useEffect(() => {
     if (!current) return
-    setOptions(shuffle([current, ...shuffle(unit.words.filter((word) => word.id !== current.id)).slice(0, 3)]))
+    setOptions(buildQuizOptions(current, unit.words, sharedDistractors()))
   }, [current, unit.words])
+  useEffect(() => {
+    if (kind !== 'listening' || !current || answers[current.id]) return
+    void speakJapanese(current.term, voiceGender)
+  }, [kind, current, answers, voiceGender])
   const choose = (id: string) => {
     if (!current || answers[current.id]) return
     setAnswers({ ...answers, [current.id]: id })
@@ -662,26 +713,87 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
   const correct = questions.filter((word) => answers[word.id] === word.id).length
 
   if (!unit.words.length) return <div className="page"><EmptyState onImport={onBack} /></div>
+  if (!kind) {
+    return (
+      <div className="page test-page">
+        <button className="back-link" onClick={onBack}><ChevronLeft size={17} />退出测试</button>
+        <div className="test-top">
+          <div>
+            <span className="eyebrow">QUICK TEST</span>
+            <PageUnitSelect units={units} unit={unit} onUnit={onUnit} label="测试单元" />
+            <h1>选择测试方式</h1>
+            <p className="test-mode-copy">只使用已有中文释义的单词出题。导入时没补上的词会在后台继续补全，不会再出现「待补充 / 未知」选项。</p>
+          </div>
+          <b>{usable.length}<small> / {unit.words.length} 可测</small></b>
+        </div>
+        <div className="test-mode-grid">
+          <button className="test-mode-card" disabled={usable.length < 1} onClick={() => start('listening')}>
+            <Headphones size={28} />
+            <b>听力测试</b>
+            <span>先听日语发音，再选出正确的中文意思。题目不显示汉字，避免靠认字答题。</span>
+          </button>
+          <button className="test-mode-card" disabled={usable.length < 1} onClick={() => start('meaning')}>
+            <BookOpen size={28} />
+            <b>单词词义测试</b>
+            <span>看到日语单词和读音后，选出正确的中文意思。</span>
+          </button>
+        </div>
+        {usable.length < 1 && <p className="test-hint">这个单元还没有可用的中文释义。请稍等 AI 补全，或先到学习页确认词卡。</p>}
+        {usable.length > 0 && usable.length < unit.words.length && <p className="test-hint">已跳过 {unit.words.length - usable.length} 个尚无释义的词，补全后会加入题库。</p>}
+      </div>
+    )
+  }
   if (finished) return (
     <div className="page result-page">
-      <div className="result-card"><span className="result-icon"><Trophy /></span><span className="eyebrow">TEST COMPLETE</span><h1>{correct >= questions.length * .8 ? 'よくできました！' : 'もう一度、挑戦しよう。'}</h1><p>本轮答对 <b>{correct}</b> / {questions.length} 题</p><div className="result-score">{Math.round(correct / questions.length * 100)}<small>分</small></div><div className="result-actions"><button onClick={onBack}>返回学习</button><button className="primary-button" onClick={start}>再测一次</button></div></div>
+      <div className="result-card">
+        <span className="result-icon"><Trophy /></span>
+        <span className="eyebrow">TEST COMPLETE</span>
+        <h1>{correct >= questions.length * .8 ? 'よくできました！' : 'もう一度、挑戦しよう。'}</h1>
+        <p>{kind === 'listening' ? '听力测试' : '词义测试'}答对 <b>{correct}</b> / {questions.length} 题</p>
+        <div className="result-score">{questions.length ? Math.round(correct / questions.length * 100) : 0}<small>分</small></div>
+        <div className="result-actions">
+          <button onClick={() => setKind(null)}>换一种测试</button>
+          <button className="primary-button" onClick={() => start(kind)}>再测一次</button>
+        </div>
+      </div>
     </div>
   )
   if (!current) return null
   const picked = answers[current.id]
+  const listening = kind === 'listening'
+  const revealed = Boolean(picked) || !listening
   return (
     <div className="page test-page">
-      <button className="back-link" onClick={onBack}><ChevronLeft size={17} />退出测试</button>
-      <div className="test-top"><div><span className="eyebrow">QUICK TEST</span><PageUnitSelect units={units} unit={unit} onUnit={onUnit} label="测试单元" /><h1>选择正确的中文释义</h1></div><b>{index + 1}<small> / {questions.length}</small></b></div>
+      <button className="back-link" onClick={() => setKind(null)}><ChevronLeft size={17} />返回选择</button>
+      <div className="test-top">
+        <div>
+          <span className="eyebrow">{listening ? 'LISTENING TEST' : 'MEANING TEST'}</span>
+          <PageUnitSelect units={units} unit={unit} onUnit={onUnit} label="测试单元" />
+          <h1>{listening ? '听发音，选择中文意思' : '选择正确的中文释义'}</h1>
+        </div>
+        <b>{index + 1}<small> / {questions.length}</small></b>
+      </div>
       <div className="test-progress"><i style={{ width: `${((index + (picked ? 1 : 0)) / questions.length) * 100}%` }} /></div>
       <section className="quiz-card">
-        <span className="jp quiz-reading">{current.reading}</span>
-        <div><h2 className="jp">{current.term}</h2><VolumeButton word={current} /></div>
+        {revealed ? (
+          <>
+            <span className="jp quiz-reading">{current.reading}</span>
+            <div><h2 className="jp">{current.term}</h2><VolumeButton word={current} /></div>
+          </>
+        ) : (
+          <div className="quiz-listen">
+            <button className="quiz-listen-play" onClick={() => void speakJapanese(current.term, voiceGender)} aria-label="播放单词">
+              <Volume2 size={32} />
+            </button>
+            <b>点击播放</b>
+            <span>听完后选择下面的中文意思</span>
+          </div>
+        )}
         <div className="quiz-options">{options.map((option, i) => {
           const selected = picked === option.id
           const showCorrect = picked && option.id === current.id
           const wrong = selected && option.id !== current.id
-          return <button key={option.id} className={`${showCorrect ? 'correct' : ''} ${wrong ? 'wrong' : ''}`} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + i)}</span>{option.meaning}{showCorrect && <CheckCircle2 />}{wrong && <X />}</button>
+          return <button key={`${option.id}-${i}`} className={`${showCorrect ? 'correct' : ''} ${wrong ? 'wrong' : ''}`} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + i)}</span>{option.meaning}{showCorrect && <CheckCircle2 />}{wrong && <X />}</button>
         })}</div>
         {picked && <div className={`answer-feedback ${picked === current.id ? 'correct' : 'wrong'}`}><b>{picked === current.id ? '回答正确' : '再记一次'}</b><span className="jp">{current.example}</span><small>{current.translation}</small></div>}
         <button className="primary-button quiz-next" disabled={!picked} onClick={next}>{index === questions.length - 1 ? '查看结果' : '下一题'}<ChevronRight size={18} /></button>
@@ -786,17 +898,19 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
       onImported(words, theme)
     }
     try {
-      const response = await apiFetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ words: drafts.slice(0, 40), unitName: unit.name }) })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'AI 解析失败')
-      const enriched = Array.isArray(data.words) ? data.words as Partial<Word>[] : []
-      const words: Word[] = drafts.map((draft, index) => ({
-        ...makeFallbackWord(draft),
-        ...(enriched[index] || {}),
-        id: uid(),
-        mastered: false,
-        createdAt: Date.now(),
-      }))
+      const enriched: Partial<Word>[] = Array.from({ length: drafts.length }, () => ({}))
+      const chunkSize = 20
+      for (let start = 0; start < drafts.length; start += chunkSize) {
+        const chunk = drafts.slice(start, start + chunkSize)
+        setNotice(`AI 正在补全词卡… ${Math.min(start + chunk.length, drafts.length)}/${drafts.length}`)
+        try {
+          const response = await apiFetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ words: chunk, unitName: unit.name }) })
+          const data = await response.json()
+          if (!response.ok || !Array.isArray(data.words)) throw new Error(data.error || 'AI 解析失败')
+          data.words.forEach((item: Partial<Word>, offset: number) => { enriched[start + offset] = item })
+        } catch { /* this batch stays on local fallback and can be filled later */ }
+      }
+      const words: Word[] = drafts.map((draft, index) => mergeEnrichedWord(makeFallbackWord(draft), enriched[index] || {}))
       await finish(words)
     } catch {
       setNotice('词卡已用本地模板生成，正在尝试单独归纳单元主题…')
