@@ -1,9 +1,10 @@
-import { useContext, useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState, type ClipboardEvent } from 'react'
 import {
   ChevronLeft, ChevronRight, FileText, Mic, Pause,
   ScrollText, Sparkles, Trash2, UploadCloud, Volume2, X,
 } from 'lucide-react'
 import { apiFetch } from './api'
+import { extractDocxPassage, htmlToPassageText, readPassageSource } from './docx'
 import { SettingsContext } from './settings-context'
 import { speakJapanese } from './speech'
 import type { Passage, PassageSentence } from './types'
@@ -195,22 +196,70 @@ export function PassageView() {
     } finally { setBusy('') }
   }
 
-  const readImage = async (file?: File) => {
-    if (!file) return
-    if (!file.type.startsWith('image/')) { setNotice('请上传 JPG、PNG 或 WEBP 图片。'); return }
-    if (file.size > 8 * 1024 * 1024) { setNotice('图片请控制在 8MB 以内。'); return }
-    setBusy('正在识别课文图片…')
+  const ocrImage = async (blob: Blob) => {
+    const file = blob instanceof File ? blob : new File([blob], 'paste.jpg', { type: blob.type || 'image/jpeg' })
+    const imageBase64 = await fileToCompressedJpeg(file)
+    const response = await apiFetch('/api/passage/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageBase64, mimeType: 'image/jpeg' }) })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || '识别失败')
+    return String(data.text || '').trim()
+  }
+
+  const ingestSource = async (text: string, images: Blob[] = []) => {
+    const parts: string[] = []
+    if (text.trim()) parts.push(text.trim())
+    const pictureCount = images.length
+    for (const [index, image] of images.slice(0, 4).entries()) {
+      setBusy(pictureCount > 1 ? `正在识别课文图片 ${index + 1}/${Math.min(pictureCount, 4)}…` : '正在识别课文图片…')
+      const recognized = await ocrImage(image)
+      if (recognized) parts.push(recognized)
+    }
+    const sourceText = parts.join('\n\n').trim()
+    if (!sourceText) throw new Error('没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
+    setRaw(sourceText)
+    await analyzeText(sourceText)
+  }
+
+  const readUpload = async (file?: File) => {
+    if (!file || busy) return
+    setBusy('正在读取课文…')
     setNotice('')
     try {
-      const imageBase64 = await fileToCompressedJpeg(file)
-      const response = await apiFetch('/api/passage/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageBase64, mimeType: 'image/jpeg' }) })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || '识别失败')
-      setRaw(data.text)
-      await analyzeText(data.text)
+      const source = await readPassageSource(file)
+      await ingestSource(source.text, source.images)
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : '图片识别失败。')
-    } finally { setBusy('') }
+      setNotice(reason instanceof Error ? reason.message : '课文读取失败。')
+      setBusy('')
+    }
+  }
+
+  const pasteClipboard = async (event: ClipboardEvent<HTMLElement>, immediate = true) => {
+    if (busy) return
+    const clipboard = event.clipboardData
+    if (!clipboard) return
+    const files = Array.from(clipboard.files || [])
+    const imageFiles = files.filter((file) => file.type.startsWith('image/'))
+    const wordFile = files.find((file) => file.name.toLowerCase().endsWith('.docx') || file.type.includes('wordprocessingml'))
+    const html = clipboard.getData('text/html')
+    const plain = clipboard.getData('text/plain')
+    const htmlText = html ? htmlToPassageText(html) : ''
+    const text = (htmlText.length > plain.trim().length ? htmlText : plain).trim()
+    if (!imageFiles.length && !wordFile && !(immediate && text)) return
+    event.preventDefault()
+    setBusy('正在读取粘贴内容…')
+    setNotice('')
+    try {
+      if (wordFile) {
+        const source = await extractDocxPassage(wordFile)
+        await ingestSource(source.text, source.images)
+        return
+      }
+      await ingestSource(text, imageFiles)
+    } catch (reason) {
+      if (plain.trim()) setRaw(plain)
+      setNotice(reason instanceof Error ? reason.message : '粘贴内容无法识别。')
+      setBusy('')
+    }
   }
 
   const goSentence = (index: number, speak = false) => {
@@ -226,10 +275,10 @@ export function PassageView() {
         <div>
           <span className="eyebrow">TEXTBOOK PASSAGE</span>
           <h1>课文学习</h1>
-          <p>上传课文或教材照片，AI 拆成句子后可跟读纠音、逐词中文解释，并标出语法。</p>
+          <p>粘贴课文、上传 Word（可含图片）或教材照片。AI 拆成句子后可跟读纠音、逐词中文解释，并标出语法。</p>
         </div>
         <div className="hero-actions">
-          <button className="primary-button" onClick={() => setUploadOpen(true)}><UploadCloud size={17} />上传课文</button>
+          <button className="primary-button" onClick={() => setUploadOpen(true)}><UploadCloud size={17} />添加课文</button>
         </div>
       </section>
 
@@ -320,32 +369,40 @@ export function PassageView() {
         <div className="wide-empty">
           <ScrollText />
           <h2>还没有课文</h2>
-          <p>拍一张教材照片，或粘贴日语课文，AI 会帮你拆句、释义并标出语法。</p>
-          <button onClick={() => setUploadOpen(true)}>上传课文</button>
+          <p>粘贴日语课文、上传 Word 文档，或拍一张教材照片。AI 会帮你拆句、释义并标出语法。</p>
+          <button onClick={() => setUploadOpen(true)}>添加课文</button>
         </div>
       )}
 
       {uploadOpen && (
         <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !busy && setUploadOpen(false)}>
-          <section className="modal import-modal">
+          <section className="modal import-modal" onPaste={(event) => { if ((event.target as HTMLElement).tagName !== 'TEXTAREA') void pasteClipboard(event) }}>
             <button className="modal-close" onClick={() => !busy && setUploadOpen(false)}><X /></button>
             <span className="modal-icon"><FileText /></span>
             <span className="eyebrow">PASSAGE IMPORT</span>
-            <h2>上传课文</h2>
-            <p>支持教材照片识别，也可以直接粘贴日语正文。识别后会逐句生成跟读、释义和语法。</p>
+            <h2>添加课文</h2>
+            <p>可以直接复制粘贴日语正文；也支持 Word（里面的图片会自动识别）和教材照片。</p>
             <label
               className="drop-zone"
               onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => { event.preventDefault(); if (!busy) void readImage(event.dataTransfer.files[0]) }}
+              onDrop={(event) => { event.preventDefault(); if (!busy) void readUpload(event.dataTransfer.files[0]) }}
+              onPaste={(event) => { void pasteClipboard(event) }}
             >
-              <input type="file" accept="image/jpeg,image/png,image/webp,image/*" hidden disabled={Boolean(busy)} onChange={(event) => { void readImage(event.target.files?.[0]); event.target.value = '' }} />
+              <input type="file" accept="image/jpeg,image/png,image/webp,image/*,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.txt,text/plain" hidden disabled={Boolean(busy)} onChange={(event) => { void readUpload(event.target.files?.[0]); event.target.value = '' }} />
               {busy ? <span className="spinner dark" /> : <UploadCloud />}
-              <b>{busy || '拖入或点击上传课文图片'}</b>
-              <span>JPG / PNG / WEBP，建议光线均匀、文字清晰</span>
+              <b>{busy || '拖入、点击或直接粘贴'}</b>
+              <span>Word / JPG / PNG / WEBP，Word 内嵌图片也会识别</span>
             </label>
             <div className="or"><span />或粘贴课文<span /></div>
-            <textarea className="import-textarea" value={raw} onChange={(event) => setRaw(event.target.value)} placeholder="昨日、学校で日本語を勉強しました。" disabled={Boolean(busy)} />
-            <button className="primary-button modal-submit" disabled={Boolean(busy) || !raw.trim()} onClick={() => analyzeText(raw)}>{busy ? busy : <><Sparkles size={18} />识别并生成学习内容</>}</button>
+            <textarea
+              className="import-textarea"
+              value={raw}
+              onChange={(event) => setRaw(event.target.value)}
+              onPaste={(event) => { void pasteClipboard(event, false) }}
+              placeholder="在这里粘贴日语课文，例如：昨日、学校で日本語を勉強しました。"
+              disabled={Boolean(busy)}
+            />
+            <button className="primary-button modal-submit" disabled={Boolean(busy) || !raw.trim()} onClick={() => analyzeText(raw)}>{busy ? busy : <><Sparkles size={18} />生成学习内容</>}</button>
           </section>
         </div>
       )}

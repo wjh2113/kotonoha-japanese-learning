@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { docxHtmlToVocabularyText, readVocabularyFile } from './docx'
+import { docxHtmlToVocabularyText, htmlToPassageText, readVocabularyFile } from './docx'
 import { parseVocabulary } from './utils'
 
 describe('Word vocabulary extraction', () => {
@@ -22,5 +22,17 @@ describe('Word vocabulary extraction', () => {
   it('keeps multi-paragraph table cells on one row', () => {
     const html = '<table><tr><td><p>勉強</p></td><td><p>べんきょう</p></td><td><p>学习</p><p>用功</p></td></tr></table>'
     expect(docxHtmlToVocabularyText(html)).toBe('勉強\tべんきょう\t学习 用功')
+  })
+})
+
+describe('Word passage extraction', () => {
+  it('keeps textbook paragraphs and headings as readable text', () => {
+    const html = '<h1>第一課</h1><p>昨日、学校で日本語を勉強しました。</p><p>とても楽しかったです。</p>'
+    expect(htmlToPassageText(html)).toBe('第一課\n昨日、学校で日本語を勉強しました。\nとても楽しかったです。')
+  })
+
+  it('flattens Word tables into sentences instead of vocabulary columns', () => {
+    const html = '<table><tr><td>田中さんは</td><td>学生です。</td></tr></table>'
+    expect(htmlToPassageText(html)).toBe('田中さんは 学生です。')
   })
 })
