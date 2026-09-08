@@ -1,9 +1,10 @@
 import type { ImportDraft, Word } from './types'
 import { fallbackLexicon } from './data'
+import { extractUploadedLexeme, looksLikeVocabularyTerm, normalizeImportDrafts } from '../lexeme.mjs'
 
 export const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
-export function parseVocabulary(raw: string): ImportDraft[] {
+function rawImportDrafts(raw: string): ImportDraft[] {
   const trimmed = raw.trim()
   if (!trimmed) return []
   try {
@@ -28,16 +29,24 @@ export function parseVocabulary(raw: string): ImportDraft[] {
     .filter((item) => item.term)
 }
 
+export function parseVocabulary(raw: string): ImportDraft[] {
+  return normalizeImportDrafts(rawImportDrafts(raw))
+}
+
 export function makeFallbackWord(draft: ImportDraft): Word {
-  const known = fallbackLexicon[draft.term] || {}
-  const reading = draft.reading || known.reading || toHiragana(draft.term)
+  const cleaned = looksLikeVocabularyTerm(draft.term)
+    ? draft
+    : extractUploadedLexeme(draft.term, draft.reading || '')
+  const term = cleaned.term || draft.term
+  const known = fallbackLexicon[term] || {}
+  const reading = cleaned.reading || draft.reading || known.reading || toHiragana(term)
   return {
-    id: uid(), term: draft.term, reading,
-    meaning: draft.meaning || known.meaning || '待补充释义',
+    id: uid(), term, reading,
+    meaning: draft.meaning || cleaned.meaning || known.meaning || '待补充释义',
     partOfSpeech: known.partOfSpeech || '词性待确认',
-    example: known.example || `${draft.term}を勉強します。`,
+    example: known.example || `${term}を勉強します。`,
     exampleReading: known.exampleReading || `${reading}を べんきょうします。`,
-    translation: known.translation || `学习“${draft.term}”这个词。`,
+    translation: known.translation || `学习“${term}”这个词。`,
     mastered: false, createdAt: Date.now(),
   }
 }

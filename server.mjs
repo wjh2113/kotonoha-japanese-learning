@@ -3,6 +3,7 @@ import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createDatabase } from './database.mjs'
+import { extractUploadedLexeme, looksLikeVocabularyTerm, normalizeImportDrafts } from './lexeme.mjs'
 
 const app = express()
 const port = Number(process.env.PORT || 8787)
@@ -192,6 +193,7 @@ async function enrichWordsWithModel(words, unitName) {
     '释义简明准确；读音仅用平假名；词性使用中文；例句控制在 JLPT N5-N4 难度。',
     '例句必须自然、短小，且包含目标词；提供准确中文翻译。',
     '保持输入顺序，每个输入只返回一个结果。',
+    '若输入像笔记或批注，先抽出其中最核心的一个日语单词再解析，term 用抽出的单词。',
     '根据整组词汇归纳一个简短准确的中文主题说明，控制在4到12个汉字，不要重复单元名称。',
     '只返回一个 JSON 对象，不要 Markdown。格式严格为：',
     '{"unitDescription":"","words":[{"term":"","reading":"","meaning":"","partOfSpeech":"","example":"","exampleReading":"","translation":""}]}',
@@ -226,36 +228,76 @@ function enqueueIncompleteBatch() {
   return run
 }
 
+async function persistEnrichedRow(row, extra, fallback) {
+  const term = String(extra.term || fallback.term || '').trim()
+  if (!looksLikeVocabularyTerm(term)) {
+    await database.deleteWord(row.id)
+    return true
+  }
+  if (await database.unitHasTerm(row.unitId, term, row.id)) {
+    await database.deleteWord(row.id)
+    return true
+  }
+  const meaning = String(extra.meaning || fallback.meaning || '').trim()
+  if (isPlaceholderMeaning(meaning)) return false
+  await database.updateWordLexicon(row.id, {
+    term,
+    reading: extra.reading || fallback.reading || row.reading,
+    meaning,
+    partOfSpeech: extra.partOfSpeech || '名词',
+    example: extra.example || `${term}を勉強します。`,
+    exampleReading: extra.exampleReading,
+    translation: extra.translation || `学习“${term}”这个词。`,
+  })
+  return true
+}
+
+async function enrichRowsWithModel(rows, unitName) {
+  const payload = rows.map((row) => {
+    const lex = extractUploadedLexeme(row.term, row.reading)
+    return { term: lex.term, reading: lex.reading || undefined }
+  })
+  const { parsed } = await enrichWordsWithModel(payload, unitName)
+  let filled = 0
+  for (const [index, row] of rows.entries()) {
+    const lex = extractUploadedLexeme(row.term, row.reading)
+    const extra = parsed.words[index] || {}
+    if (await persistEnrichedRow(row, extra, lex)) filled += 1
+    else skippedIncompleteIds.add(row.id)
+  }
+  return filled
+}
+
 async function enrichIncompleteBatch() {
   const rows = (await database.listIncompleteWords(40)).filter((row) => !skippedIncompleteIds.has(row.id))
   if (!rows.length) return { filled: 0, remaining: await database.countIncompleteWords() }
-  const chunk = rows.filter((row) => row.unitId === rows[0].unitId).slice(0, 20)
-  try {
-    const { parsed } = await enrichWordsWithModel(chunk.map((row) => ({ term: row.term, reading: row.reading })), chunk[0].unitName)
-    let filled = 0
-    for (const [index, row] of chunk.entries()) {
-      const extra = parsed.words[index] || {}
-      const meaning = String(extra.meaning || '').trim()
-      if (isPlaceholderMeaning(meaning)) {
-        skippedIncompleteIds.add(row.id)
-        continue
-      }
-      await database.updateWordLexicon(row.id, {
-        reading: extra.reading || row.reading,
-        meaning,
-        partOfSpeech: extra.partOfSpeech,
-        example: extra.example,
-        exampleReading: extra.exampleReading,
-        translation: extra.translation,
-      })
-      filled += 1
+  const chunk = rows.filter((row) => row.unitId === rows[0].unitId).slice(0, 8)
+  let filled = 0
+  const pending = []
+  for (const row of chunk) {
+    const lex = extractUploadedLexeme(row.term, row.reading)
+    if (lex.meaning && !isPlaceholderMeaning(lex.meaning)) {
+      if (await persistEnrichedRow(row, {}, lex)) filled += 1
+      continue
     }
-    return { filled, remaining: await database.countIncompleteWords() }
-  } catch (error) {
-    chunk.forEach((row) => skippedIncompleteIds.add(row.id))
-    console.error('Incomplete-word backfill batch failed:', error.message || error)
-    return { filled: 0, remaining: await database.countIncompleteWords() }
+    pending.push(row)
   }
+  if (pending.length) {
+    try {
+      filled += await enrichRowsWithModel(pending, chunk[0].unitName)
+    } catch (error) {
+      console.error('Incomplete-word backfill batch failed, retrying one by one:', error.message || error)
+      for (const row of pending) {
+        try {
+          filled += await enrichRowsWithModel([row], chunk[0].unitName)
+        } catch (inner) {
+          skippedIncompleteIds.add(row.id)
+          console.error(`Incomplete-word backfill skipped ${row.id}:`, inner.message || inner)
+        }
+      }
+    }
+  }
+  return { filled, remaining: await database.countIncompleteWords() }
 }
 
 async function enrichIncompleteAll() {
@@ -263,11 +305,13 @@ async function enrichIncompleteAll() {
   backfillRunning = true
   try {
     while (true) {
-      const before = await database.countIncompleteWords()
-      if (!before) break
+      const queued = (await database.listIncompleteWords(40)).filter((row) => !skippedIncompleteIds.has(row.id))
+      if (!queued.length) break
       const { remaining, filled } = await enqueueIncompleteBatch()
       console.log(`KOTONOHA backfill: filled ${filled}, remaining ${remaining}`)
-      if (remaining >= before) break
+      const still = (await database.listIncompleteWords(40)).filter((row) => !skippedIncompleteIds.has(row.id))
+      if (!still.length) break
+      if (!filled && still[0].id === queued[0].id) skippedIncompleteIds.add(queued[0].id)
     }
   } finally {
     backfillRunning = false
@@ -276,7 +320,7 @@ async function enrichIncompleteAll() {
 
 app.post('/api/enrich', rateLimit(60_000, 40), async (req, res) => {
   // Cap one request so the model can finish valid JSON. The client sends the whole unit in batches.
-  const words = Array.isArray(req.body?.words) ? req.body.words.slice(0, 20) : []
+  const words = normalizeImportDrafts(Array.isArray(req.body?.words) ? req.body.words : []).slice(0, 20)
   const unitName = String(req.body?.unitName || '').trim().slice(0, 80)
   if (!words.length) return res.status(400).json({ error: '请至少提供一个单词。' })
   if (!gatewayKey) {

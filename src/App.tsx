@@ -911,13 +911,13 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <section className="modal import-modal">
         <button className="modal-close" onClick={onClose}><X /></button>
-        <span className="modal-icon"><Import /></span><span className="eyebrow">SMART IMPORT</span><h2>导入到「{unit.name}」</h2><p>粘贴单词或上传文件，AI 将自动补全读音、释义与初学者例句。</p>
+        <span className="modal-icon"><Import /></span><span className="eyebrow">SMART IMPORT</span><h2>导入到「{unit.name}」</h2><p>粘贴单词或上传文件。导入时会自动去掉笔记、批注和手写说明，只留下真正的日语单词，再由 AI 补全读音、释义与初学者例句。</p>
         {!drafts.length ? <>
           <button className="drop-zone" disabled={fileReading} onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); readFile(e.dataTransfer.files[0]) }}>{fileReading ? <span className="spinner dark" /> : <UploadCloud />}<b>{fileReading ? '正在读取 Word 文档…' : '拖入 Word、TXT、CSV 或 JSON 文件'}</b><span>Word 支持段落、列表与三列表格 · DOCX 最大 5MB</span></button>
           <input ref={fileRef} type="file" accept=".docx,.doc,.txt,.csv,.json,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden onChange={(e) => readFile(e.target.files?.[0])} />
           <div className="or"><span />或直接粘贴<span /></div>
           <textarea className="import-textarea" value={raw} onChange={(e) => setRaw(e.target.value)} placeholder={'猫\n食べる, たべる, 吃\n図書館\tとしょかん\t图书馆'} />
-          <small className="format-hint"><FileText size={14} />每行一个词；也支持“单词, 读音, 释义”格式</small>
+          <small className="format-hint"><FileText size={14} />每行一个词；也支持“单词, 读音, 释义”。扫描稿里的批注行会被自动过滤。</small>
           {notice && <div className="modal-notice">{notice}</div>}
           <button className="primary-button modal-submit" disabled={!raw.trim()} onClick={() => parse()}>解析单词<ChevronRight size={18} /></button>
         </> : <>

@@ -2,6 +2,7 @@ import pg from 'pg'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { extractUploadedLexeme, looksLikeVocabularyTerm } from './lexeme.mjs'
 
 const { Pool } = pg
 const dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -86,14 +87,26 @@ export function createDatabase(connectionString) {
           'INSERT INTO units (id, name, description, color, sort_order) VALUES ($1, $2, $3, $4, $5)',
           [text(unit.id), text(unit.name), text(unit.description), text(unit.color, '#e6533f'), unitIndex],
         )
+        const seenTerms = new Set()
         for (const [wordIndex, word] of unit.words.entries()) {
+          const lex = extractUploadedLexeme(word.term, word.reading)
+          const term = looksLikeVocabularyTerm(lex.term) ? lex.term : ''
+          if (!term || seenTerms.has(term)) continue
+          seenTerms.add(term)
+          const meaning = text(word.meaning)
+          const placeholder = !meaning || /待补充|未知|不明|暂无|未查询|词义缺失|n\/a|unknown/i.test(meaning)
+          const dirtyExample = /笔记|批注|手写/.test(`${word.example || ''}${word.translation || ''}`)
           await client.query(
             `INSERT INTO words (id, unit_id, term, reading, meaning, part_of_speech, example,
               example_reading, translation, mastered, starred, review_stage, last_reviewed_at,
               next_review_at, sort_order, created_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,COALESCE($16,NOW()))`,
-            [text(word.id), text(unit.id), text(word.term), text(word.reading), text(word.meaning),
-              text(word.partOfSpeech), text(word.example), text(word.exampleReading), text(word.translation),
+            [text(word.id), text(unit.id), term, text(lex.reading || word.reading),
+              placeholder && lex.meaning ? lex.meaning : meaning,
+              text(word.partOfSpeech),
+              dirtyExample ? `${term}を勉強します。` : text(word.example),
+              dirtyExample ? '' : text(word.exampleReading),
+              dirtyExample ? `学习“${term}”这个词。` : text(word.translation),
               Boolean(word.mastered), Boolean(word.starred), Number.isInteger(word.reviewStage) ? word.reviewStage : null,
               timestamp(word.lastReviewedAt), timestamp(word.nextReviewAt), wordIndex, timestamp(word.createdAt)],
           )
@@ -183,11 +196,13 @@ export function createDatabase(connectionString) {
   const updateWordLexicon = async (id, fields) => {
     await pool.query(
       `UPDATE words
-       SET reading = $2, meaning = $3, part_of_speech = $4, example = $5,
-           example_reading = $6, translation = $7
+       SET term = COALESCE(NULLIF($2, ''), term),
+           reading = $3, meaning = $4, part_of_speech = $5, example = $6,
+           example_reading = $7, translation = $8
        WHERE id = $1`,
       [
         text(id),
+        text(fields.term).slice(0, 40),
         text(fields.reading).slice(0, 80),
         text(fields.meaning).slice(0, 80),
         text(fields.partOfSpeech).slice(0, 40),
@@ -198,5 +213,17 @@ export function createDatabase(connectionString) {
     )
   }
 
-  return { initialize, health, getState, replaceState, listIncompleteWords, countIncompleteWords, updateWordLexicon, listPassages, replacePassages, close: () => pool.end() }
+  const unitHasTerm = async (unitId, term, excludeId) => {
+    const result = await pool.query(
+      'SELECT 1 FROM words WHERE unit_id = $1 AND term = $2 AND id <> $3 LIMIT 1',
+      [text(unitId), text(term), text(excludeId)],
+    )
+    return result.rows.length > 0
+  }
+
+  const deleteWord = async (id) => {
+    await pool.query('DELETE FROM words WHERE id = $1', [text(id)])
+  }
+
+  return { initialize, health, getState, replaceState, listIncompleteWords, countIncompleteWords, updateWordLexicon, unitHasTerm, deleteWord, listPassages, replacePassages, close: () => pool.end() }
 }

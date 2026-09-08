@@ -14,6 +14,12 @@ describe('parseVocabulary', () => {
   it('parses supported JSON aliases', () => {
     expect(parseVocabulary('[{"word":"図書館","kana":"としょかん","definition":"图书馆"}]')[0]).toEqual({ term: '図書館', reading: 'としょかん', meaning: '图书馆' })
   })
+
+  it('extracts 降る from OCR annotation lines instead of importing the note', () => {
+    expect(parseVocabulary('・✍️ 笔记：手写批注：降る（ふる）、雨が降る（「雨が降る」下方有红色下划线）。')).toMatchObject([
+      { term: '降る', reading: 'ふる' },
+    ])
+  })
 })
 
 describe('Japanese pronunciation helpers', () => {
