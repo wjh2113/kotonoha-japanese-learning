@@ -1,6 +1,6 @@
 import type { ImportDraft, Word } from './types'
 import { fallbackLexicon } from './data'
-import { extractUploadedLexeme, looksLikeVocabularyTerm, normalizeImportDrafts } from '../lexeme.mjs'
+import { extractUploadedLexeme, looksLikeVocabularyTerm, normalizeImportDrafts } from './lexeme'
 
 export const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 

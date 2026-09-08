@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractImportDrafts, extractUploadedLexeme, looksLikeVocabularyTerm, normalizeImportDrafts } from './lexeme.mjs'
+import { extractImportDrafts, extractUploadedLexeme, looksLikeVocabularyTerm, normalizeImportDrafts } from './src/lexeme'
 
 describe('extractUploadedLexeme', () => {
   it('keeps a short vocabulary term', () => {
