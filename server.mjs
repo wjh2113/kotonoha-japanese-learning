@@ -228,8 +228,31 @@ function enqueueIncompleteBatch() {
   return run
 }
 
+async function rewriteIncompleteRow(row) {
+  const lex = extractUploadedLexeme(row.term, row.reading)
+  if (!looksLikeVocabularyTerm(lex.term)) {
+    await database.deleteWord(row.id)
+    return null
+  }
+  if (await database.unitHasTerm(row.unitId, lex.term, row.id)) {
+    await database.deleteWord(row.id)
+    return null
+  }
+  const meaning = String(lex.meaning || row.meaning || '').trim()
+  await database.updateWordLexicon(row.id, {
+    term: lex.term,
+    reading: lex.reading || row.reading,
+    meaning: isPlaceholderMeaning(meaning) ? '待补充释义' : meaning,
+    partOfSpeech: '词性待确认',
+    example: `${lex.term}を勉強します。`,
+    exampleReading: '',
+    translation: `学习“${lex.term}”这个词。`,
+  })
+  return { ...row, term: lex.term, reading: lex.reading || row.reading, meaning: isPlaceholderMeaning(meaning) ? '' : meaning }
+}
+
 async function persistEnrichedRow(row, extra, fallback) {
-  const term = String(extra.term || fallback.term || '').trim()
+  const term = String(extra.term || fallback.term || row.term).trim()
   if (!looksLikeVocabularyTerm(term)) {
     await database.deleteWord(row.id)
     return true
@@ -253,17 +276,12 @@ async function persistEnrichedRow(row, extra, fallback) {
 }
 
 async function enrichRowsWithModel(rows, unitName) {
-  const payload = rows.map((row) => {
-    const lex = extractUploadedLexeme(row.term, row.reading)
-    return { term: lex.term, reading: lex.reading || undefined }
-  })
+  const payload = rows.map((row) => ({ term: row.term, reading: row.reading || undefined }))
   const { parsed } = await enrichWordsWithModel(payload, unitName)
   let filled = 0
   for (const [index, row] of rows.entries()) {
-    const lex = extractUploadedLexeme(row.term, row.reading)
     const extra = parsed.words[index] || {}
-    if (await persistEnrichedRow(row, extra, lex)) filled += 1
-    else skippedIncompleteIds.add(row.id)
+    if (await persistEnrichedRow(row, extra, extractUploadedLexeme(row.term, row.reading))) filled += 1
   }
   return filled
 }
@@ -275,12 +293,16 @@ async function enrichIncompleteBatch() {
   let filled = 0
   const pending = []
   for (const row of chunk) {
-    const lex = extractUploadedLexeme(row.term, row.reading)
-    if (lex.meaning && !isPlaceholderMeaning(lex.meaning)) {
-      if (await persistEnrichedRow(row, {}, lex)) filled += 1
+    const rewritten = await rewriteIncompleteRow(row)
+    if (!rewritten) {
+      filled += 1
       continue
     }
-    pending.push(row)
+    if (rewritten.meaning && !isPlaceholderMeaning(rewritten.meaning)) {
+      filled += 1
+      continue
+    }
+    pending.push(rewritten)
   }
   if (pending.length) {
     try {
@@ -291,8 +313,7 @@ async function enrichIncompleteBatch() {
         try {
           filled += await enrichRowsWithModel([row], chunk[0].unitName)
         } catch (inner) {
-          skippedIncompleteIds.add(row.id)
-          console.error(`Incomplete-word backfill skipped ${row.id}:`, inner.message || inner)
+          console.error(`Incomplete-word backfill deferred ${row.id}:`, inner.message || inner)
         }
       }
     }
@@ -311,7 +332,7 @@ async function enrichIncompleteAll() {
       console.log(`KOTONOHA backfill: filled ${filled}, remaining ${remaining}`)
       const still = (await database.listIncompleteWords(40)).filter((row) => !skippedIncompleteIds.has(row.id))
       if (!still.length) break
-      if (!filled && still[0].id === queued[0].id) skippedIncompleteIds.add(queued[0].id)
+      if (!filled && still[0].id === queued[0].id && looksLikeVocabularyTerm(still[0].term)) skippedIncompleteIds.add(queued[0].id)
     }
   } finally {
     backfillRunning = false
