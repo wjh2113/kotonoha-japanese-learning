@@ -12,7 +12,7 @@ import { PassageView } from './PassageView'
 import { SettingsContext, DEFAULT_SETTINGS } from './settings-context'
 import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
-import { DEFAULT_UNIT_THEME, fetchUnitTheme, isPlaceholderTheme } from './theme'
+import { DEFAULT_UNIT_THEME, fallbackUnitTheme, fetchUnitTheme, isPlaceholderTheme } from './theme'
 import { buildQuizOptions, ENRICH_BATCH_SIZE, isPlaceholderMeaning, mergeEnrichedWord, optionLabel, orderQuizByWeakness, recordQuizAnswer, sharedDistractors, usableQuizWords } from './quiz'
 import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, uid } from './utils'
 
@@ -39,6 +39,8 @@ function App() {
   const databaseErrorShown = useRef(false)
   const persistPaused = useRef(true)
   const themeRequested = useRef(new Set<string>())
+  const themeAttempts = useRef(new Map<string, number>())
+  const THEME_MAX_ATTEMPTS = 3
   const [settings, setSettings] = useState<AppSettings>(() => {
     try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '') } } catch { return DEFAULT_SETTINGS }
   })
@@ -140,19 +142,36 @@ function App() {
 
   useEffect(() => {
     if (auth !== 'ok' || !databaseReady) return
-    const pending = units.filter((item) => item.words.length > 0 && isPlaceholderTheme(item.description) && !themeRequested.current.has(item.id))
+    const pending = units.filter((item) => (
+      item.words.length > 0
+      && isPlaceholderTheme(item.description)
+      && !themeRequested.current.has(item.id)
+      && (themeAttempts.current.get(item.id) || 0) < THEME_MAX_ATTEMPTS
+    ))
     if (!pending.length) return
     pending.forEach((item) => themeRequested.current.add(item.id))
     void (async () => {
       for (const item of pending) {
         try {
           const description = await fetchUnitTheme(item.name, item.words)
-          if (!description) {
-            themeRequested.current.delete(item.id)
-            continue
-          }
-          setUnits((current) => current.map((unit) => unit.id === item.id && isPlaceholderTheme(unit.description) ? { ...unit, description } : unit))
+          themeAttempts.current.delete(item.id)
+          setUnits((current) => current.map((unit) => (
+            unit.id === item.id && isPlaceholderTheme(unit.description)
+              ? { ...unit, description }
+              : unit
+          )))
         } catch {
+          const attempts = (themeAttempts.current.get(item.id) || 0) + 1
+          themeAttempts.current.set(item.id, attempts)
+          if (attempts >= THEME_MAX_ATTEMPTS) {
+            const description = fallbackUnitTheme(item.name, item.words)
+            setUnits((current) => current.map((unit) => (
+              unit.id === item.id && isPlaceholderTheme(unit.description)
+                ? { ...unit, description }
+                : unit
+            )))
+          }
+        } finally {
           themeRequested.current.delete(item.id)
         }
       }
@@ -227,6 +246,16 @@ function App() {
     setToast(`已导入 ${words.length} 个单词到「${targetUnit.name}」`)
   }
 
+  const renameUnit = (targetId: string, name: string) => {
+    const next = name.trim()
+    if (!next) {
+      setToast('单元名称不能为空')
+      return
+    }
+    setUnits((current) => current.map((item) => item.id === targetId ? { ...item, name: next } : item))
+    setToast(`单元已重命名为「${next}」`)
+  }
+
   const openImport = (targetUnitId = unitId) => {
     setImportUnitId(targetUnitId)
     setImportOpen(true)
@@ -254,7 +283,7 @@ function App() {
         <div className="enrich-banner">正在补全全部单词释义，还剩 {missingMeanings} 个。补完后测试会覆盖整个单元。</div>
       )}
       <main className="main">
-        {view === 'library' && <LibraryView units={units} unitId={unitId} onUnit={setUnitId} onImport={openImport} onNewUnit={() => setNewUnitOpen(true)} onDeleteUnit={requestDeleteUnit} />}
+        {view === 'library' && <LibraryView units={units} unitId={unitId} onUnit={setUnitId} onImport={openImport} onNewUnit={() => setNewUnitOpen(true)} onRenameUnit={renameUnit} onDeleteUnit={requestDeleteUnit} />}
         {view === 'study' && unit && (
           <StudyView
             unit={unit} units={units} selectedWord={selectedWord} onUnit={setUnitId}
@@ -350,11 +379,20 @@ function PageUnitSelect({ units, unit, onUnit, label }: { units: Unit[]; unit: U
   return <label className="page-unit-select"><span>{label}</span><select aria-label={label} value={unit.id} onChange={(event) => onUnit(event.target.value)}>{units.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
 }
 
-function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onDeleteUnit }: {
-  units: Unit[]; unitId: string; onUnit: (id: string) => void; onImport: (unitId?: string) => void; onNewUnit: () => void; onDeleteUnit: (unit: Unit) => void
+function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onRenameUnit, onDeleteUnit }: {
+  units: Unit[]; unitId: string; onUnit: (id: string) => void; onImport: (unitId?: string) => void; onNewUnit: () => void
+  onRenameUnit: (unitId: string, name: string) => void; onDeleteUnit: (unit: Unit) => void
 }) {
   const total = units.reduce((sum, item) => sum + item.words.length, 0)
   const mastered = units.reduce((sum, item) => sum + item.words.filter((word) => word.mastered).length, 0)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draftName, setDraftName] = useState('')
+  const commitRename = (unit: Unit) => {
+    const next = draftName.trim()
+    setEditingId(null)
+    if (!next || next === unit.name) return
+    onRenameUnit(unit.id, next)
+  }
   return (
     <div className="page hub-page">
       <section className="hub-hero">
@@ -368,7 +406,41 @@ function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onDeleteUnit 
           const percent = Math.round(learned / Math.max(item.words.length, 1) * 100)
           return <article key={item.id} className={`unit-card ${item.id === unitId ? 'active' : ''}`} onClick={() => onUnit(item.id)}>
             <div className="unit-card-top"><span style={{ background: item.color }}>{String(index + 1).padStart(2, '0')}</span><em>{item.id === unitId ? '当前单元' : '选择单元'}</em></div>
-            <h2>{item.name}</h2>
+            <div className="unit-card-title" onClick={(event) => event.stopPropagation()}>
+              {editingId === item.id ? (
+                <input
+                  className="unit-name-input"
+                  autoFocus
+                  value={draftName}
+                  aria-label="单元名称"
+                  onChange={(event) => setDraftName(event.target.value)}
+                  onBlur={() => commitRename(item)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      commitRename(item)
+                    }
+                    if (event.key === 'Escape') {
+                      event.preventDefault()
+                      setEditingId(null)
+                    }
+                  }}
+                />
+              ) : (
+                <>
+                  <h2>{item.name}</h2>
+                  <button
+                    type="button"
+                    className="unit-rename-btn"
+                    aria-label={`修改「${item.name}」名称`}
+                    title="修改名称"
+                    onClick={() => { setEditingId(item.id); setDraftName(item.name) }}
+                  >
+                    <SquarePen size={15} />
+                  </button>
+                </>
+              )}
+            </div>
             <p className={isPlaceholderTheme(item.description) ? 'unit-theme pending' : 'unit-theme'}>
               {item.words.length && isPlaceholderTheme(item.description) ? 'AI 正在根据词汇归纳主题…' : item.description}
             </p>

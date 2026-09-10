@@ -394,7 +394,7 @@ app.post('/api/unit-theme', rateLimit(60_000, 20), async (req, res) => {
   try {
     const { data } = await callGateway('/api/ai/chat', {
       tenantId,
-      capability: process.env.LLM_GATEWAY_CHAT_CAPABILITY || 'quality-chat',
+      capability: process.env.LLM_GATEWAY_THEME_CAPABILITY || 'fast-chat',
       messages: [
         { role: 'system', content: '你是日语教材编辑。根据单词列表归纳这个单元的学习主题。必须只返回 JSON：{"unitDescription":"校园生活"}。unitDescription 用 4 到 12 个汉字概括词汇所属生活场景或话题，不要重复单元名称，不要标点，不要解释，不要 Markdown。' },
         { role: 'user', content: `单元名称：${unitName || '未命名'}\n单词：${terms.join('、')}${meanings.length ? `\n部分释义：${meanings.slice(0, 20).join('、')}` : ''}` },

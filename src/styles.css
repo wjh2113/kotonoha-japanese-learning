@@ -272,7 +272,12 @@ body { background: var(--cream); color: var(--ink); }
 .unit-card:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(48,44,37,.07); }
 .unit-card.active { border-color: #f08f7f; box-shadow: 0 0 0 2px #fff0ed; }
 .unit-card-top { display: flex; justify-content: space-between; align-items: center; }.unit-card-top > span { width: 37px; height: 37px; border-radius: 9px; display: grid; place-items: center; color: white; font: 700 12px Georgia; }.unit-card-top em { font-style: normal; color: #9a9892; font-size: 9px; }
-.unit-card h2 { margin: 18px 0 4px; font-size: 18px; }
+.unit-card h2 { margin: 0; font-size: 18px; }
+.unit-card-title { margin: 18px 0 4px; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.unit-card-title h2 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.unit-rename-btn { width: 30px; height: 30px; flex: none; border: 0; border-radius: 8px; background: #f3f0ea; color: #7a7670; display: grid; place-items: center; cursor: pointer; }
+.unit-rename-btn:hover { color: var(--red); background: #fff0ed; }
+.unit-name-input { width: 100%; min-height: 36px; border: 1px solid #efb3a9; border-radius: 8px; padding: 6px 10px; font: 700 16px/1.2 inherit; color: inherit; background: #fffaf8; }
 .unit-card > p, .unit-theme { margin: 0 0 19px; color: #5c5e62; font-size: 13px; line-height: 1.5; }
 .unit-theme.pending { color: #b0897f; font-style: italic; }
 .unit-card-meta { display: flex; justify-content: space-between; color: #969690; font-size: 9px; }

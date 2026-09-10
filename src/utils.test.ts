@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { formatReviewTime, getReviewState, levenshtein, makeFallbackWord, matchesTypingAnswer, normalizeJapanese, parseVocabulary, pronunciationScore, pronunciationScoreFor, scheduleReview, splitJapaneseSentences, toHiragana } from './utils'
-import { isPlaceholderTheme } from './theme'
+import { fallbackUnitTheme, isPlaceholderTheme } from './theme'
 
 describe('parseVocabulary', () => {
   it('parses one-word-per-line text', () => {
@@ -98,7 +98,16 @@ describe('unit theme placeholders', () => {
   it('treats empty and default copy as needing AI summary', () => {
     expect(isPlaceholderTheme('')).toBe(true)
     expect(isPlaceholderTheme('上传词汇后由 AI 自动归纳主题')).toBe(true)
+    expect(isPlaceholderTheme('AI 正在根据词汇归纳主题…')).toBe(true)
     expect(isPlaceholderTheme('校园与日常')).toBe(false)
+  })
+
+  it('builds a local fallback theme from meanings', () => {
+    expect(fallbackUnitTheme('第3单元', [
+      { term: '教室', meaning: '教室' },
+      { term: '花', meaning: '花' },
+    ])).toBe('教室与花')
+    expect(fallbackUnitTheme('校园生活', [])).toBe('校园生活')
   })
 })
 
