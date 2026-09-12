@@ -10,6 +10,8 @@ export type Word = {
   romaji?: string
   pronunciationNote?: string
   memoryTip?: string
+  synonyms?: string
+  similarWords?: string
   mastered: boolean
   createdAt: number
   starred?: boolean
@@ -56,6 +58,8 @@ export type ImportDraft = {
   example?: string
   pronunciationNote?: string
   memoryTip?: string
+  synonyms?: string
+  similarWords?: string
 }
 
 export type PassageToken = {

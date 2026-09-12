@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatReviewTime, getReviewState, levenshtein, makeFallbackWord, matchesTypingAnswer, normalizeJapanese, parseVocabulary, pronunciationScore, pronunciationScoreFor, scheduleReview, splitJapaneseSentences, toHiragana, toRomaji } from './utils'
+import { formatReviewTime, getReviewState, levenshtein, makeFallbackWord, matchesTypingAnswer, normalizeJapanese, parseVocabulary, pronunciationScore, pronunciationScoreFor, scheduleReview, splitJapaneseSentences, splitWordList, toHiragana, toRomaji } from './utils'
 import { fallbackUnitTheme, isPlaceholderTheme } from './theme'
 
 describe('parseVocabulary', () => {
@@ -27,6 +27,16 @@ describe('parseVocabulary', () => {
       pronunciationNote: '注意轻音',
       memoryTip: '“撒库拉”谐音',
     }])
+  })
+
+  it('parses synonym and similar-word columns by header', () => {
+    const table = '单词\t假名\t词性\t中文释义\t罗马音\t例句\t发音注意事项\t记忆技巧\t同义词\t形近词\n桜\tさくら\t名词\t樱花\tsakura\t桜が咲きました。\t\t\t櫻花、サクラ\t桜花、桃'
+    expect(parseVocabulary(table)[0]).toMatchObject({ term: '桜', synonyms: '櫻花、サクラ', similarWords: '桜花、桃' })
+  })
+
+  it('splits word-list cells into chips', () => {
+    expect(splitWordList('櫻花、サクラ，さくら; 桃')).toEqual(['櫻花', 'サクラ', 'さくら', '桃'])
+    expect(splitWordList('')).toEqual([])
   })
 
   it('parses an 8-column table without header positionally', () => {

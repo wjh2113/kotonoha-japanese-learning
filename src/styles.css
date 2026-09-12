@@ -123,6 +123,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .word-romaji { margin-top: 1px; }
 .detail-main-word > small.romaji { margin-top: 2px; font-size: 12px; }
 .romaji-hint { display: block; margin: -4px 0 6px; color: #a09b94; font-size: 11px; font-style: italic; }
+.word-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.word-chips span { padding: 4px 10px; border: 1px solid #eadbd5; border-radius: 999px; background: #fdf8f4; font-size: 13px; color: #6e5a52; }
 .word-meaning { display: block; font-size: 10px; color: #747671; margin-top: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-bottom { position: absolute; left: 13px; right: 11px; bottom: 10px; border-top: 1px solid #efebe3; padding-top: 8px; display: flex; align-items: center; justify-content: space-between; }
 .card-bottom em { font-style: normal; color: #aaa7a0; font-size: 8px; }

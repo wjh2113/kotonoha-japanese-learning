@@ -13,6 +13,8 @@ const TABLE_HEADER_ALIASES: Array<[keyof ImportDraft, RegExp]> = [
   ['example', /^(例句|例文|example|sentence)$/i],
   ['pronunciationNote', /^(发音注意事项|发音注意|发音|pronunciation)/i],
   ['memoryTip', /^(记忆技巧|记忆法|记忆|口诀|memory|memo)/i],
+  ['synonyms', /^(同义词|近义词|同义|近义|synonym)/i],
+  ['similarWords', /^(形近词|相似词|形近|similar)/i],
 ]
 
 function matchTableHeader(cols: string[]): Array<keyof ImportDraft | null> | null {
@@ -44,6 +46,8 @@ function draftFromTableRow(cols: string[], header: Array<keyof ImportDraft | nul
     example: wide ? pick('example', 5) || undefined : undefined,
     pronunciationNote: wide ? pick('pronunciationNote', 6) || undefined : undefined,
     memoryTip: wide ? pick('memoryTip', 7) || undefined : undefined,
+    synonyms: wide ? pick('synonyms', 8) || undefined : undefined,
+    similarWords: wide ? pick('similarWords', 9) || undefined : undefined,
   }
 }
 
@@ -63,6 +67,8 @@ function rawImportDrafts(raw: string): ImportDraft[] {
         example: String(item.example || item.sentence || item['例句'] || '').trim() || undefined,
         pronunciationNote: String(item.pronunciationNote || item['发音注意事项'] || item['发音注意'] || '').trim() || undefined,
         memoryTip: String(item.memoryTip || item['记忆技巧'] || item['记忆法'] || '').trim() || undefined,
+        synonyms: String(item.synonyms || item['同义词'] || item['近义词'] || '').trim() || undefined,
+        similarWords: String(item.similarWords || item['形近词'] || item['相似词'] || '').trim() || undefined,
       }).filter((item) => item.term)
     }
   } catch { /* plain text or CSV */ }
@@ -105,6 +111,8 @@ export function makeFallbackWord(draft: ImportDraft): Word {
     romaji: String(draft.romaji || '').trim() || toRomaji(reading) || undefined,
     pronunciationNote: String(draft.pronunciationNote || '').trim() || undefined,
     memoryTip: String(draft.memoryTip || '').trim() || undefined,
+    synonyms: String(draft.synonyms || '').trim() || undefined,
+    similarWords: String(draft.similarWords || '').trim() || undefined,
     mastered: false, createdAt: Date.now(),
   }
 }
@@ -149,6 +157,15 @@ const ROMAJI_COMBO: Record<string, string> = {
   うぃ: 'wi', うぇ: 'we', うぉ: 'wo',
   つぁ: 'tsa', つぃ: 'tsi', つぇ: 'tse', つぉ: 'tso',
   でぃ: 'di', でゅ: 'dyu', とぅ: 'tu', どぅ: 'du',
+}
+
+/** Split a 同义词/形近词 cell into individual words. */
+export function splitWordList(input?: string) {
+  return String(input || '')
+    .split(/[、，,；;／/\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 12)
 }
 
 /** Hepburn romaji derived from a kana reading. Returns '' when the text has kanji/other scripts. */

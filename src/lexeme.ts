@@ -21,6 +21,8 @@ export type ImportLexeme = {
   example?: string
   pronunciationNote?: string
   memoryTip?: string
+  synonyms?: string
+  similarWords?: string
 }
 
 type ImportExtras = Omit<ImportLexeme, 'term' | 'reading' | 'meaning'>
@@ -34,6 +36,8 @@ function cleanExtras(extras?: ImportExtras): ImportExtras {
     example: clean(extras.example),
     pronunciationNote: clean(extras.pronunciationNote),
     memoryTip: clean(extras.memoryTip),
+    synonyms: clean(extras.synonyms),
+    similarWords: clean(extras.similarWords),
   }
 }
 

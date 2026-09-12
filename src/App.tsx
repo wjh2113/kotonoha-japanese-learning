@@ -17,7 +17,7 @@ import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fallbackUnitTheme, isPlaceholderTheme } from './theme'
 import { buildQuizOptions, ENRICH_BATCH_SIZE, isPlaceholderMeaning, mergeEnrichedWord, optionLabel, orderQuizByWeakness, recordQuizAnswer, sharedDistractors, usableQuizWords } from './quiz'
 import { usePronunciationPractice } from './pronunciation-practice'
-import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, toRomaji, uid } from './utils'
+import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, splitWordList, toRomaji, uid } from './utils'
 
 const STORAGE_KEY = 'kotonoha-units-v1'
 const SETTINGS_KEY = 'kotonoha-settings-v1'
@@ -669,6 +669,8 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
           <label>例句<textarea value={draft.example} onChange={(e) => setDraft({ ...draft, example: e.target.value })} /></label>
           <label>发音注意事项<input value={draft.pronunciationNote || ''} onChange={(e) => setDraft({ ...draft, pronunciationNote: e.target.value })} /></label>
           <label>记忆技巧<input value={draft.memoryTip || ''} onChange={(e) => setDraft({ ...draft, memoryTip: e.target.value })} /></label>
+          <label>同义词<input value={draft.synonyms || ''} onChange={(e) => setDraft({ ...draft, synonyms: e.target.value })} placeholder="多个用 、隔开" /></label>
+          <label>形近词<input value={draft.similarWords || ''} onChange={(e) => setDraft({ ...draft, similarWords: e.target.value })} placeholder="多个用 、隔开" /></label>
           <button className="primary-button compact" onClick={save}>保存修改</button>
         </div>
       ) : (
@@ -686,6 +688,12 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
           )}
           {word.memoryTip && (
             <div className="detail-block"><label>记忆技巧</label><p className="definition">{word.memoryTip}</p></div>
+          )}
+          {splitWordList(word.synonyms).length > 0 && (
+            <div className="detail-block"><label>同义词</label><p className="word-chips">{splitWordList(word.synonyms).map((item) => <span key={item} className="jp">{item}</span>)}</p></div>
+          )}
+          {splitWordList(word.similarWords).length > 0 && (
+            <div className="detail-block"><label>形近词</label><p className="word-chips">{splitWordList(word.similarWords).map((item) => <span key={item} className="jp">{item}</span>)}</p></div>
           )}
           <div className="typing-practice">
             <label><SquarePen size={14} /> 打字练习</label>
@@ -1028,6 +1036,8 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
           romaji: String(draft.romaji || '').trim() || merged.romaji,
           pronunciationNote: String(draft.pronunciationNote || '').trim() || merged.pronunciationNote,
           memoryTip: String(draft.memoryTip || '').trim() || merged.memoryTip,
+          synonyms: String(draft.synonyms || '').trim() || merged.synonyms,
+          similarWords: String(draft.similarWords || '').trim() || merged.similarWords,
         }
       })
       const theme = themeFromModel && !isPlaceholderTheme(themeFromModel)
@@ -1045,7 +1055,7 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <section className="modal import-modal">
         <button className="modal-close" onClick={onClose}><X /></button>
-        <span className="modal-icon"><Import /></span><span className="eyebrow">SMART IMPORT</span><h2>导入到「{unit.name}」</h2><p>粘贴单词或上传文件。支持 8 列表格（单词、假名、词性、中文释义、罗马音、例句、发音注意事项、记忆技巧）：表格里已有的内容直接采用，只有缺失的字段才交给 AI 补全。</p>
+        <span className="modal-icon"><Import /></span><span className="eyebrow">SMART IMPORT</span><h2>导入到「{unit.name}」</h2><p>粘贴单词或上传文件。支持表格列：单词、假名、词性、中文释义、罗马音、例句、发音注意事项、记忆技巧、同义词、形近词：表格里已有的内容直接采用，只有缺失的字段才交给 AI 补全。</p>
         {!drafts.length ? <>
           <button className="drop-zone" disabled={fileReading} onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); readFile(e.dataTransfer.files[0]) }}>{fileReading ? <span className="spinner dark" /> : <UploadCloud />}<b>{fileReading ? '正在读取 Word 文档…' : '拖入 Word、TXT、CSV 或 JSON 文件'}</b><span>Word 支持段落、列表与三列表格 · DOCX 最大 5MB</span></button>
           <input ref={fileRef} type="file" accept=".docx,.doc,.txt,.csv,.json,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden onChange={(e) => readFile(e.target.files?.[0])} />
