@@ -55,6 +55,73 @@ export function toHiragana(input: string) {
   return input.replace(/[ァ-ヶ]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0x60))
 }
 
+const ROMAJI_BASE: Record<string, string> = {
+  あ: 'a', い: 'i', う: 'u', え: 'e', お: 'o',
+  か: 'ka', き: 'ki', く: 'ku', け: 'ke', こ: 'ko',
+  さ: 'sa', し: 'shi', す: 'su', せ: 'se', そ: 'so',
+  た: 'ta', ち: 'chi', つ: 'tsu', て: 'te', と: 'to',
+  な: 'na', に: 'ni', ぬ: 'nu', ね: 'ne', の: 'no',
+  は: 'ha', ひ: 'hi', ふ: 'fu', へ: 'he', ほ: 'ho',
+  ま: 'ma', み: 'mi', む: 'mu', め: 'me', も: 'mo',
+  や: 'ya', ゆ: 'yu', よ: 'yo',
+  ら: 'ra', り: 'ri', る: 'ru', れ: 're', ろ: 'ro',
+  わ: 'wa', ゐ: 'i', ゑ: 'e', を: 'o', ん: 'n',
+  が: 'ga', ぎ: 'gi', ぐ: 'gu', げ: 'ge', ご: 'go',
+  ざ: 'za', じ: 'ji', ず: 'zu', ぜ: 'ze', ぞ: 'zo',
+  だ: 'da', ぢ: 'ji', づ: 'zu', で: 'de', ど: 'do',
+  ば: 'ba', び: 'bi', ぶ: 'bu', べ: 'be', ぼ: 'bo',
+  ぱ: 'pa', ぴ: 'pi', ぷ: 'pu', ぺ: 'pe', ぽ: 'po',
+  ぁ: 'a', ぃ: 'i', ぅ: 'u', ぇ: 'e', ぉ: 'o',
+}
+
+const ROMAJI_COMBO: Record<string, string> = {
+  きゃ: 'kya', きゅ: 'kyu', きょ: 'kyo',
+  しゃ: 'sha', しゅ: 'shu', しょ: 'sho',
+  ちゃ: 'cha', ちゅ: 'chu', ちょ: 'cho',
+  にゃ: 'nya', にゅ: 'nyu', にょ: 'nyo',
+  ひゃ: 'hya', ひゅ: 'hyu', ひょ: 'hyo',
+  みゃ: 'mya', みゅ: 'myu', みょ: 'myo',
+  りゃ: 'rya', りゅ: 'ryu', りょ: 'ryo',
+  ぎゃ: 'gya', ぎゅ: 'gyu', ぎょ: 'gyo',
+  じゃ: 'ja', じゅ: 'ju', じょ: 'jo',
+  ぢゃ: 'ja', ぢゅ: 'ju', ぢょ: 'jo',
+  びゃ: 'bya', びゅ: 'byu', びょ: 'byo',
+  ぴゃ: 'pya', ぴゅ: 'pyu', ぴょ: 'pyo',
+  ふぁ: 'fa', ふぃ: 'fi', ふぇ: 'fe', ふぉ: 'fo',
+  うぃ: 'wi', うぇ: 'we', うぉ: 'wo',
+  つぁ: 'tsa', つぃ: 'tsi', つぇ: 'tse', つぉ: 'tso',
+  でぃ: 'di', でゅ: 'dyu', とぅ: 'tu', どぅ: 'du',
+}
+
+/** Hepburn romaji derived from a kana reading. Returns '' when the text has kanji/other scripts. */
+export function toRomaji(input: string) {
+  const text = toHiragana(String(input || '').trim())
+  if (!text) return ''
+  let out = ''
+  let sokuon = false
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i]
+    if (char === 'っ') { sokuon = true; continue }
+    if (char === 'ー') {
+      const vowel = out.match(/[aiueo]$/)
+      if (vowel) out += vowel[0]
+      continue
+    }
+    if (/\s/.test(char)) { out += ' '; continue }
+    let roma = ROMAJI_COMBO[text.slice(i, i + 2)]
+    if (roma) i += 1
+    else roma = ROMAJI_BASE[char]
+    if (!roma) return ''
+    if (sokuon) {
+      roma = (/^[aiueo]/.test(roma) ? 't' : roma[0]) + roma
+      sokuon = false
+    }
+    out += roma
+  }
+  if (sokuon) out += 't'
+  return out
+}
+
 export function normalizeJapanese(input: string) {
   return toHiragana(input)
     .normalize('NFKC')

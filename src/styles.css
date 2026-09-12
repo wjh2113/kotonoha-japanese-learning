@@ -119,6 +119,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .status-pill.mastered { background: #edf4f1; border-color: #d3e3dd; color: #62817b; }
 .word-term { display: block; color: #282d29; font-size: 28px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .word-reading { display: block; color: #b56b5c; font-family: "Noto Sans JP",sans-serif; font-size: 10px; margin-top: 3px; }
+.romaji { display: block; color: #a09b94; font-size: 10px; font-style: italic; letter-spacing: .02em; }
+.word-romaji { margin-top: 1px; }
+.detail-main-word > small.romaji { margin-top: 2px; font-size: 12px; }
+.romaji-hint { display: block; margin: -4px 0 6px; color: #a09b94; font-size: 11px; font-style: italic; }
 .word-meaning { display: block; font-size: 10px; color: #747671; margin-top: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-bottom { position: absolute; left: 13px; right: 11px; bottom: 10px; border-top: 1px solid #efebe3; padding-top: 8px; display: flex; align-items: center; justify-content: space-between; }
 .card-bottom em { font-style: normal; color: #aaa7a0; font-size: 8px; }

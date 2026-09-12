@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatReviewTime, getReviewState, levenshtein, makeFallbackWord, matchesTypingAnswer, normalizeJapanese, parseVocabulary, pronunciationScore, pronunciationScoreFor, scheduleReview, splitJapaneseSentences, toHiragana } from './utils'
+import { formatReviewTime, getReviewState, levenshtein, makeFallbackWord, matchesTypingAnswer, normalizeJapanese, parseVocabulary, pronunciationScore, pronunciationScoreFor, scheduleReview, splitJapaneseSentences, toHiragana, toRomaji } from './utils'
 import { fallbackUnitTheme, isPlaceholderTheme } from './theme'
 
 describe('parseVocabulary', () => {
@@ -19,6 +19,29 @@ describe('parseVocabulary', () => {
     expect(parseVocabulary('・✍️ 笔记：手写批注：降る（ふる）、雨が降る（「雨が降る」下方有红色下划线）。')).toMatchObject([
       { term: '降る', reading: 'ふる' },
     ])
+  })
+})
+
+describe('toRomaji', () => {
+  it('converts basic hiragana', () => {
+    expect(toRomaji('たべる')).toBe('taberu')
+    expect(toRomaji('ねこ')).toBe('neko')
+  })
+
+  it('converts katakana and long vowels', () => {
+    expect(toRomaji('コーヒー')).toBe('koohii')
+    expect(toRomaji('ベンキョウ')).toBe('benkyou')
+  })
+
+  it('handles combos and sokuon', () => {
+    expect(toRomaji('しゃしん')).toBe('shashin')
+    expect(toRomaji('がっこう')).toBe('gakkou')
+    expect(toRomaji('ちょっと')).toBe('chotto')
+  })
+
+  it('returns empty for kanji or empty input', () => {
+    expect(toRomaji('食べる')).toBe('')
+    expect(toRomaji('')).toBe('')
   })
 })
 
