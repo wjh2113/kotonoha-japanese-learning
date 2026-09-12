@@ -124,3 +124,42 @@ export function pickDictationWords(words: Word[], goal: number, alreadyLearned: 
   const rest = usable.filter((word) => !fresh.some((item) => item.id === word.id) && !learned.has(word.id))
   return [...fresh, ...rest].slice(0, clampDictationGoal(goal))
 }
+
+export const STICKY_DICTATION_MISSES = 3
+
+export type ErrorBookFilter = 'all' | 'fresh' | 'reviewing' | 'sticky' | 'mastered'
+
+export function isStickyMiss(misses = 0) {
+  return misses >= STICKY_DICTATION_MISSES
+}
+
+export function matchesErrorBookFilter(word: Word, filter: ErrorBookFilter) {
+  if (!word.wrongBook) return false
+  if (filter === 'fresh') return !word.mastered && !word.errorReviewed
+  if (filter === 'reviewing') return !word.mastered && Boolean(word.errorReviewed)
+  if (filter === 'sticky') return isStickyMiss(word.dictationMisses)
+  if (filter === 'mastered') return Boolean(word.mastered)
+  return true
+}
+
+export function errorBookWords(words: Word[], filter: ErrorBookFilter = 'all') {
+  return words.filter((word) => matchesErrorBookFilter(word, filter))
+}
+
+export function pickErrorBookWords(words: Word[], limit = 200) {
+  return dictationCandidates(words.filter((word) => word.wrongBook && !word.mastered)).slice(0, limit)
+}
+
+export function unitStudyProgress(words: Word[]) {
+  const total = words.length
+  const mastered = words.filter((word) => word.mastered).length
+  return { total, mastered, percent: total ? Math.round((mastered / total) * 100) : 0 }
+}
+
+export function sessionMissStats(missCounts: Record<string, number>) {
+  const missedIds = Object.keys(missCounts)
+  return {
+    missed: missedIds.length,
+    sticky: missedIds.filter((id) => isStickyMiss(missCounts[id])).length,
+  }
+}

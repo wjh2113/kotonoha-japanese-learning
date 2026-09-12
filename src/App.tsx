@@ -2,14 +2,15 @@ import { useContext, useEffect, useRef, useState } from 'react'
 import {
   AudioLines, BookMarked, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronLeft, ChevronRight,
   Clock3, FileText, GraduationCap, Headphones, Import, Keyboard, LayoutGrid, LibraryBig, List, Menu,
-  Mic, Pause, Plus, Search, Settings, Sparkles, SquarePen,
+  Mic, NotebookPen, Pause, Plus, Search, Settings, Sparkles, SquarePen,
   Trash2, Trophy, UploadCloud, UserRound, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, AUTH_REQUIRED_EVENT, getAccessToken, setAccessToken } from './api'
 import { initialUnits } from './data'
 import { readVocabularyFile } from './docx'
 import { PassageView } from './PassageView'
-import { DictationView } from './DictationView'
+import { DictationView, type DictationMode } from './DictationView'
+import { ErrorBookView } from './ErrorBookView'
 import { SettingsContext, DEFAULT_SETTINGS } from './settings-context'
 import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
@@ -28,6 +29,8 @@ function App() {
   })
   const [unitId, setUnitId] = useState(units[0]?.id || '')
   const [view, setView] = useState<View>('study')
+  const [dictationMode, setDictationMode] = useState<DictationMode>('plan')
+  const [dictationSeed, setDictationSeed] = useState<Word[]>([])
   const [selectedId, setSelectedId] = useState(units[0]?.words[0]?.id || '')
   const [search, setSearch] = useState('')
   const [importOpen, setImportOpen] = useState(false)
@@ -182,6 +185,7 @@ function App() {
   const unit = units.find((item) => item.id === unitId) || units[0]
   const selectedWord = unit?.words.find((word) => word.id === selectedId) || unit?.words[0]
   const starredCount = units.reduce((sum, item) => sum + item.words.filter((word) => word.starred).length, 0)
+  const errorBookCount = units.reduce((sum, item) => sum + item.words.filter((word) => word.wrongBook && !word.mastered).length, 0)
   const reviewCount = units.reduce((sum, item) => sum + item.words.filter((word) => getReviewState(word).due).length, 0)
   const missingMeanings = units.reduce((sum, item) => sum + item.words.filter((word) => isPlaceholderMeaning(word.meaning)).length, 0)
 
@@ -189,6 +193,13 @@ function App() {
     setUnits((current) => current.map((item) => item.id === targetUnitId
       ? { ...item, words: item.words.map((word) => word.id === wordId ? { ...word, ...changes } : word) }
       : item))
+  }
+
+  const updateWordById = (wordId: string, updater: (word: Word) => Partial<Word>) => {
+    setUnits((current) => current.map((item) => ({
+      ...item,
+      words: item.words.map((word) => word.id === wordId ? { ...word, ...updater(word) } : word),
+    })))
   }
 
   const addUnit = (name: string) => {
@@ -225,7 +236,18 @@ function App() {
   }
 
   const nav = (next: View) => {
+    if (next === 'dictation') {
+      setDictationMode('plan')
+      setDictationSeed([])
+    }
     setView(next)
+    setMobileNav(false)
+  }
+
+  const openDictation = (mode: DictationMode = 'plan', seed: Word[] = []) => {
+    setDictationMode(mode)
+    setDictationSeed(seed)
+    setView('dictation')
     setMobileNav(false)
   }
 
@@ -276,7 +298,7 @@ function App() {
     <div className="app-shell">
       <AppHeader
         open={mobileNav} view={view} settings={settings}
-        starredCount={starredCount} reviewCount={reviewCount}
+        starredCount={starredCount} errorBookCount={errorBookCount} reviewCount={reviewCount}
         onMenu={() => setMobileNav((current) => !current)} onView={nav}
       />
       <MobileTopBar view={view} settings={settings} onView={nav} />
@@ -294,25 +316,50 @@ function App() {
             onToggleStar={(word) => { updateWord(word.id, { starred: !word.starred }); setToast(word.starred ? '已移出生词本' : '已加入生词本') }}
             search={search} onSearch={setSearch}
             onTest={() => setView('test')}
-            onDictation={() => setView('dictation')}
+            onDictation={() => openDictation('plan')}
           />
         )}
         {view === 'test' && unit && <TestView unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')} onAnswer={(word, kind, correct) => updateWord(word.id, recordQuizAnswer(word, kind, correct))} />}
         {view === 'dictation' && unit && (
           <DictationView
-            unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')}
-            onCorrect={(word) => updateWord(word.id, recordQuizAnswer(word, 'listening', true))}
-            onMiss={(word) => updateWord(word.id, recordQuizAnswer(word, 'listening', false))}
-            onMaster={(word) => updateWord(word.id, { mastered: true, ...scheduleReview(word, true) })}
+            key={`${dictationMode}-${dictationSeed.length}-${dictationSeed[0]?.id || unit.id}`}
+            unit={unit} units={units} mode={dictationMode} seedWords={dictationSeed}
+            autoStart={dictationMode === 'errors' && dictationSeed.length > 0}
+            onUnit={setUnitId}
+            onBack={() => setView(dictationMode === 'errors' ? 'errorbook' : 'study')}
+            onCorrect={(word) => updateWordById(word.id, (live) => ({
+              ...recordQuizAnswer(live, 'listening', true),
+              mastered: live.mastered,
+              ...(dictationMode === 'errors' ? { errorReviewed: true } : {}),
+            }))}
+            onMiss={(word) => updateWordById(word.id, (live) => ({
+              ...recordQuizAnswer(live, 'listening', false),
+              wrongBook: true,
+              dictationMisses: Math.min(99, (live.dictationMisses || 0) + 1),
+              ...(dictationMode === 'errors' ? { errorReviewed: true } : {}),
+            }))}
+            onMaster={(word) => updateWordById(word.id, (live) => ({ mastered: true, ...scheduleReview(live, true) }))}
+            onOpenErrorBook={() => nav('errorbook')}
+            onOpenTest={() => nav('test')}
+            onOpenStudy={() => nav('study')}
           />
         )}
         {view === 'wordbook' && <WordbookView units={units} onRemove={(wordId, targetUnitId) => { updateWord(wordId, { starred: false }, targetUnitId); setToast('已移出生词本') }} />}
+        {view === 'errorbook' && (
+          <ErrorBookView
+            units={units}
+            onBack={() => nav('study')}
+            onStart={(words) => openDictation('errors', words)}
+            onRemove={(wordId, targetUnitId) => { updateWord(wordId, { wrongBook: false, dictationMisses: 0, errorReviewed: false }, targetUnitId); setToast('已移出错词本') }}
+            onMaster={(word, targetUnitId) => { updateWord(word.id, { mastered: true, ...scheduleReview(word, true) }, targetUnitId); setToast('已标记掌握') }}
+          />
+        )}
         {view === 'review' && <ReviewView units={units} onReview={(word, targetUnitId, remembered) => { updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId); setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒') }} />}
         {view === 'passage' && <PassageView units={units} onAddWords={(targetUnitId, words) => {
           const target = units.find((item) => item.id === targetUnitId)
           if (target) addImportedWords(target, words)
         }} />}
-        {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} starredCount={starredCount} onView={nav} />}
+        {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} starredCount={starredCount} errorBookCount={errorBookCount} onView={nav} />}
       </main>
       <MobileTabBar view={view} reviewCount={reviewCount} onView={nav} />
 
@@ -326,8 +373,8 @@ function App() {
   )
 }
 
-function AppHeader({ open, view, settings, starredCount, reviewCount, onMenu, onView }: {
-  open: boolean; view: View; settings: AppSettings; starredCount: number; reviewCount: number
+function AppHeader({ open, view, settings, starredCount, errorBookCount, reviewCount, onMenu, onView }: {
+  open: boolean; view: View; settings: AppSettings; starredCount: number; errorBookCount: number; reviewCount: number
   onMenu: () => void; onView: (view: View) => void
 }) {
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
@@ -337,6 +384,7 @@ function AppHeader({ open, view, settings, starredCount, reviewCount, onMenu, on
     { id: 'test', label: '测试', icon: <GraduationCap size={17} /> },
     { id: 'dictation', label: '听写', icon: <Keyboard size={17} /> },
     { id: 'wordbook', label: '生词本', icon: <BookMarked size={17} />, count: starredCount },
+    { id: 'errorbook', label: '错词本', icon: <NotebookPen size={17} />, count: errorBookCount },
     { id: 'review', label: '待复习', icon: <Clock3 size={17} />, count: reviewCount },
     { id: 'settings', label: '设置', icon: <Settings size={17} /> },
   ]
@@ -353,7 +401,7 @@ function AppHeader({ open, view, settings, starredCount, reviewCount, onMenu, on
 }
 
 const VIEW_TITLES: Record<View, string> = {
-  library: '词库', study: '学习', passage: '课文', test: '测试', dictation: '听写', wordbook: '生词本', review: '待复习', settings: '我的',
+  library: '词库', study: '学习', passage: '课文', test: '测试', dictation: '听写', wordbook: '生词本', errorbook: '错词本', review: '待复习', settings: '我的',
 }
 
 function MobileTopBar({ view, settings, onView }: { view: View; settings: AppSettings; onView: (view: View) => void }) {
@@ -374,7 +422,7 @@ function MobileTabBar({ view, reviewCount, onView }: { view: View; reviewCount: 
     { id: 'review', label: '复习', icon: <Clock3 size={21} />, count: reviewCount },
     { id: 'settings', label: '我的', icon: <UserRound size={21} /> },
   ]
-  const active = view === 'wordbook' || view === 'test' ? 'settings' : view
+  const active = view === 'wordbook' || view === 'errorbook' || view === 'test' ? 'settings' : view
   return (
     <nav className="mobile-tabbar" aria-label="应用导航">
       {items.map((item) => (
@@ -915,8 +963,8 @@ function ReviewView({ units, onReview }: { units: Unit[]; onReview: (word: Word,
   )
 }
 
-function SettingsView({ settings, onChange, starredCount = 0, onView }: {
-  settings: AppSettings; onChange: (settings: AppSettings) => void; starredCount?: number; onView?: (view: View) => void
+function SettingsView({ settings, onChange, starredCount = 0, errorBookCount = 0, onView }: {
+  settings: AppSettings; onChange: (settings: AppSettings) => void; starredCount?: number; errorBookCount?: number; onView?: (view: View) => void
 }) {
   const avatars = ['ゆ', '桜', '語', '猫', '旅', '月']
   const sample = makeFallbackWord({ term: 'こんにちは', reading: 'こんにちは', meaning: '你好' })
@@ -938,6 +986,7 @@ function SettingsView({ settings, onChange, starredCount = 0, onView }: {
       {onView && (
         <div className="me-shortcuts">
           <button onClick={() => onView('wordbook')}><BookMarked size={18} /><span>生词本</span><em>{starredCount}</em></button>
+          <button onClick={() => onView('errorbook')}><NotebookPen size={18} /><span>错词本</span><em>{errorBookCount}</em></button>
           <button onClick={() => onView('test')}><GraduationCap size={18} /><span>单元测试</span></button>
           <button onClick={() => onView('dictation')}><Keyboard size={18} /><span>听写</span></button>
         </div>

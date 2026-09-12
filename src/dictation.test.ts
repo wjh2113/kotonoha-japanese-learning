@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  clampDictationGoal, compactKana, dictationGap, katakanaDiff, matchesKatakanaAnswer,
-  pickDictationWords, reinsertAfterMiss, removeCurrent, toKatakana, wordKatakana,
+  clampDictationGoal, compactKana, dictationGap, isStickyMiss, katakanaDiff, matchesErrorBookFilter,
+  matchesKatakanaAnswer, pickDictationWords, pickErrorBookWords, reinsertAfterMiss, removeCurrent,
+  sessionMissStats, toKatakana, unitStudyProgress, wordKatakana,
 } from './dictation'
 import { makeFallbackWord } from './utils'
 
@@ -60,5 +61,23 @@ describe('today plan picking', () => {
     const mastered = { ...makeFallbackWord({ term: '犬', reading: 'いぬ', meaning: '狗' }), mastered: true }
     const done = makeFallbackWord({ term: '水', reading: 'みず', meaning: '水' })
     expect(pickDictationWords([mastered, done, fresh], 5, [done.id]).map((word) => word.term)).toEqual(['猫', '犬'])
+  })
+})
+
+describe('error book from dictation misses', () => {
+  it('treats three misses as sticky and keeps mastered words out of review queues', () => {
+    const missed = { ...makeFallbackWord({ term: '猫', reading: 'ねこ', meaning: '猫' }), wrongBook: true, dictationMisses: 1 }
+    const sticky = { ...makeFallbackWord({ term: '犬', reading: 'いぬ', meaning: '狗' }), wrongBook: true, dictationMisses: 3 }
+    const learned = { ...makeFallbackWord({ term: '水', reading: 'みず', meaning: '水' }), wrongBook: true, mastered: true, errorReviewed: true }
+    const reviewing = { ...missed, errorReviewed: true }
+    expect(isStickyMiss(2)).toBe(false)
+    expect(isStickyMiss(3)).toBe(true)
+    expect(matchesErrorBookFilter(missed, 'fresh')).toBe(true)
+    expect(matchesErrorBookFilter(reviewing, 'reviewing')).toBe(true)
+    expect(matchesErrorBookFilter(sticky, 'sticky')).toBe(true)
+    expect(matchesErrorBookFilter(learned, 'mastered')).toBe(true)
+    expect(pickErrorBookWords([missed, sticky, learned]).map((word) => word.term)).toEqual(['猫', '犬'])
+    expect(sessionMissStats({ a: 1, b: 3, c: 8 })).toEqual({ missed: 3, sticky: 2 })
+    expect(unitStudyProgress([missed, learned]).percent).toBe(50)
   })
 })

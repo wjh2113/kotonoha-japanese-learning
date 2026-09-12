@@ -70,7 +70,8 @@ export function createDatabase(connectionString) {
       pool.query('SELECT id, name, description, color FROM units ORDER BY sort_order, created_at, id'),
       pool.query(`SELECT id, unit_id, term, reading, meaning, part_of_speech, example, example_reading,
         translation, mastered, starred, review_stage, last_reviewed_at, next_review_at,
-        listening_wrong, meaning_wrong, listening_correct, meaning_correct, created_at
+        listening_wrong, meaning_wrong, listening_correct, meaning_correct,
+        wrong_book, dictation_misses, error_reviewed, created_at
         FROM words ORDER BY unit_id, sort_order, created_at, id`),
       pool.query('SELECT avatar, voice_gender FROM app_settings WHERE id = 1'),
     ])
@@ -81,6 +82,8 @@ export function createDatabase(connectionString) {
         id: row.id, term: row.term, reading: row.reading, meaning: row.meaning,
         partOfSpeech: row.part_of_speech, example: row.example, exampleReading: row.example_reading,
         translation: row.translation, mastered: row.mastered, starred: row.starred,
+        wrongBook: row.wrong_book, dictationMisses: row.dictation_misses || 0,
+        errorReviewed: row.error_reviewed,
         reviewStage: row.review_stage ?? undefined,
         lastReviewedAt: row.last_reviewed_at?.getTime(), nextReviewAt: row.next_review_at?.getTime(),
         listeningWrong: row.listening_wrong || 0, meaningWrong: row.meaning_wrong || 0,
@@ -121,8 +124,8 @@ export function createDatabase(connectionString) {
             `INSERT INTO words (id, unit_id, term, reading, meaning, part_of_speech, example,
               example_reading, translation, mastered, starred, review_stage, last_reviewed_at,
               next_review_at, listening_wrong, meaning_wrong, listening_correct, meaning_correct,
-              sort_order, created_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,COALESCE($20,NOW()))`,
+              wrong_book, dictation_misses, error_reviewed, sort_order, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,COALESCE($23,NOW()))`,
             [text(word.id), text(unit.id), term, text(lex.reading || word.reading),
               placeholder && lex.meaning ? lex.meaning : meaning,
               text(word.partOfSpeech),
@@ -135,6 +138,9 @@ export function createDatabase(connectionString) {
               Math.max(0, Math.min(99, Number(word.meaningWrong) || 0)),
               Math.max(0, Math.min(99, Number(word.listeningCorrect) || 0)),
               Math.max(0, Math.min(99, Number(word.meaningCorrect) || 0)),
+              Boolean(word.wrongBook),
+              Math.max(0, Math.min(99, Number(word.dictationMisses) || 0)),
+              Boolean(word.errorReviewed),
               wordIndex, timestamp(word.createdAt)],
           )
         }

@@ -10,6 +10,9 @@ export type Word = {
   mastered: boolean
   createdAt: number
   starred?: boolean
+  wrongBook?: boolean
+  dictationMisses?: number
+  errorReviewed?: boolean
   reviewStage?: number
   lastReviewedAt?: number
   nextReviewAt?: number
@@ -32,7 +35,7 @@ export type PassageBook = {
   name: string
 }
 
-export type View = 'library' | 'study' | 'passage' | 'test' | 'dictation' | 'wordbook' | 'review' | 'settings'
+export type View = 'library' | 'study' | 'passage' | 'test' | 'dictation' | 'wordbook' | 'errorbook' | 'review' | 'settings'
 
 export type VoiceGender = 'female' | 'male'
 
