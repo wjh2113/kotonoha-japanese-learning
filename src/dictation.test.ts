@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  clampDictationGoal, compactKana, dictationGap, isStickyMiss, katakanaDiff, matchesErrorBookFilter,
+  clampDictationGoal, compactKana, dictationGap, isConfirmEnter, isStickyMiss, katakanaDiff, matchesErrorBookFilter,
   matchesKatakanaAnswer, pickDictationWords, pickErrorBookWords, reinsertAfterMiss, removeCurrent,
   sessionMissStats, suggestedReviewWords, toKatakana, unitStudyProgress, wordKatakana,
 } from './dictation'
@@ -30,6 +30,13 @@ describe('kana conversion for dictation', () => {
 
   it('compacts punctuation before comparing', () => {
     expect(compactKana(' ミズ。')).toBe('ミズ')
+  })
+
+  it('treats IME confirm Enter as not a submit', () => {
+    expect(isConfirmEnter({ key: 'Enter' })).toBe(true)
+    expect(isConfirmEnter({ key: 'Enter', isComposing: true })).toBe(false)
+    expect(isConfirmEnter({ key: 'Enter', keyCode: 229 })).toBe(false)
+    expect(isConfirmEnter({ key: 'a' })).toBe(false)
   })
 })
 

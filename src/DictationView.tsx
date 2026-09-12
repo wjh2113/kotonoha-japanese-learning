@@ -7,7 +7,7 @@ import { SettingsContext } from './settings-context'
 import { speakJapanese, stopSpeaking } from './speech'
 import type { Unit, Word } from './types'
 import {
-  clampDictationGoal, clampPlaySpeed, clampPlayTimes, dictationCandidates, dictationGap, katakanaDiff,
+  clampDictationGoal, clampPlaySpeed, clampPlayTimes, dictationCandidates, dictationGap, isConfirmEnter, katakanaDiff,
   loadDictationPlan, loadDictationPlay, matchesKatakanaAnswer, pickDictationWords, pickErrorBookWords,
   PLAY_SPEED_OPTIONS, PLAY_TIMES_OPTIONS, reinsertAfterMiss, removeCurrent, saveDictationPlan,
   saveDictationPlay, sessionMissStats, suggestedReviewWords, unitStudyProgress, wordKatakana,
@@ -62,6 +62,8 @@ export function DictationView({
   const pendingQueue = useRef<QueueItem[] | null>(null)
   const autoStarted = useRef(false)
   const playToken = useRef(0)
+  const skipReady = useRef(false)
+  const armSkipOnEnterUp = useRef(false)
 
   const sourceWords = mode === 'errors' ? (seedWords.length ? seedWords : unit.words) : unit.words
   const candidates = dictationCandidates(sourceWords)
@@ -151,6 +153,8 @@ export function DictationView({
     setMissCounts({})
     setRoundSize(queueWords.length)
     setNextOpen(false)
+    skipReady.current = false
+    armSkipOnEnterUp.current = false
     setFinished(false)
     setStarted(true)
   }
@@ -163,6 +167,8 @@ export function DictationView({
 
   const goNext = (nextQueue = queue, nextIndex = index) => {
     clearWait()
+    skipReady.current = false
+    armSkipOnEnterUp.current = false
     setReveal(null)
     setTyped('')
     if (!nextQueue.length || nextIndex >= nextQueue.length) {
@@ -184,25 +190,41 @@ export function DictationView({
     if (wasDue) setSessionReviewed((count) => count + 1)
   }
 
+  const beginWait = (ok: boolean, fromQueue: QueueItem[]) => {
+    clearWait()
+    setWaitLeft(5)
+    waitTimer.current = window.setInterval(() => {
+      setWaitLeft((seconds) => {
+        if (seconds <= 1) {
+          window.clearInterval(waitTimer.current)
+          if (ok) goNext(removeCurrent(fromQueue, index), index)
+          else {
+            const nextQueue = pendingQueue.current || fromQueue
+            pendingQueue.current = null
+            goNext(nextQueue, index)
+          }
+          return 0
+        }
+        return seconds - 1
+      })
+    }, 1000)
+  }
+
   const finishCard = (ok: boolean) => {
     if (!current || reveal) return
     const item = queue[index]
+    skipReady.current = false
+    armSkipOnEnterUp.current = true
     setHistory((currentHistory) => [...currentHistory, item])
     setReveal({ ok, typed })
+    window.setTimeout(() => {
+      skipReady.current = true
+      inputRef.current?.focus()
+    }, 320)
     if (ok) {
       onCorrect(current)
       markLearned(current, getDue(current))
-      waitTimer.current = window.setInterval(() => {
-        setWaitLeft((seconds) => {
-          if (seconds <= 1) {
-            window.clearInterval(waitTimer.current)
-            goNext(removeCurrent(queue, index), index)
-            return 0
-          }
-          return seconds - 1
-        })
-      }, 1000)
-      setWaitLeft(5)
+      beginWait(true, queue)
       return
     }
     onMiss(current)
@@ -213,6 +235,7 @@ export function DictationView({
       index,
       dictationGap(misses),
     )
+    beginWait(false, queue)
   }
 
   const check = () => {
@@ -220,8 +243,11 @@ export function DictationView({
     finishCard(matchesKatakanaAnswer(typed, current))
   }
 
-  const skipWait = () => {
+  const skipWait = (fromKeyboard = false) => {
     if (!reveal) return
+    if (fromKeyboard && !skipReady.current) return
+    skipReady.current = false
+    armSkipOnEnterUp.current = false
     if (reveal.ok) {
       pendingQueue.current = null
       goNext(removeCurrent(queue, index), index)
@@ -232,20 +258,29 @@ export function DictationView({
     goNext(nextQueue, index)
   }
 
-  useEffect(() => {
-    if (!reveal) return
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Enter' || event.isComposing) return
-      event.preventDefault()
-      skipWait()
+  const onAnswerKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!isConfirmEnter({ key: event.key, isComposing: event.nativeEvent.isComposing, keyCode: event.nativeEvent.keyCode })) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (reveal) {
+      if (skipReady.current) skipWait(true)
+      return
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  })
+    check()
+  }
+
+  const onAnswerKeyUp = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!isConfirmEnter({ key: event.key, isComposing: event.nativeEvent.isComposing, keyCode: event.nativeEvent.keyCode })) return
+    if (!armSkipOnEnterUp.current) return
+    armSkipOnEnterUp.current = false
+    skipReady.current = true
+  }
 
   const previous = () => {
     if (!history.length) return
     clearWait()
+    skipReady.current = false
+    armSkipOnEnterUp.current = false
     const last = history[history.length - 1]
     setHistory((currentHistory) => currentHistory.slice(0, -1))
     setQueue((currentQueue) => {
@@ -377,7 +412,7 @@ export function DictationView({
               <span className="jp">{expected}</span>
               <em>{current.meaning}</em>
             </div>
-            {reveal.ok && waitLeft > 0 && <small>{waitLeft}s 后切换下一个 · Enter 跳过</small>}
+            {reveal && waitLeft > 0 && <small>{waitLeft}s 后切换下一个 · Enter 跳过</small>}
           </header>
         )}
         {!reveal && (
@@ -386,33 +421,30 @@ export function DictationView({
             {playSettings.times > 1 && playIndex > 0 && <em>正在播放 {playIndex}/{playSettings.times}</em>}
           </p>
         )}
-        {reveal ? (
+        {reveal && (
           <p className={`dictation-typed jp ${reveal.ok ? 'ok' : 'bad'}`} aria-live="polite">
             {reveal.ok
               ? expected
               : (marks.length ? marks.map((mark, markIndex) => <span key={`${mark.char}-${markIndex}`} className={mark.ok ? '' : 'miss'}>{mark.char}</span>) : '（未输入）')}
           </p>
-        ) : (
-          <input
-            ref={inputRef}
-            className="dictation-input jp"
-            value={typed}
-            lang="ja"
-            autoCapitalize="off"
-            autoComplete="off"
-            autoCorrect="off"
-            spellCheck={false}
-            placeholder="输入片假名，例如 ミズ"
-            onChange={(event) => setTyped(event.target.value)}
-            onCompositionStart={() => { composing.current = true }}
-            onCompositionEnd={(event) => { composing.current = false; setTyped(event.currentTarget.value) }}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
-              event.preventDefault()
-              check()
-            }}
-          />
         )}
+        <input
+          ref={inputRef}
+          className={`dictation-input jp ${reveal ? 'settled' : ''}`}
+          value={typed}
+          lang="ja"
+          autoCapitalize="off"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          readOnly={Boolean(reveal)}
+          placeholder="输入片假名，例如 ミズ"
+          onChange={(event) => { if (!reveal) setTyped(event.target.value) }}
+          onCompositionStart={() => { composing.current = true }}
+          onCompositionEnd={(event) => { composing.current = false; if (!reveal) setTyped(event.currentTarget.value) }}
+          onKeyDown={onAnswerKeyDown}
+          onKeyUp={onAnswerKeyUp}
+        />
         {reveal?.ok && (
           <button type="button" className="dictation-master" onClick={masterCurrent}><Check size={16} />标记掌握</button>
         )}
@@ -423,8 +455,8 @@ export function DictationView({
         <button type="button" disabled={!history.length} onClick={previous}><SkipBack size={18} />上一个单词</button>
         <button type="button" onClick={() => void play(current, 1)}><RotateCcw size={18} />再读一遍</button>
         {reveal
-          ? <button type="button" className="primary-button" onClick={skipWait}>{reveal.ok ? (waitLeft ? '跳过等待' : '下一个') : '下一个继续'}</button>
-          : <button type="button" className="primary-button" disabled={!typed.trim()} onClick={check}><CheckCircle2 size={18} />核对答案</button>}
+          ? <button type="button" className="primary-button" tabIndex={-1} onClick={() => skipWait()}>{waitLeft ? '跳过等待' : '下一个继续'}</button>
+          : <button type="button" className="primary-button" tabIndex={-1} disabled={!typed.trim()} onClick={check}><CheckCircle2 size={18} />核对答案</button>}
       </div>
       <DictationStats
         plan={plan} dueReview={dueReview} learnedToday={learnedToday} reviewedToday={reviewedToday}

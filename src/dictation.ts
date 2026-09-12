@@ -104,6 +104,18 @@ export function toKatakana(input: string) {
   return String(input || '').replace(/[ぁ-ゖ]/g, (char) => String.fromCharCode(char.charCodeAt(0) + 0x60))
 }
 
+export function isDictationSubmitEnter(event: {
+  key: string
+  isComposing?: boolean
+  keyCode?: number
+  nativeEvent?: { isComposing?: boolean; keyCode?: number }
+}) {
+  if (event.key !== 'Enter') return false
+  if (event.isComposing || event.nativeEvent?.isComposing) return false
+  const code = event.keyCode ?? event.nativeEvent?.keyCode
+  return code !== 229
+}
+
 export function compactKana(input: string) {
   return toKatakana(toHiragana(String(input || '').normalize('NFKC')))
     .replace(/[\s。、！？,.!?・「」『』]/g, '')
@@ -153,6 +165,11 @@ export function removeCurrent<T>(items: T[], index: number) {
 
 export function dictationCandidates(words: Word[]) {
   return words.filter((word) => looksLikeVocabularyTerm(word.term) && compactKana(wordKatakana(word)))
+}
+
+export function isConfirmEnter(event: { key: string; isComposing?: boolean; keyCode?: number }) {
+  if (event.key !== 'Enter') return false
+  return !event.isComposing && event.keyCode !== 229
 }
 
 export function hasDictationHistory(word: Word) {
