@@ -12,6 +12,7 @@ export type Word = {
   memoryTip?: string
   synonyms?: string
   similarWords?: string
+  notes?: string
   mastered: boolean
   createdAt: number
   starred?: boolean
@@ -40,7 +41,7 @@ export type PassageBook = {
   name: string
 }
 
-export type View = 'library' | 'study' | 'passage' | 'test' | 'dictation' | 'wordbook' | 'errorbook' | 'review' | 'settings'
+export type View = 'home' | 'library' | 'study' | 'passage' | 'test' | 'dictation' | 'wordbook' | 'errorbook' | 'review' | 'settings'
 
 export type VoiceGender = 'female' | 'male'
 
@@ -50,6 +51,9 @@ export type AppSettings = {
   avatar: string
   voiceGender: VoiceGender
   theme?: ThemeName
+  streakDays?: number
+  lastStudyDate?: string
+  displayName?: string
 }
 
 export type ImportDraft = {

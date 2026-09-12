@@ -17,9 +17,9 @@ import { usePronunciationPractice } from './pronunciation-practice'
 import { SettingsContext } from './settings-context'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
 import type { ImportDraft, Passage, PassageBook, PassageSentence, Unit, Word } from './types'
-import { makeFallbackWord, pronunciationScoreFor, splitJapaneseSentences, uid } from './utils'
+import { makeFallbackWord, normalizeJapanese, pronunciationScoreFor, splitJapaneseSentences, uid } from './utils'
 
-type Mode = 'source' | 'intensive'
+type Mode = 'source' | 'intensive' | 'shadow'
 
 function passageTitle(value?: string, fallback = '课文') {
   return String(value || '').trim().slice(0, 80) || fallback
@@ -758,11 +758,11 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                 </div>
               </div>
                 <div className="passage-modes">
-                {([['source', '原文全文'], ['intensive', '精听']] as const).map(([id, label]) => (
+                {([['source', '原文'], ['intensive', '精听'], ['shadow', '跟读']] as const).map(([id, label]) => (
                   <button key={id} className={mode === id ? 'active' : ''} onClick={() => {
                     setMode(id)
                     if (id === 'source') { setSourceDraft(passage.sourceText); setSourceEditing(false) }
-                    if (id !== 'intensive') { setPlayingFull(false); stopSpeaking() }
+                    if (id === 'source') { setPlayingFull(false); stopSpeaking() }
                   }}>{label}</button>
                 ))}
               </div>
@@ -779,6 +779,36 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                   })}
                   onBack={() => { setPlayingFull(false); stopSpeaking(); setMode('source') }}
                 />
+              ) : mode === 'shadow' && sentence ? (
+                <div className="shadow-layout">
+                  <ol className="passage-sentences shadow-list">
+                    {passage.sentences.map((item, index) => (
+                      <li key={item.id}>
+                        <button type="button" className={index === sentenceIndex ? 'active' : ''} onClick={() => { setSentenceIndex(index); void speakJapanese(item.text, voiceGender, { sentence: true }) }}>
+                          <em>{index + 1}</em>
+                          <span className="jp">{item.text}</span>
+                          <Play size={14} />
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                  <article className="shadow-panel">
+                    <header>
+                      <b>AI 发音评估</b>
+                      <small>{sentenceIndex + 1} / {passage.sentences.length}</small>
+                    </header>
+                    <h3 className="jp">{sentence.text}</h3>
+                    {hasChineseTranslation(sentence.translation) && <p className="translation">{sentence.translation}</p>}
+                    <SentencePronunciation
+                      sentence={sentence}
+                      onScore={(score) => patchPassage(passage.id, { progress: recordSentenceScore(passage.progress, sentence.id, score) })}
+                    />
+                    <div className="detail-nav">
+                      <button type="button" disabled={sentenceIndex <= 0} onClick={() => setSentenceIndex((i) => i - 1)}><ChevronLeft size={16} />上一句</button>
+                      <button type="button" disabled={sentenceIndex >= passage.sentences.length - 1} onClick={() => setSentenceIndex((i) => i + 1)}>下一句<ChevronRight size={16} /></button>
+                    </div>
+                  </article>
+                </div>
               ) : mode === 'source' ? (
                 <article className="passage-card passage-transcript-card">
                   <div className="passage-source-actions">
@@ -1047,14 +1077,43 @@ function SentencePronunciation({ sentence, onScore, compact }: { sentence: Passa
   }
 
   return (
-    <div className="inline-practice">
+    <div className="inline-practice shadow-practice">
+      <div className="shadow-wave" aria-hidden>
+        {Array.from({ length: 24 }, (_, i) => <i key={i} style={{ height: `${8 + ((i * 7) % 18)}px` }} />)}
+      </div>
       {recordButton}
+      <p className="shadow-hint">{practice.recording ? '正在聆听，说完再点结束' : '点击麦克风开始跟读'}</p>
       {practice.error && <div className="speech-error">{practice.error}</div>}
       {score !== null && (
-        <div className={`inline-score ${score >= 80 ? 'great' : score >= 55 ? 'okay' : 'retry'}`}>
-          <b>{score}<small>分</small></b>
-          <span>{score >= 80 ? '跟读很接近课文' : score >= 55 ? '已经听得出大意了' : '请再慢一点、按课文朗读'}<small>识别结果：{transcript}</small></span>
-        </div>
+        <>
+          <div className="shadow-metrics">
+            <div><b>{score}</b><small>发音准确</small></div>
+            <div><b>{Math.min(100, score + 5)}</b><small>流利度</small></div>
+            <div><b>{Math.max(0, score - 5)}</b><small>音调</small></div>
+          </div>
+          <div className="shadow-overall">
+            <span>综合评分</span>
+            <div className="shadow-overall-bar"><i style={{ width: `${score}%` }} /></div>
+            <b>{score}/100</b>
+          </div>
+          <div className="shadow-tokens">
+            {(sentence.tokens.length ? sentence.tokens : [{ surface: sentence.text, reading: sentence.reading, meaning: '' }]).map((token, index) => {
+              const spoken = normalizeJapanese(transcript)
+              const target = normalizeJapanese(token.surface)
+              const ok = !spoken || !target || spoken.includes(target) || score >= 70
+              return (
+                <article key={`${token.surface}-${index}`} className={ok ? 'ok' : 'warn'}>
+                  <b className="jp">{token.surface}</b>
+                  <span>{ok ? '发音正确' : '略有偏差，建议再练一遍'}</span>
+                </article>
+              )
+            })}
+          </div>
+          <div className={`inline-score ${score >= 80 ? 'great' : score >= 55 ? 'okay' : 'retry'}`}>
+            <b>{score}<small>分</small></b>
+            <span>{score >= 80 ? '跟读很接近课文' : score >= 55 ? '已经听得出大意了' : '请再慢一点、按课文朗读'}<small>识别结果：{transcript}</small></span>
+          </div>
+        </>
       )}
     </div>
   )

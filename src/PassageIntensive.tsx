@@ -141,12 +141,12 @@ export function PassageIntensive({
         <section className="intensive-main">
           <div className="intensive-cols-head">
             <div>
-              <b>原文/译文</b>
-              <small>点击某一行即可播放该句</small>
+              <b>逐句原文</b>
+              <small>{sentenceIndex + 1} / {passage.sentences.length}</small>
             </div>
             <div>
-              <b>我的听写</b>
-              <small>单击输入，右侧可保存；Tab 跳到下一格</small>
+              <b>听写输入</b>
+              <small>请听写这句的日文</small>
             </div>
           </div>
           <div className="intensive-rows">

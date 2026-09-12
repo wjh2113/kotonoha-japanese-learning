@@ -1,8 +1,8 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import {
-  AudioLines, BookMarked, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronLeft, ChevronRight,
-  Clock3, FileText, GraduationCap, Headphones, Import, Keyboard, LayoutGrid, LibraryBig, List, Menu,
-  Mic, NotebookPen, Palette, Pause, Plus, Search, Settings, Sparkles, SquarePen,
+  AudioLines, Bell, BookMarked, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronLeft, ChevronRight,
+  Clock3, FileText, GraduationCap, Headphones, Home, Import, Keyboard, LayoutGrid, LibraryBig, List, Menu,
+  Mic, NotebookPen, Palette, Pause, Plus, Search, Settings, Sparkles, SquarePen, Sprout, Target,
   Trash2, Trophy, UploadCloud, UserRound, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, apiUrl, AUTH_REQUIRED_EVENT, getAccessToken, setAccessToken } from './api'
@@ -11,13 +11,14 @@ import { readVocabularyFile } from './docx'
 import { PassageView } from './PassageView'
 import { DictationView, type DictationMode } from './DictationView'
 import { ErrorBookView } from './ErrorBookView'
+import { HomeView } from './HomeView'
 import { SettingsContext, DEFAULT_SETTINGS } from './settings-context'
 import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, ThemeName, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fallbackUnitTheme, isPlaceholderTheme } from './theme'
 import { buildQuizOptions, ENRICH_BATCH_SIZE, isPlaceholderMeaning, mergeEnrichedWord, optionLabel, orderQuizByWeakness, recordQuizAnswer, sharedDistractors, usableQuizWords } from './quiz'
 import { usePronunciationPractice } from './pronunciation-practice'
-import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, splitWordList, toRomaji, uid } from './utils'
+import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, masteryDots, parseVocabulary, proficiencyPercent, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, splitWordList, toRomaji, touchStudyStreak, uid } from './utils'
 
 const STORAGE_KEY = 'kotonoha-units-v1'
 const SETTINGS_KEY = 'kotonoha-settings-v1'
@@ -29,7 +30,7 @@ function App() {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '') } catch { return initialUnits }
   })
   const [unitId, setUnitId] = useState(units[0]?.id || '')
-  const [view, setView] = useState<View>('study')
+  const [view, setView] = useState<View>('home')
   const [dictationMode, setDictationMode] = useState<DictationMode>('plan')
   const [dictationSeed, setDictationSeed] = useState<Word[]>([])
   const [selectedId, setSelectedId] = useState(units[0]?.words[0]?.id || '')
@@ -51,10 +52,10 @@ function App() {
   })
 
   useEffect(() => {
-    const theme = settings.theme || 'aka'
+    const theme = settings.theme || 'matcha'
     document.documentElement.dataset.theme = theme
     const colors: Record<string, string> = { aka: '#d85b45', ai: '#4b6a9e', matcha: '#7d9159' }
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', colors[theme] || colors.aka)
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', colors[theme] || colors.matcha)
   }, [settings.theme])
 
   useEffect(() => {
@@ -205,10 +206,15 @@ function App() {
   const reviewCount = units.reduce((sum, item) => sum + item.words.filter((word) => getReviewState(word).due).length, 0)
   const missingMeanings = units.reduce((sum, item) => sum + item.words.filter((word) => isPlaceholderMeaning(word.meaning)).length, 0)
 
+  const bumpStreak = () => {
+    setSettings((current) => ({ ...current, ...touchStudyStreak(current) }))
+  }
+
   const updateWord = (wordId: string, changes: Partial<Word>, targetUnitId = unitId) => {
     setUnits((current) => current.map((item) => item.id === targetUnitId
       ? { ...item, words: item.words.map((word) => word.id === wordId ? { ...word, ...changes } : word) }
       : item))
+    bumpStreak()
   }
 
   const updateWordById = (wordId: string, updater: (word: Word) => Partial<Word>) => {
@@ -317,11 +323,12 @@ function App() {
         starredCount={starredCount} errorBookCount={errorBookCount} reviewCount={reviewCount}
         onMenu={() => setMobileNav((current) => !current)} onView={nav} onSettingsChange={setSettings}
       />
-      <MobileTopBar view={view} settings={settings} onView={nav} onSettingsChange={setSettings} />
+      <MobileTopBar view={view} settings={settings} onView={nav} onSettingsChange={setSettings} onMenu={() => setMobileNav((current) => !current)} />
       {missingMeanings > 0 && (
         <div className="enrich-banner">正在补全全部单词释义，还剩 {missingMeanings} 个。补完后测试会覆盖整个单元。</div>
       )}
       <main className="main">
+        {view === 'home' && <HomeView units={units} unit={unit} settings={settings} onView={nav} />}
         {view === 'library' && <LibraryView units={units} unitId={unitId} onUnit={setUnitId} onImport={openImport} onNewUnit={() => setNewUnitOpen(true)} onRenameUnit={renameUnit} onDeleteUnit={requestDeleteUnit} />}
         {view === 'study' && unit && (
           <StudyView
@@ -390,9 +397,9 @@ function App() {
 }
 
 const THEME_OPTIONS: { id: ThemeName; name: string; desc: string }[] = [
+  { id: 'matcha', name: '抹茶', desc: '日式绿' },
   { id: 'aka', name: '绯红', desc: '暖橘红' },
   { id: 'ai', name: '黛蓝', desc: '书卷气' },
-  { id: 'matcha', name: '抹茶', desc: '日式绿' },
 ]
 
 function AvatarThemeMenu({
@@ -405,7 +412,7 @@ function AvatarThemeMenu({
 }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
-  const current = settings.theme || 'aka'
+  const current = settings.theme || 'matcha'
 
   useEffect(() => {
     if (!open) return
@@ -485,43 +492,73 @@ function AppHeader({ open, view, settings, starredCount, errorBookCount, reviewC
   onMenu: () => void; onView: (view: View) => void; onSettingsChange: (settings: AppSettings) => void
 }) {
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
-    { id: 'library', label: '词库', icon: <LibraryBig size={17} /> },
-    { id: 'passage', label: '课文', icon: <FileText size={17} /> },
-    { id: 'study', label: '学习', icon: <BookOpen size={17} /> },
+    { id: 'home', label: '首页', icon: <Home size={17} /> },
+    { id: 'study', label: '单词学习', icon: <BookOpen size={17} /> },
+    { id: 'passage', label: '课文学习', icon: <FileText size={17} /> },
     { id: 'test', label: '测试', icon: <GraduationCap size={17} /> },
     { id: 'dictation', label: '听写', icon: <Keyboard size={17} /> },
     { id: 'wordbook', label: '生词本', icon: <BookMarked size={17} />, count: starredCount },
-    { id: 'errorbook', label: '错词本', icon: <NotebookPen size={17} />, count: errorBookCount },
-    { id: 'review', label: '待复习', icon: <Clock3 size={17} />, count: reviewCount },
+    { id: 'errorbook', label: '错题本', icon: <NotebookPen size={17} />, count: errorBookCount },
+    { id: 'review', label: '复习', icon: <Clock3 size={17} />, count: reviewCount },
     { id: 'settings', label: '设置', icon: <Settings size={17} /> },
   ]
   return (
-    <header className="app-header">
-      <button className="header-menu" onClick={onMenu} aria-label="打开菜单"><Menu size={21} /></button>
-      <button className="header-brand" onClick={() => onView('study')}><span>語</span><b>日语单词学习</b></button>
-      <nav className={`header-nav ${open ? 'open' : ''}`}>
-        {items.map((item) => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => onView(item.id)}>{item.icon}<span>{item.label}</span>{Boolean(item.count) && <em>{item.count}</em>}</button>)}
+    <aside className={`app-sidebar ${open ? 'open' : ''}`}>
+      <div className="sidebar-brand">
+        <span className="sidebar-leaf" aria-hidden><Sprout size={20} /></span>
+        <div>
+          <b>にほんご学習</b>
+          <small>一词一句，遇见更好的自己</small>
+        </div>
+        <button className="header-menu sidebar-close" onClick={onMenu} aria-label="关闭菜单"><X size={18} /></button>
+      </div>
+      <div className="sidebar-profile">
+        <AvatarThemeMenu
+          settings={settings}
+          onSettingsChange={onSettingsChange}
+          onOpenSettings={() => onView('settings')}
+          ariaLabel="主题与设置"
+        />
+        <div>
+          <b>{settings.displayName || '小林同学'}</b>
+          <small>学习中</small>
+        </div>
+      </div>
+      <nav className="sidebar-nav">
+        {items.map((item) => (
+          <button key={item.id} type="button" className={view === item.id ? 'active' : ''} onClick={() => onView(item.id)}>
+            {item.icon}<span>{item.label}</span>
+            {Boolean(item.count) && <em>{item.count}</em>}
+          </button>
+        ))}
       </nav>
-      <AvatarThemeMenu
-        settings={settings}
-        onSettingsChange={onSettingsChange}
-        onOpenSettings={() => onView('settings')}
-        ariaLabel="主题与设置"
-      />
-    </header>
+      <div className="sidebar-art" aria-hidden>
+        <p className="jp">日本語を<br />もっと好きに</p>
+        <svg viewBox="0 0 200 90" className="sidebar-mountains">
+          <path d="M0 70 L40 35 L70 55 L110 20 L150 50 L180 30 L200 55 L200 90 L0 90 Z" fill="currentColor" opacity=".35" />
+          <path d="M0 78 L55 48 L90 65 L130 40 L200 70 L200 90 L0 90 Z" fill="currentColor" opacity=".22" />
+          <circle cx="158" cy="22" r="8" fill="#e8a45a" opacity=".85" />
+        </svg>
+      </div>
+    </aside>
   )
 }
 
 const VIEW_TITLES: Record<View, string> = {
-  library: '词库', study: '学习', passage: '课文', test: '测试', dictation: '听写', wordbook: '生词本', errorbook: '错词本', review: '待复习', settings: '我的',
+  home: '首页', library: '词库', study: '单词学习', passage: '课文学习', test: '测试', dictation: '听写', wordbook: '生词本', errorbook: '错题本', review: '复习', settings: '设置',
 }
 
-function MobileTopBar({ view, settings, onView, onSettingsChange }: {
-  view: View; settings: AppSettings; onView: (view: View) => void; onSettingsChange: (settings: AppSettings) => void
+function MobileTopBar({ view, settings, onView, onSettingsChange, onMenu }: {
+  view: View; settings: AppSettings; onView: (view: View) => void; onSettingsChange: (settings: AppSettings) => void; onMenu: () => void
 }) {
   return (
-    <header className="mobile-topbar">
-      <div className="mobile-brand"><span>語</span><b>{VIEW_TITLES[view]}</b></div>
+    <header className="mobile-topbar home-topbar">
+      <button className="header-menu" onClick={onMenu} aria-label="打开菜单"><Menu size={21} /></button>
+      <div className="mobile-brand">
+        <Sprout size={18} />
+        <b>{VIEW_TITLES[view]}</b>
+      </div>
+      <button type="button" className="icon-button" aria-label="通知"><Bell size={18} /></button>
       <AvatarThemeMenu
         settings={settings}
         onSettingsChange={onSettingsChange}
@@ -534,14 +571,14 @@ function MobileTopBar({ view, settings, onView, onSettingsChange }: {
 
 function MobileTabBar({ view, reviewCount, onView }: { view: View; reviewCount: number; onView: (view: View) => void }) {
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
-    { id: 'study', label: '学习', icon: <BookOpen size={21} /> },
-    { id: 'dictation', label: '听写', icon: <Keyboard size={21} /> },
-    { id: 'library', label: '词库', icon: <LibraryBig size={21} /> },
+    { id: 'home', label: '首页', icon: <Home size={21} /> },
+    { id: 'study', label: '单词', icon: <BookOpen size={21} /> },
     { id: 'passage', label: '课文', icon: <FileText size={21} /> },
+    { id: 'dictation', label: '听写', icon: <Keyboard size={21} /> },
     { id: 'review', label: '复习', icon: <Clock3 size={21} />, count: reviewCount },
     { id: 'settings', label: '我的', icon: <UserRound size={21} /> },
   ]
-  const active = view === 'wordbook' || view === 'errorbook' || view === 'test' ? '' : view
+  const active = view === 'wordbook' || view === 'errorbook' || view === 'test' || view === 'library' ? '' : view
   return (
     <nav className="mobile-tabbar" aria-label="应用导航">
       {items.map((item) => (
@@ -655,11 +692,11 @@ function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImpo
 
   return (
     <div className="page study-page">
-      <section className="page-intro">
+      <section className="page-intro study-intro">
         <div>
-          <div className="eyebrow"><span style={{ background: unit.color }} /> VOCABULARY UNIT</div>
           <PageUnitSelect units={units} unit={unit} onUnit={onUnit} label="学习单元" />
-          <p>{isPlaceholderTheme(unit.description) ? '主题归纳中' : unit.description} · 共 {unit.words.length} 个单词</p>
+          <h1>单词学习</h1>
+          <p>选择单词卡片，开始学习和记忆吧！</p>
         </div>
         <div className="hero-actions">
           <button className="secondary-button" onClick={onDictation}><Keyboard size={18} />听写</button>
@@ -668,12 +705,11 @@ function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImpo
         </div>
       </section>
 
-      <label className="study-search"><Search size={17} /><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="搜索当前单元的单词、假名或释义…" /></label>
+      <label className="study-search"><Search size={17} /><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="搜索单词、假名或中文释义…" /></label>
 
       <section className="overview-card">
-        <div className="overview-copy"><span>单元学习进度</span><b>{percent}%</b></div>
-        <div className="overview-bar"><i style={{ width: `${percent}%`, background: unit.color }} /></div>
-        <div className="overview-meta"><span><i className="dot learned" />已掌握 {mastered}</span><span><i className="dot learning" />学习中 {unit.words.length - mastered}</span><em>上次学习：今天</em></div>
+        <div className="overview-copy"><span>共 {unit.words.length} 个单词 · {mastered}/{unit.words.length} 已掌握</span><b>{percent}%</b></div>
+        <div className="overview-bar"><i style={{ width: `${percent}%` }} /></div>
       </section>
 
       <div className="content-columns">
@@ -717,16 +753,18 @@ function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImpo
 }
 
 function WordCard({ word, active, onClick }: { word: Word; active: boolean; onClick: () => void }) {
+  const dots = masteryDots(word)
   return (
     <div className={`word-card ${active ? 'active' : ''}`} onClick={onClick} role="button" tabIndex={0} onKeyDown={(event) => {
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick() }
     }}>
-      <span className={`status-pill ${word.mastered ? 'mastered' : ''}`}>{word.mastered ? '已掌握' : '学习中'}</span>
+      <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
+        {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
+      </span>
       <b className="jp word-term">{word.term}</b>
       <span className="jp word-reading">{word.reading}</span>
-      {(word.romaji || toRomaji(word.reading)) && <span className="romaji word-romaji">{word.romaji || toRomaji(word.reading)}</span>}
+      <em className="word-pos">{word.partOfSpeech.split('・')[0]}</em>
       <span className="word-meaning">{word.meaning}</span>
-      <span className="card-bottom"><em>{word.partOfSpeech.split('・')[0]}</em><VolumeButton word={word} small /></span>
     </div>
   )
 }
@@ -754,21 +792,32 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
   const [typing, setTyping] = useState('')
   const [typingResult, setTypingResult] = useState<'correct' | 'wrong' | null>(null)
   const [practiceOpen, setPracticeOpen] = useState(false)
-  useEffect(() => { setDraft(word); setEditing(false); setTyping(''); setTypingResult(null); setPracticeOpen(false) }, [word])
+  const [notesDraft, setNotesDraft] = useState(word.notes || '')
+  useEffect(() => { setDraft(word); setEditing(false); setTyping(''); setTypingResult(null); setPracticeOpen(false); setNotesDraft(word.notes || '') }, [word])
   const save = () => { onEdit(draft); setEditing(false) }
   const checkTyping = () => {
     const correct = matchesTypingAnswer(typing, word)
     setTypingResult(correct ? 'correct' : 'wrong')
   }
+  const dots = masteryDots(word)
 
   return (
     <div className="detail-card">
-      <div className="detail-actions"><button onClick={onToggleStar} aria-label={word.starred ? '移出生词本' : '加入生词本'} className={word.starred ? 'starred' : ''}><BookMarked size={17} /></button><button onClick={() => setEditing(!editing)} aria-label="编辑词卡"><SquarePen size={17} /></button></div>
+      <div className="detail-actions">
+        <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
+          {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
+        </span>
+        <button onClick={onToggleStar} aria-label={word.starred ? '移出生词本' : '加入生词本'} className={word.starred ? 'starred' : ''}><BookMarked size={17} /></button>
+        <button onClick={() => setEditing(!editing)} aria-label="编辑词卡"><SquarePen size={17} /></button>
+      </div>
       <div className="detail-main-word">
         <span className="jp">{word.reading}</span>
         {(word.romaji || toRomaji(word.reading)) && <small className="romaji">{word.romaji || toRomaji(word.reading)}</small>}
-        <div><h2 className="jp">{word.term}</h2><VolumeButton word={word} /></div>
-        <em>{word.partOfSpeech}</em>
+        <div><h2 className="jp">{word.term}</h2></div>
+        <div className="detail-meta-row">
+          <em>{word.partOfSpeech}</em>
+          <VolumeButton word={word} />
+        </div>
       </div>
       {editing ? (
         <div className="edit-form">
@@ -781,6 +830,7 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
           <label>记忆技巧<input value={draft.memoryTip || ''} onChange={(e) => setDraft({ ...draft, memoryTip: e.target.value })} /></label>
           <label>同义词<input value={draft.synonyms || ''} onChange={(e) => setDraft({ ...draft, synonyms: e.target.value })} placeholder="多个用 、隔开" /></label>
           <label>形近词<input value={draft.similarWords || ''} onChange={(e) => setDraft({ ...draft, similarWords: e.target.value })} placeholder="多个用 、隔开" /></label>
+          <label>我的笔记<textarea value={draft.notes || ''} maxLength={200} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></label>
           <button className="primary-button compact" onClick={save}>保存修改</button>
         </div>
       ) : (
@@ -793,18 +843,36 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
             {word.translation && <p className="translation">{word.translation}</p>}
             <VolumeButton word={word} sentence />
           </div>
+          {(splitWordList(word.similarWords).length > 0 || splitWordList(word.synonyms).length > 0) && (
+            <div className="detail-related">
+              {splitWordList(word.similarWords).length > 0 && (
+                <div className="detail-block"><label>形近词</label><p className="word-chips">{splitWordList(word.similarWords).map((item) => <span key={item} className="jp">{item}</span>)}</p></div>
+              )}
+              {splitWordList(word.synonyms).length > 0 && (
+                <div className="detail-block"><label>同义词</label><p className="word-chips">{splitWordList(word.synonyms).map((item) => <span key={item} className="jp">{item}</span>)}</p></div>
+              )}
+            </div>
+          )}
           {word.pronunciationNote && (
             <div className="detail-block"><label>发音注意事项</label><p className="definition">{word.pronunciationNote}</p></div>
           )}
           {word.memoryTip && (
             <div className="detail-block"><label>记忆技巧</label><p className="definition">{word.memoryTip}</p></div>
           )}
-          {splitWordList(word.synonyms).length > 0 && (
-            <div className="detail-block"><label>同义词</label><p className="word-chips">{splitWordList(word.synonyms).map((item) => <span key={item} className="jp">{item}</span>)}</p></div>
-          )}
-          {splitWordList(word.similarWords).length > 0 && (
-            <div className="detail-block"><label>形近词</label><p className="word-chips">{splitWordList(word.similarWords).map((item) => <span key={item} className="jp">{item}</span>)}</p></div>
-          )}
+          <div className="detail-block">
+            <label>我的笔记</label>
+            <textarea
+              className="notes-input"
+              value={notesDraft}
+              maxLength={200}
+              placeholder="写下你的记忆联想…"
+              onChange={(event) => setNotesDraft(event.target.value)}
+              onBlur={() => {
+                if ((word.notes || '') !== notesDraft) onEdit({ notes: notesDraft.slice(0, 200) })
+              }}
+            />
+            <small className="notes-count">{notesDraft.length}/200</small>
+          </div>
           <div className="typing-practice">
             <label><SquarePen size={14} /> 打字练习</label>
             <p>输入“{word.meaning}”对应的日语单词或假名</p>
@@ -815,7 +883,10 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
       )}
       <button className={`pronounce-button ${practiceOpen ? 'open' : ''}`} onClick={() => setPracticeOpen((current) => !current)}><Mic size={18} />{practiceOpen ? '收起发音练习' : '练习这个词的发音'}</button>
       {practiceOpen && <InlinePronunciationPractice word={word} />}
-      <button className={`master-button ${word.mastered ? 'done' : ''}`} onClick={onToggle}>{word.mastered ? <><CheckCircle2 size={18} />已掌握</> : <><Check size={18} />标记为已掌握</>}</button>
+      <div className="detail-footer-actions">
+        <button type="button" className={`mark-button ${word.starred ? 'on' : ''}`} onClick={onToggleStar}><BookMarked size={16} />{word.starred ? '已标记' : '标记'}</button>
+        <button className={`master-button ${word.mastered ? 'done' : ''}`} onClick={onToggle}>{word.mastered ? <><CheckCircle2 size={18} />已掌握</> : <><Check size={18} />标记为已掌握</>}</button>
+      </div>
       <div className="detail-nav"><button disabled={position <= 1} onClick={onPrevious}><ChevronLeft size={16} />上一个</button><span>{position || 0} / {total}</span><button disabled={position <= 0 || position >= total} onClick={onNext}>下一个<ChevronRight size={16} /></button></div>
     </div>
   )
@@ -981,18 +1052,18 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
   const listening = kind === 'listening'
   const revealed = Boolean(picked) || !listening
   return (
-    <div className="page test-page">
-      <button className="back-link" onClick={() => setKind(null)}><ChevronLeft size={17} />返回选择</button>
-      <div className="test-top">
-        <div>
-          <span className="eyebrow">{listening ? 'LISTENING TEST' : 'MEANING TEST'}</span>
-          <PageUnitSelect units={units} unit={unit} onUnit={onUnit} label="测试单元" />
-          <h1>{listening ? '听发音，选出单词' : '选择正确的中文释义'}</h1>
+    <div className="page test-page quiz-design">
+      <div className="test-top quiz-top-bar">
+        <div className="quiz-chips">
+          <span><BookOpen size={14} />{unit.name}</span>
+          <span><Headphones size={14} />{listening ? '听发音，选出单词' : '选出正确释义'}</span>
         </div>
-        <b>{index + 1}<small> / {questions.length}</small></b>
+        <div className="quiz-progress-inline">
+          <b>{index + 1} / {questions.length}</b>
+          <div className="test-progress"><i style={{ width: `${((index + (picked ? 1 : 0)) / questions.length) * 100}%` }} /></div>
+        </div>
       </div>
-      <div className="test-progress"><i style={{ width: `${((index + (picked ? 1 : 0)) / questions.length) * 100}%` }} /></div>
-      <section className="quiz-card">
+      <section className="quiz-card quiz-card-design">
         {revealed ? (
           <>
             <span className="jp quiz-reading">{current.reading}</span>
@@ -1001,21 +1072,22 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
         ) : (
           <div className="quiz-listen">
             <button className="quiz-listen-play" onClick={() => void speakJapanese(current.term, voiceGender)} aria-label="播放单词">
-              <Volume2 size={32} />
+              <Volume2 size={36} />
             </button>
             <b>点击播放</b>
             <span>听完后选择下面的单词</span>
           </div>
         )}
-        <div className="quiz-options">{options.map((option, i) => {
+        <div className="quiz-options quiz-options-design">{options.map((option, i) => {
           const selected = picked === option.id
           const showCorrect = picked && option.id === current.id
           const wrong = selected && option.id !== current.id
-          return <button key={`${option.id}-${i}`} className={`${showCorrect ? 'correct' : ''} ${wrong ? 'wrong' : ''}`} onClick={() => choose(option.id)}><span>{String.fromCharCode(65 + i)}</span>{listening ? <strong className="jp">{optionLabel(option, 'listening')}</strong> : optionLabel(option, 'meaning')}{showCorrect && <CheckCircle2 />}{wrong && <X />}</button>
+          return <button key={`${option.id}-${i}`} className={`${selected ? 'selected' : ''} ${showCorrect ? 'correct' : ''} ${wrong ? 'wrong' : ''}`} onClick={() => choose(option.id)}><em>{String.fromCharCode(65 + i)}</em>{listening ? <strong className="jp">{optionLabel(option, 'listening')}</strong> : optionLabel(option, 'meaning')}{selected && <CheckCircle2 size={18} />}</button>
         })}</div>
         {picked && <div className={`answer-feedback ${picked === current.id ? 'correct' : 'wrong'}`}><b>{picked === current.id ? '回答正确' : '再记一次'}</b><span className="jp">{current.example}</span><small>{current.translation}</small></div>}
         <button className="primary-button quiz-next" disabled={!picked} onClick={next}>{index === questions.length - 1 ? '查看结果' : '下一题'}<ChevronRight size={18} /></button>
       </section>
+      <button className="back-link" onClick={() => setKind(null)}><ChevronLeft size={17} />返回选择</button>
     </div>
   )
 }
@@ -1039,18 +1111,81 @@ function WordbookView({ units, onRemove }: { units: Unit[]; onRemove: (wordId: s
 function ReviewView({ units, onReview }: { units: Unit[]; onReview: (word: Word, unitId: string, remembered: boolean) => void }) {
   const entries = units.flatMap((unit) => unit.words.map((word) => ({ word, unit, state: getReviewState(word) })))
   const due = entries.filter((item) => item.state.due).sort((a, b) => a.state.nextReviewAt - b.state.nextReviewAt)
-  const upcoming = entries.filter((item) => !item.state.due && Number.isFinite(item.state.nextReviewAt)).sort((a, b) => a.state.nextReviewAt - b.state.nextReviewAt).slice(0, 6)
+  const stageCounts = REVIEW_INTERVAL_DAYS.map((day, index) => ({
+    day,
+    count: entries.filter((item) => (item.word.reviewStage ?? 0) === index && Number.isFinite(item.word.nextReviewAt)).length,
+  }))
+  const [activeIndex, setActiveIndex] = useState(0)
+  const active = due[activeIndex] || due[0]
   return (
-    <div className="page hub-page">
-      <section className="hub-hero"><div><span className="eyebrow">SPACED REPETITION</span><h1>待复习</h1><p>按照 1、2、4、7、15、30 天的间隔自动安排，忘记的词会在 10 分钟后重试。</p></div><span className="hero-count accent"><b>{due.length}</b> 个到期</span></section>
-      <section className="memory-curve"><div className="curve-copy"><BrainCircuit /><div><b>艾宾浩斯间隔复习</b><span>每次确认记得后，系统自动延长下一次复习间隔。</span></div></div><div className="curve-steps">{REVIEW_INTERVAL_DAYS.map((day, index) => <span key={day}><i>{index + 1}</i><b>{day}天</b></span>)}</div></section>
-      <h2 className="section-title">今天需要复习</h2>
-      {due.length ? <section className="review-list">{due.map(({ word, unit, state }) => <article key={word.id} className="review-card">
-        <div><span className="review-unit" style={{ color: unit.color }}>{unit.name}</span><b className="jp">{word.term}</b><small className="jp">{word.reading}</small></div>
-        <p>{word.meaning}</p><span className="review-status">第 {state.stage + 1} 阶段 · {formatReviewTime(word)}</span><VolumeButton word={word} />
-        <div className="review-actions"><button onClick={() => onReview(word, unit.id, false)}>没记住</button><button onClick={() => onReview(word, unit.id, true)}><Check size={16} />记住了</button></div>
-      </article>)}</section> : <div className="wide-empty compact"><CheckCircle2 /><h2>今天的复习完成了</h2><p>系统会根据下一次到期时间自动把单词放回这里。</p></div>}
-      {upcoming.length > 0 && <><h2 className="section-title upcoming-title">接下来</h2><div className="upcoming-list">{upcoming.map(({ word, unit }) => <div key={word.id}><span className="jp">{word.term}</span><small>{unit.name}</small><b>{formatReviewTime(word)}</b></div>)}</div></>}
+    <div className="page hub-page review-design">
+      <section className="hub-hero">
+        <div>
+          <h1>待复习</h1>
+          <p>今日 <b>{due.length}</b> 词待复习。根据艾宾浩斯记忆曲线，合理安排复习计划。</p>
+        </div>
+      </section>
+      <section className="home-card memory-curve-card">
+        <div className="curve-copy"><Target size={18} /><div><b>艾宾浩斯间隔重复</b><span>科学安排复习时间，让记忆更牢固。</span></div></div>
+        <div className="curve-steps curve-steps-rich">
+          {stageCounts.map(({ day, count }) => (
+            <span key={day}>
+              <i>{day}d</i>
+              <b>{count} 词</b>
+              <small>{day} 天后复习</small>
+            </span>
+          ))}
+        </div>
+      </section>
+      <section className="home-card review-queue-card">
+        <header>
+          <b>今日复习队列</b>
+          <small>共 {due.length} 词</small>
+        </header>
+        {due.length ? (
+          <div className="review-table">
+            <div className="review-table-head"><span>单词</span><span>下次复习</span><span>熟练度</span><span>操作</span></div>
+            {due.map(({ word, unit, state }, index) => (
+              <div key={word.id} className={`review-table-row ${index === activeIndex ? 'active' : ''}`}>
+                <div>
+                  <b className="jp">{word.term}</b>
+                  <small className="jp">{word.reading}</small>
+                  <em>{word.meaning}</em>
+                </div>
+                <span>{formatReviewTime(word)} · 第 {state.stage + 1} 阶段</span>
+                <span className="review-prof"><i style={{ width: `${proficiencyPercent(word)}%` }} /><b>{proficiencyPercent(word)}%</b></span>
+                <button type="button" onClick={() => setActiveIndex(index)} aria-label="开始复习"><ChevronRight size={16} /></button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="wide-empty compact"><CheckCircle2 /><h2>今天的复习完成了</h2><p>系统会根据下一次到期时间自动把单词放回这里。</p></div>
+        )}
+        {active && (
+          <div className="review-active-card">
+            <div>
+              <span className="review-unit">{active.unit.name}</span>
+              <b className="jp">{active.word.term}</b>
+              <small className="jp">{active.word.reading}</small>
+              <p>{active.word.meaning}</p>
+            </div>
+            <VolumeButton word={active.word} />
+            <div className="review-actions">
+              <button onClick={() => onReview(active.word, active.unit.id, false)}>没记住</button>
+              <button onClick={() => onReview(active.word, active.unit.id, true)}><Check size={16} />记住了</button>
+            </div>
+          </div>
+        )}
+        {due.length > 0 && active && (
+          <button
+            type="button"
+            className="primary-button review-start"
+            onClick={() => onReview(active.word, active.unit.id, true)}
+          >
+            开始今日复习
+          </button>
+        )}
+      </section>
     </div>
   )
 }
@@ -1085,7 +1220,7 @@ function SettingsView({ settings, onChange, starredCount = 0, errorBookCount = 0
       )}
       <div className="settings-layout">
         <section className="settings-card"><div className="settings-title"><UserRound /><div><h2>头像</h2><p>选择一个代表你的文字头像。</p></div></div><div className="avatar-options">{avatars.map((avatar) => <button key={avatar} className={settings.avatar === avatar ? 'active' : ''} onClick={() => onChange({ ...settings, avatar })}>{avatar}{settings.avatar === avatar && <CheckCircle2 />}</button>)}</div><label className="custom-avatar">自定义<input maxLength={2} value={settings.avatar} onChange={(event) => onChange({ ...settings, avatar: event.target.value || 'ゆ' })} /></label></section>
-        <section className="settings-card"><div className="settings-title"><Palette /><div><h2>主题颜色</h2><p>选择整套界面的主色调，随时可换。</p></div></div><div className="voice-options theme-options">{([['aka', '绯红', '暖橘红，默认'], ['ai', '黛蓝', '沉静书卷气'], ['matcha', '抹茶', '清新日式绿']] as const).map(([id, name, desc]) => <button key={id} className={(settings.theme || 'aka') === id ? 'active' : ''} onClick={() => onChange({ ...settings, theme: id })}><span className={`theme-swatch theme-swatch-${id}`} /><div><b>{name}</b><small>{desc}</small></div>{(settings.theme || 'aka') === id && <CheckCircle2 />}</button>)}</div></section>
+        <section className="settings-card"><div className="settings-title"><Palette /><div><h2>主题颜色</h2><p>选择整套界面的主色调，随时可换。</p></div></div><div className="voice-options theme-options">{([['matcha', '抹茶', '清新日式绿，默认'], ['aka', '绯红', '暖橘红'], ['ai', '黛蓝', '沉静书卷气']] as const).map(([id, name, desc]) => <button key={id} className={(settings.theme || 'matcha') === id ? 'active' : ''} onClick={() => onChange({ ...settings, theme: id })}><span className={`theme-swatch theme-swatch-${id}`} /><div><b>{name}</b><small>{desc}</small></div>{(settings.theme || 'matcha') === id && <CheckCircle2 />}</button>)}</div></section>
         <section className="settings-card"><div className="settings-title"><AudioLines /><div><h2>日语朗读音色</h2><p>系统会优先匹配设备中对应性别的日语语音。</p></div></div><div className="voice-options"><button className={settings.voiceGender === 'female' ? 'active' : ''} onClick={() => onChange({ ...settings, voiceGender: 'female' })}><span>女</span><div><b>女声</b><small>清晰、柔和</small></div>{settings.voiceGender === 'female' && <CheckCircle2 />}</button><button className={settings.voiceGender === 'male' ? 'active' : ''} onClick={() => onChange({ ...settings, voiceGender: 'male' })}><span>男</span><div><b>男声</b><small>沉稳、自然</small></div>{settings.voiceGender === 'male' && <CheckCircle2 />}</button></div><div className="voice-preview"><span><b>试听当前音色</b><small className="jp">こんにちは</small><em>{voiceStatus}</em></span><VolumeButton word={sample} /></div></section>
       </div>
     </div>

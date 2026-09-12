@@ -273,3 +273,34 @@ export function formatReviewTime(word: Word, now = Date.now()) {
   if (state.daysUntil === 1) return '明天复习'
   return `${state.daysUntil} 天后复习`
 }
+
+export function localDateKey(now = Date.now()) {
+  const d = new Date(now)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** Update streak when the user studies today. */
+export function touchStudyStreak(settings: { streakDays?: number; lastStudyDate?: string }, now = Date.now()) {
+  const today = localDateKey(now)
+  if (settings.lastStudyDate === today) {
+    return { streakDays: settings.streakDays || 1, lastStudyDate: today }
+  }
+  const yesterday = localDateKey(now - DAY)
+  const streakDays = settings.lastStudyDate === yesterday ? (settings.streakDays || 0) + 1 : 1
+  return { streakDays, lastStudyDate: today }
+}
+
+/** 0–5 mastery dots for cards (review stage / mastered). */
+export function masteryDots(word: Word) {
+  if (word.mastered) return 5
+  return Math.max(0, Math.min(5, (word.reviewStage ?? 0) + 1))
+}
+
+export function proficiencyPercent(word: Word) {
+  if (word.mastered) return 100
+  const stage = word.reviewStage ?? 0
+  return Math.round(((stage + 1) / REVIEW_INTERVAL_DAYS.length) * 100)
+}
