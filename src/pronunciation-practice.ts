@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { apiFetch } from './api'
+import { apiFetch, readApiJson } from './api'
+import { publicApiMessage } from './error-text'
 
 const GATEWAY_PREF_KEY = 'kotonoha.preferSpeechGateway'
 
@@ -82,12 +83,17 @@ export function usePronunciationPractice(onTranscript: (text: string) => void, r
           filename: `pronunciation.${extension}`,
         }),
       })
-      const data = await response.json()
-      if (!response.ok || !data.text) throw new Error(data.error || '网关没有返回转写文本。')
+      const data = await readApiJson<{ text?: string; error?: string }>(
+        response,
+        '云端语音识别暂时不可用，请稍后重试。',
+      )
+      if (!response.ok || !data.text) {
+        throw new Error(publicApiMessage(data.error, '云端语音识别失败，请稍后重试。'))
+      }
       finish(String(data.text))
     } catch (reason) {
       setEvaluating(false)
-      setError(reason instanceof Error ? reason.message : '语音转写失败。')
+      setError(publicApiMessage(reason instanceof Error ? reason.message : '', '云端语音识别失败，请稍后重试。'))
     }
   }
 

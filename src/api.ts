@@ -22,15 +22,18 @@ export async function apiFetch(url: string, options: RequestInit = {}) {
   return response
 }
 
-export async function readApiJson<T = Record<string, unknown>>(response: Response): Promise<T> {
+export async function readApiJson<T = Record<string, unknown>>(
+  response: Response,
+  fallback = response.status >= 500 ? '服务暂时不可用，请稍后重试。' : '服务返回异常，请稍后重试。',
+): Promise<T> {
   const text = await response.text()
   const trimmed = text.trim()
   if (/<\s*html\b/i.test(trimmed) || /502\s*Bad\s*Gateway/i.test(trimmed) || /nginx\/\d/i.test(trimmed)) {
-    throw new Error(response.status >= 500 ? '课文服务暂时不可用，请稍后重试。' : '课文服务返回异常，请稍后重试。')
+    throw new Error(fallback)
   }
   try {
     return JSON.parse(trimmed) as T
   } catch {
-    throw new Error(response.status >= 500 ? '课文服务暂时不可用，请稍后重试。' : '课文服务返回异常，请稍后重试。')
+    throw new Error(fallback)
   }
 }

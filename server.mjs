@@ -133,10 +133,17 @@ function gatewayError(status, payload) {
     504: 'AI 网关超时，请稍后重试。',
   }
   const detail = payload?.detail || payload?.message || payload?.error
-  if (typeof detail === 'string' && looksLikeErrorDocument(detail)) {
-    return known[status] || 'AI 网关请求失败，请稍后重试。'
+  const detailMessage = typeof detail === 'string'
+    ? detail
+    : (detail && typeof detail === 'object' ? String(detail.message || '') : '')
+  const blob = `${detailMessage} ${typeof detail === 'object' ? JSON.stringify(detail) : ''}`
+  if (/ASR|transcrib|speech|语音识别/i.test(blob)) {
+    return '语音识别服务暂时不可用，请稍后重试。'
   }
-  return known[status] || (typeof detail === 'string' ? detail : `网关请求失败（HTTP ${status}）。`)
+  if (detailMessage && !looksLikeErrorDocument(detailMessage) && status >= 400 && status < 500) {
+    return detailMessage.slice(0, 120)
+  }
+  return known[status] || (detailMessage && !looksLikeErrorDocument(detailMessage) ? detailMessage.slice(0, 120) : `网关请求失败（HTTP ${status}）。`)
 }
 
 function publicStatus(error) {
@@ -155,10 +162,27 @@ function clientGatewayMessage(error, abortMessage, fallback) {
 
 function parseJsonContent(content) {
   const cleaned = String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
-  const first = cleaned.indexOf('{')
-  const last = cleaned.lastIndexOf('}')
+  const firstObj = cleaned.indexOf('{')
+  const firstArr = cleaned.indexOf('[')
+  const useArray = firstArr >= 0 && (firstObj < 0 || firstArr < firstObj)
+  const first = useArray ? firstArr : firstObj
+  const last = useArray ? cleaned.lastIndexOf(']') : cleaned.lastIndexOf('}')
   if (first < 0 || last < first) throw new Error('模型没有返回有效 JSON。')
-  return JSON.parse(cleaned.slice(first, last + 1))
+  const slice = cleaned.slice(first, last + 1)
+  try {
+    return JSON.parse(slice)
+  } catch {
+    // Common model glitches: trailing commas, smart quotes
+    const repaired = slice
+      .replace(/,\s*([}\]])/g, '$1')
+      .replace(/[\u201c\u201d]/g, '"')
+      .replace(/[\u2018\u2019]/g, "'")
+    try {
+      return JSON.parse(repaired)
+    } catch {
+      throw new Error('模型没有返回有效 JSON。')
+    }
+  }
 }
 
 async function callGateway(pathname, payload, timeoutMs = 90000) {
@@ -413,7 +437,7 @@ app.post('/api/transcribe', rateLimit(60_000, 12), async (req, res) => {
       language: 'ja',
       dataClass: 'internal',
       fallback: true,
-    })
+    }, 120_000)
     res.json({ text: data.text, language: data.language, gateway: data.gateway, requestId: headers.get('x-request-id') || data.gateway?.requestId })
   } catch (error) {
     console.error(error)
