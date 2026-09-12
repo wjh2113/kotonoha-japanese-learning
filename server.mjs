@@ -465,9 +465,10 @@ app.post('/api/passage/ocr', rateLimit(60_000, 8), async (req, res) => {
       .replace(/^```(?:\w+)?\s*/i, '')
       .replace(/\s*```$/i, '')
       .trim()
-    if (!text || looksLikeErrorDocument(text) || /^(EMPTY|（?空字符串）?|empty|none|n\/a)$/i.test(text)) {
-      return res.status(422).json({ error: '没有识别到日语课文，请换更清晰的照片或直接粘贴文本。' })
-    }
+    const empty = !text
+      || looksLikeErrorDocument(text)
+      || /^(EMPTY|empty|none|null|n\/a|（空字符串）|空字符串|无日语|没有日语)$/i.test(text)
+    if (empty) return res.status(422).json({ error: '没有识别到日语课文，请换更清晰的照片或直接粘贴文本。' })
     res.json({ text })
   } catch (error) {
     console.error(error)

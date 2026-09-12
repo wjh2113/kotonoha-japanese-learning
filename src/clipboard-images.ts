@@ -25,7 +25,6 @@ export function normalizeOcrText(value: unknown) {
     .replace(/\s*```$/i, '')
     .trim()
   if (!text) return ''
-  if (/^（?空字符串）?$/.test(text)) return ''
-  if (/^(empty|none|n\/a|null|无日语|没有日语)$/i.test(text)) return ''
+  if (/^(EMPTY|empty|none|null|n\/a|（空字符串）|空字符串|无日语|没有日语)$/i.test(text)) return ''
   return text
 }

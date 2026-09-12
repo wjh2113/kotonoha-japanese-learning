@@ -25,7 +25,8 @@ describe('clipboardImageFiles', () => {
 describe('normalizeOcrText', () => {
   it('treats literal empty markers as no text', () => {
     expect(normalizeOcrText('（空字符串）')).toBe('')
-    expect(normalizeOcrText('empty')).toBe('')
+    expect(normalizeOcrText('EMPTY')).toBe('')
+    expect(normalizeOcrText('无日语')).toBe('')
     expect(normalizeOcrText('昨日学校へ行きました。')).toBe('昨日学校へ行きました。')
   })
 })

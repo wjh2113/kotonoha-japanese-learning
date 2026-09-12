@@ -145,15 +145,15 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   const passagesRef = useRef<Passage[]>([])
   const fillPassageRef = useRef<(id: string) => Promise<void>>(async () => undefined)
 
-  useEffect(() => { passagesRef.current = passages }, [passages])
   useEffect(() => () => stopSpeaking(), [])
 
+  const commitPassages = (next: Passage[]) => {
+    passagesRef.current = next
+    setPassages(next)
+  }
+
   const patchPassage = (id: string, changes: Partial<Passage>) => {
-    setPassages((current) => {
-      const next = current.map((item) => item.id === id ? { ...item, ...changes } : item)
-      passagesRef.current = next
-      return next
-    })
+    commitPassages(passagesRef.current.map((item) => item.id === id ? { ...item, ...changes } : item))
   }
 
   const fillPassage = async (passageId: string) => {
@@ -163,6 +163,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       const current = passagesRef.current.find((item) => item.id === passageId)
       if (!current) return
       if (isTransientPassage(current) || current.sentences.some((sentence) => isPassagePlaceholder(sentence.text))) {
+        // Still being built by processIngest — wait for the next call with real source text.
         if (ingestingIds.current.has(passageId)) return
         patchPassage(passageId, {
           status: 'error',
@@ -233,9 +234,18 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       if (cancelled || !response.ok) throw new Error(publicApiMessage(data.error, '读取课文失败'))
       const next = (Array.isArray(data.passages) ? data.passages as unknown[] : []).map(hydratePassage).filter((item): item is Passage => Boolean(item))
       persistEnabled.current = true
-      setPassages(next)
-      setBooks(mergePassageBooks(Array.isArray(data.books) ? data.books as { id: string; name: string }[] : [], next))
-      setSelectedId(next[0]?.id || '')
+      const localKeep = passagesRef.current.filter((item) => (
+        ingestingIds.current.has(item.id)
+        || item.status === 'processing'
+        || isTransientPassage(item)
+      ))
+      const merged = [
+        ...localKeep.filter((item) => !next.some((row) => row.id === item.id)),
+        ...next,
+      ].slice(0, 50)
+      commitPassages(merged)
+      setBooks(mergePassageBooks(Array.isArray(data.books) ? data.books as { id: string; name: string }[] : [], merged))
+      setSelectedId((current) => merged.some((item) => item.id === current) ? current : (merged[0]?.id || ''))
       setReady(true)
     }).catch(() => {
       if (!cancelled) { setNotice('暂时无法读取已保存的课文'); setReady(true) }
@@ -259,13 +269,15 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     if (!ready || !persistEnabled.current) return
     const timer = window.setTimeout(async () => {
       try {
+        const durable = passagesRef.current.filter((item) => !isTransientPassage(item))
+        // Never wipe the DB with [] while OCR stubs are still in flight.
+        if (!durable.length && passagesRef.current.some((item) => isTransientPassage(item) || ingestingIds.current.has(item.id))) {
+          return
+        }
         const response = await apiFetch('/api/passages', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            passages: passages.filter((item) => !isTransientPassage(item)),
-            books,
-          }),
+          body: JSON.stringify({ passages: durable, books }),
         })
         if (!response.ok) throw new Error('WRITE_FAILED')
         persistError.current = false
@@ -299,10 +311,8 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
 
   const addPassage = (next: Passage) => {
     persistEnabled.current = true
-    // Keep ref in sync before any async OCR work; functional updates can lag behind paste handlers.
     const following = [next, ...passagesRef.current.filter((item) => item.id !== next.id)].slice(0, 50)
-    passagesRef.current = following
-    setPassages(following)
+    commitPassages(following)
     setSelectedId(next.id)
     setUploadOpen(false)
     setRaw('')
@@ -313,26 +323,35 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     ingestingIds.current.add(passageId)
     try {
       const parts: string[] = []
+      const ocrFailures: string[] = []
       if (text.trim() && !isPassagePlaceholder(text) && !looksLikeErrorDocument(text)) parts.push(text.trim())
       if (!images.length && !parts.length) throw new Error('没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
       for (const [index, image] of images.slice(0, 4).entries()) {
-        // Stop quietly if user deleted this passage; do not treat ref lag as a failure.
         if (!ingestingIds.current.has(passageId)) return
         if (!passagesRef.current.some((item) => item.id === passageId)) return
         patchPassage(passageId, { status: 'processing', statusText: `正在识别课文图片 ${index + 1}/${Math.min(images.length, 4)}…` })
-        const recognized = await ocrImage(image)
-        if (recognized) parts.push(recognized)
+        try {
+          const recognized = await ocrImage(image)
+          if (recognized) parts.push(recognized)
+        } catch (reason) {
+          ocrFailures.push(reason instanceof Error ? reason.message : '图片识别失败')
+        }
       }
       if (!ingestingIds.current.has(passageId)) return
       const sourceText = parts.join('\n\n').trim()
-      if (!sourceText || looksLikeErrorDocument(sourceText)) throw new Error('没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
+      if (!sourceText || looksLikeErrorDocument(sourceText)) {
+        throw new Error(ocrFailures[0] || '没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
+      }
       const sentences = fallbackPassage(sourceText).sentences
+      if (!sentences.length) throw new Error('没有识别到可拆分的日语句子，请检查图片是否清晰。')
+      // Sync ref before analyze so fillPassage never sees a stale empty stub.
       patchPassage(passageId, {
         sourceText,
         sentences,
         status: 'processing',
-        statusText: `正在生成整句翻译 0/${Math.max(sentences.length, 1)}`,
+        statusText: `正在生成整句翻译 0/${sentences.length}`,
       })
+      if (ocrFailures.length) setNotice(`有 ${ocrFailures.length} 张图片识别失败，已用其余内容继续。`)
       await fillPassage(passageId)
     } catch (reason) {
       if (!ingestingIds.current.has(passageId)) return
@@ -349,6 +368,10 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   }
 
   const queueIngest = (text: string, images: Blob[] = [], title?: string) => {
+    if (!ready) {
+      setNotice('课文库还在加载，请稍后再试。')
+      return
+    }
     const book = books.find((item) => item.id === draftBookId)
     const sourceText = isPassagePlaceholder(text) ? '' : text.trim()
     const stub = {
@@ -395,6 +418,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
 
   const readUpload = async (file?: File) => {
     if (!file || ingesting.current) return
+    if (!ready) { setNotice('课文库还在加载，请稍后再试。'); return }
     ingesting.current = true
     setBusy('正在读取课文…')
     setNotice('')
@@ -403,9 +427,9 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       queueIngest(source.text, source.images, draftTitle)
     } catch (reason) {
       setNotice(reason instanceof Error ? reason.message : '课文读取失败。')
-      setBusy('')
     } finally {
       ingesting.current = false
+      setBusy('')
     }
   }
 
@@ -525,13 +549,13 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     const name = window.prompt('课本名称', book.name)?.trim().slice(0, 80)
     if (!name) return
     setBooks((current) => current.map((item) => item.id === book.id ? { ...item, name } : item))
-    setPassages((current) => current.map((item) => item.bookId === book.id ? { ...item, bookName: name } : item))
+    commitPassages(passagesRef.current.map((item) => item.bookId === book.id ? { ...item, bookName: name } : item))
   }
 
   const deleteBook = (book: PassageBook) => {
     if (!window.confirm(`删除课本「${book.name}」？课文会回到未分组，不会被删。`)) return
     setBooks((current) => current.filter((item) => item.id !== book.id))
-    setPassages((current) => current.map((item) => item.bookId === book.id ? { ...item, bookId: '', bookName: '' } : item))
+    commitPassages(passagesRef.current.map((item) => item.bookId === book.id ? { ...item, bookId: '', bookName: '' } : item))
     if (draftBookId === book.id) setDraftBookId('')
   }
 
@@ -587,7 +611,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
           <p>粘贴后立刻进入课文库，后台拆句并补整句翻译。可按课本分组，一键抽生词，整篇朗读并记录跟读进度。</p>
         </div>
         <div className="hero-actions">
-          <button className="primary-button" onClick={() => setUploadOpen(true)}><UploadCloud size={17} />添加课文</button>
+          <button className="primary-button" disabled={!ready} onClick={() => setUploadOpen(true)}><UploadCloud size={17} />添加课文</button>
         </div>
       </section>
 
@@ -630,9 +654,17 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
               {passage.status === 'error' && (
                 <div className="passage-status error">
                   {passage.statusText || '处理失败'}
-                  {passage.sentences.some((item) => item.text && !isPassagePlaceholder(item.text)) && (
+                  {passage.sentences.some((item) => item.text && !isPassagePlaceholder(item.text)) ? (
                     <button type="button" onClick={() => void fillPassage(passage.id)}>重试</button>
+                  ) : (
+                    <button type="button" onClick={() => setUploadOpen(true)}>重新添加</button>
                   )}
+                </div>
+              )}
+              {passage.status === 'processing' && Date.now() - (passage.createdAt || 0) > 120_000 && (
+                <div className="passage-status error">
+                  识别时间过长，可删除后重试，或改粘贴正文。
+                  <button type="button" onClick={() => setUploadOpen(true)}>重新添加</button>
                 </div>
               )}
               <div className="passage-toolbar">
@@ -665,8 +697,8 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                     if (!window.confirm(`删除课文「${passage.title}」？此操作不可恢复。`)) return
                     ingestingIds.current.delete(passage.id)
                     const remaining = passagesRef.current.filter((item) => item.id !== passage.id)
-                    passagesRef.current = remaining
-                    setPassages(remaining)
+                    commitPassages(remaining)
+                    setSelectedId(remaining[0]?.id || '')
                     setSelectedId(remaining[0]?.id || '')
                   }}><Trash2 size={15} />删除</button>
                 </div>
