@@ -1103,8 +1103,22 @@ body { background: var(--cream); color: var(--ink); }
 .home-hero { position: relative; display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .home-hero h1 { margin: 0 0 8px; font-size: 30px; font-weight: 700; color: var(--ink); letter-spacing: .01em; }
 .home-hero p { margin: 0; color: var(--muted); font-size: 14.5px; }
-.home-hero-deco { position: absolute; right: -8px; top: -18px; width: 180px; height: 100px; color: var(--red); pointer-events: none; }
+.home-hero-deco {
+  position: absolute; right: -4px; top: -28px; width: 220px; height: 120px;
+  color: var(--red); pointer-events: none; opacity: .95;
+}
 .home-torii { width: 100%; height: 100%; display: block; }
+.continue-thumb {
+  height: 96px; border-radius: 14px; overflow: hidden; position: relative;
+  background: #b7c99a;
+}
+.continue-thumb .continue-scene { width: 100%; height: 100%; display: block; }
+.home-cal-grid .day.today {
+  background: var(--red-dark); color: #fff; font-weight: 700; box-shadow: none;
+}
+.home-cal-grid .day.today.mark-due::after,
+.home-cal-grid .day.today.mark-done::after,
+.home-cal-grid .day.today.mark-planned::after { background: #fff; }
 .home-stats { margin-top: 22px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
 .home-stats article {
   background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px;
@@ -1129,25 +1143,6 @@ body { background: var(--cream); color: var(--ink); }
 .home-card > header > div { display: flex; align-items: center; gap: 8px; color: var(--red-dark); font-weight: 700; }
 .home-card > header button { border: 0; background: transparent; color: var(--red); cursor: pointer; font-size: 12.5px; display: inline-flex; align-items: center; gap: 2px; font-weight: 600; }
 .continue-body { display: grid; grid-template-columns: 128px 1fr; gap: 16px; align-items: center; }
-.continue-thumb {
-  height: 96px; border-radius: 14px; overflow: hidden; position: relative;
-  background:
-    linear-gradient(180deg, transparent 42%, rgba(40, 48, 36, .28)),
-    linear-gradient(135deg, #c9d6b4 0%, #9db08a 38%, #7f9570 70%, #6a7f5c 100%);
-}
-.continue-thumb span {
-  position: absolute; inset: auto 12% 18% 12%; height: 28%;
-  background: linear-gradient(90deg, #efe6d4 0%, #d9c7a8 45%, #cbb896 100%);
-  border-radius: 4px 4px 0 0; box-shadow: 0 -10px 0 8px rgba(255,255,255,.12);
-}
-.continue-thumb::before {
-  content: ''; position: absolute; left: 18%; top: 22%; width: 22%; height: 38%;
-  background: color-mix(in srgb, white 55%, #e8d9b8); border-radius: 3px 3px 0 0; opacity: .85;
-}
-.continue-thumb::after {
-  content: ''; position: absolute; right: 16%; top: 28%; width: 28%; height: 32%;
-  background: color-mix(in srgb, #5d6f4f 40%, white); border-radius: 2px; opacity: .7;
-}
 .continue-copy { min-width: 0; }
 .continue-body em { font-style: normal; font-weight: 700; font-size: 16px; color: var(--ink); }
 .continue-body p { margin: 5px 0 12px; color: var(--muted); font-size: 12.5px; }
@@ -1161,7 +1156,6 @@ body { background: var(--cream); color: var(--ink); }
 .home-cal-week, .home-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center; }
 .home-cal-week span { font-size: 10px; color: var(--muted); padding-bottom: 2px; }
 .home-cal-grid .day { height: 28px; border-radius: 999px; display: grid; place-items: center; font-size: 11.5px; color: var(--ink); position: relative; }
-.home-cal-grid .day.today { box-shadow: inset 0 0 0 1.5px var(--red-dark); font-weight: 700; color: var(--red-dark); }
 .home-cal-grid .day.mark-due::after,
 .home-cal-grid .day.mark-done::after,
 .home-cal-grid .day.mark-planned::after {

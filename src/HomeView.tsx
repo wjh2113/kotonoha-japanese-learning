@@ -76,10 +76,15 @@ export function HomeView({ units, unit, settings, onView }: Props) {
           <p>每天一点点，日语会变得更简单</p>
         </div>
         <div className="home-hero-deco" aria-hidden>
-          <svg viewBox="0 0 180 100" className="home-torii">
-            <circle cx="132" cy="28" r="16" fill="currentColor" opacity=".12" />
-            <path d="M48 42 H150 M55 42 V78 M143 42 V78 M42 36 H156 M48 48 H150" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" opacity=".22" />
-            <path d="M20 88 C50 70 70 78 90 66 C110 54 130 70 160 58" stroke="currentColor" strokeWidth="2" fill="none" opacity=".14" />
+          <svg viewBox="0 0 220 120" className="home-torii" fill="none">
+            <circle cx="168" cy="32" r="22" fill="currentColor" opacity=".16" />
+            <circle cx="168" cy="32" r="12" fill="currentColor" opacity=".08" />
+            <path d="M42 48 H178" stroke="currentColor" strokeWidth="5" strokeLinecap="round" opacity=".28" />
+            <path d="M36 40 H184" stroke="currentColor" strokeWidth="4" strokeLinecap="round" opacity=".22" />
+            <path d="M58 48 V92 M162 48 V92" stroke="currentColor" strokeWidth="5" strokeLinecap="round" opacity=".26" />
+            <path d="M50 58 H170" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" opacity=".2" />
+            <path d="M18 102 C48 82 72 92 96 78 C118 66 140 84 178 70 C192 64 204 68 214 62" stroke="currentColor" strokeWidth="2.2" opacity=".18" />
+            <path d="M28 108 C55 90 78 98 102 86" stroke="currentColor" strokeWidth="1.6" opacity=".12" />
           </svg>
         </div>
       </section>
@@ -127,7 +132,36 @@ export function HomeView({ units, unit, settings, onView }: Props) {
           </header>
           <div className="continue-body">
             <div className="continue-thumb" aria-hidden>
-              <span />
+              <svg viewBox="0 0 160 120" className="continue-scene" preserveAspectRatio="xMidYMid slice">
+                <defs>
+                  <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#dce8c8" />
+                    <stop offset="55%" stopColor="#b7c99a" />
+                    <stop offset="100%" stopColor="#8fa676" />
+                  </linearGradient>
+                  <linearGradient id="road" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#d9cbb0" />
+                    <stop offset="100%" stopColor="#c2b08e" />
+                  </linearGradient>
+                </defs>
+                <rect width="160" height="120" fill="url(#sky)" />
+                <circle cx="128" cy="28" r="14" fill="#f0e2b8" opacity=".7" />
+                <path d="M0 78 C30 62 50 70 72 58 C94 46 112 56 160 48 L160 120 L0 120 Z" fill="#7d9160" opacity=".35" />
+                <rect x="18" y="48" width="28" height="42" rx="2" fill="#efe6d2" />
+                <rect x="22" y="54" width="8" height="10" rx="1" fill="#9aaf7a" opacity=".7" />
+                <rect x="34" y="54" width="8" height="10" rx="1" fill="#9aaf7a" opacity=".55" />
+                <rect x="52" y="40" width="34" height="50" rx="2" fill="#e8dcc4" />
+                <rect x="58" y="46" width="10" height="12" rx="1" fill="#6f8458" opacity=".45" />
+                <rect x="72" y="46" width="10" height="12" rx="1" fill="#6f8458" opacity=".35" />
+                <path d="M48 40 H90 L86 34 H52 Z" fill="#c4a574" />
+                <rect x="102" y="52" width="26" height="38" rx="2" fill="#dde6cb" />
+                <rect x="108" y="58" width="7" height="9" rx="1" fill="#5f7350" opacity=".4" />
+                <rect x="118" y="58" width="7" height="9" rx="1" fill="#5f7350" opacity=".3" />
+                <path d="M0 88 H160 V120 H0 Z" fill="url(#road)" />
+                <path d="M0 88 H160" stroke="#b7a888" strokeWidth="1.5" opacity=".5" />
+                <path d="M78 88 V120" stroke="#efe6d2" strokeWidth="3" strokeDasharray="6 5" opacity=".55" />
+                <path d="M132 70 H148 M135 70 V88 M145 70 V88 M130 66 H150" stroke="#687a45" strokeWidth="2" strokeLinecap="round" opacity=".45" />
+              </svg>
             </div>
             <div className="continue-copy">
               <em>{unitTitle}</em>
