@@ -7,9 +7,9 @@ import { SettingsContext } from './settings-context'
 import { speakJapanese, stopSpeaking } from './speech'
 import type { Unit, Word } from './types'
 import {
-  clampDictationGoal, clampPlaySpeed, clampPlayTimes, dictationCandidates, dictationGap, isConfirmEnter, katakanaDiff,
+  clampDictationGoal, clampPlaySpeed, clampPlayTimes, dictationCandidates, isConfirmEnter, katakanaDiff,
   loadDictationPlan, loadDictationPlay, matchesKatakanaAnswer, pickDictationWords, pickErrorBookWords,
-  PLAY_SPEED_OPTIONS, PLAY_TIMES_OPTIONS, reinsertAfterMiss, removeCurrent, saveDictationPlan,
+  PLAY_SPEED_OPTIONS, PLAY_TIMES_OPTIONS, removeCurrent, saveDictationPlan,
   saveDictationPlay, sessionMissStats, suggestedReviewWords, unitStudyProgress, wordKatakana,
   type DictationPlan, type DictationPlay,
 } from './dictation'
@@ -59,7 +59,6 @@ export function DictationView({
   const composing = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const waitTimer = useRef<number>(0)
-  const pendingQueue = useRef<QueueItem[] | null>(null)
   const autoStarted = useRef(false)
   const playToken = useRef(0)
   const skipReady = useRef(false)
@@ -140,7 +139,6 @@ export function DictationView({
       ? picked
       : pickDictationWords(unit.words, plan.goal, [])
     if (!queueWords.length) return
-    pendingQueue.current = null
     clearWait()
     setQueue(queueWords.map((word) => ({ word, misses: 0 })))
     setIndex(0)
@@ -190,19 +188,14 @@ export function DictationView({
     if (wasDue) setSessionReviewed((count) => count + 1)
   }
 
-  const beginWait = (ok: boolean, fromQueue: QueueItem[]) => {
+  const beginWait = (fromQueue: QueueItem[]) => {
     clearWait()
     setWaitLeft(5)
     waitTimer.current = window.setInterval(() => {
       setWaitLeft((seconds) => {
         if (seconds <= 1) {
           window.clearInterval(waitTimer.current)
-          if (ok) goNext(removeCurrent(fromQueue, index), index)
-          else {
-            const nextQueue = pendingQueue.current || fromQueue
-            pendingQueue.current = null
-            goNext(nextQueue, index)
-          }
+          goNext(removeCurrent(fromQueue, index), index)
           return 0
         }
         return seconds - 1
@@ -210,12 +203,23 @@ export function DictationView({
     }, 1000)
   }
 
+  const retryCurrent = () => {
+    skipReady.current = false
+    armSkipOnEnterUp.current = false
+    setReveal(null)
+    setTyped('')
+    window.setTimeout(() => {
+      inputRef.current?.focus()
+      void play(current)
+    }, 40)
+  }
+
   const finishCard = (ok: boolean) => {
     if (!current || reveal) return
     const item = queue[index]
     skipReady.current = false
     armSkipOnEnterUp.current = true
-    setHistory((currentHistory) => [...currentHistory, item])
+    setHistory((currentHistory) => currentHistory.at(-1)?.word.id === item.word.id ? currentHistory : [...currentHistory, item])
     setReveal({ ok, typed })
     window.setTimeout(() => {
       skipReady.current = true
@@ -224,18 +228,14 @@ export function DictationView({
     if (ok) {
       onCorrect(current)
       markLearned(current, getDue(current))
-      beginWait(true, queue)
+      beginWait(queue)
       return
     }
     onMiss(current)
     setMissCounts((counts) => ({ ...counts, [current.id]: (counts[current.id] || 0) + 1 }))
-    const misses = item.misses + 1
-    pendingQueue.current = reinsertAfterMiss(
-      queue.map((entry, entryIndex) => entryIndex === index ? { ...entry, misses } : entry),
-      index,
-      dictationGap(misses),
-    )
-    beginWait(false, queue)
+    setQueue((currentQueue) => currentQueue.map((entry, entryIndex) => (
+      entryIndex === index ? { ...entry, misses: entry.misses + 1 } : entry
+    )))
   }
 
   const check = () => {
@@ -249,13 +249,10 @@ export function DictationView({
     skipReady.current = false
     armSkipOnEnterUp.current = false
     if (reveal.ok) {
-      pendingQueue.current = null
       goNext(removeCurrent(queue, index), index)
       return
     }
-    const nextQueue = pendingQueue.current || queue
-    pendingQueue.current = null
-    goNext(nextQueue, index)
+    retryCurrent()
   }
 
   const onAnswerKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -334,7 +331,7 @@ export function DictationView({
               </label>
             )}
             <h1>{errorReview ? '错词本听写' : '单词听写'}</h1>
-            <p>{errorReview ? '只听写还没掌握的错词。写对后仍留在错词本，点掌握或移出才会清掉。' : '先听发音，再写出片假名。每个单词会按设定次数自动连读。写对变绿，写错会标红。'}</p>
+            <p>{errorReview ? '只听写还没掌握的错词。写对后仍留在错词本，点掌握或移出才会清掉。' : '先听发音，再写出片假名。写错会先看正确答案，回车后重新输入这一个词，直到写对。'}</p>
           </div>
         </section>
         <section className="dictation-setup">
@@ -412,7 +409,8 @@ export function DictationView({
               <span className="jp">{expected}</span>
               <em>{current.meaning}</em>
             </div>
-            {reveal && waitLeft > 0 && <small>{waitLeft}s 后切换下一个 · Enter 跳过</small>}
+            {reveal.ok && waitLeft > 0 && <small>{waitLeft}s 后切换下一个 · Enter 跳过</small>}
+            {reveal && !reveal.ok && <small>Enter 再试一次这个词</small>}
           </header>
         )}
         {!reveal && (
@@ -455,7 +453,7 @@ export function DictationView({
         <button type="button" disabled={!history.length} onClick={previous}><SkipBack size={22} />上一个单词</button>
         <button type="button" onClick={() => void play(current, 1)}><RotateCcw size={22} />再读一遍</button>
         {reveal
-          ? <button type="button" className="primary-button" tabIndex={-1} onClick={() => skipWait()}>{waitLeft ? '跳过等待' : '下一个继续'}</button>
+          ? <button type="button" className="primary-button" tabIndex={-1} onClick={() => skipWait()}>{reveal.ok ? (waitLeft ? '跳过等待' : '下一个') : '重新输入'}</button>
           : <button type="button" className="primary-button" tabIndex={-1} disabled={!typed.trim()} onClick={check}><CheckCircle2 size={22} />核对答案</button>}
       </div>
       <DictationStats
