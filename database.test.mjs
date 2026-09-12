@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizePassageBooks, validatePassages, validateState } from './database.mjs'
+import { normalizePassageBooks, prepareUnitWords, validatePassages, validateState } from './database.mjs'
 
 const validState = {
   units: [{ id: 'unit-1', name: '第一单元', words: [{ id: 'word-1', term: '水' }] }],
@@ -18,6 +18,28 @@ describe('PostgreSQL state validation', () => {
 
   it('rejects words without stable ids or terms', () => {
     expect(() => validateState({ ...validState, units: [{ id: 'u', name: 'unit', words: [{ id: '', term: '水' }] }] })).toThrow('INVALID_WORD')
+  })
+})
+
+describe('prepareUnitWords', () => {
+  it('keeps same surface form with different readings', () => {
+    const { kept, dropped } = prepareUnitWords([
+      { id: 'a', term: '日', reading: 'ひ' },
+      { id: 'b', term: '日', reading: 'にち' },
+    ])
+    expect(kept.map((item) => item.reading)).toEqual(['ひ', 'にち'])
+    expect(dropped).toEqual([])
+  })
+
+  it('dedupes by id and by term+reading, reports drops', () => {
+    const { kept, dropped } = prepareUnitWords([
+      { id: 'a', term: '水', reading: 'みず' },
+      { id: 'a', term: '火', reading: 'ひ' },
+      { id: 'b', term: '水', reading: 'みず' },
+      { id: 'c', term: '笔记：无法辨认' },
+    ])
+    expect(kept).toHaveLength(1)
+    expect(dropped.map((item) => item.reason).sort()).toEqual(['duplicate_id', 'duplicate_term_reading', 'invalid_term'].sort())
   })
 })
 

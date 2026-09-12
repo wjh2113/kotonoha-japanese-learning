@@ -50,6 +50,13 @@ describe('quiz meaning filters', () => {
     expect(options.map((word) => optionLabel(word, 'listening')).sort()).toEqual(['友達', '新聞', '学校', '水'].sort())
     expect(options.every((word) => !/okiru|machi/.test(optionLabel(word, 'listening')))).toBe(true)
   })
+
+  it('does not mark a word mastered from one correct quiz pick', () => {
+    const word = makeFallbackWord({ term: '新聞', meaning: '报纸' })
+    const after = recordQuizAnswer(word, 'meaning', true, 1000)
+    expect(after.mastered).toBeUndefined()
+    expect(after.meaningCorrect).toBe(1)
+  })
 })
 
 describe('quiz weakness weighting', () => {

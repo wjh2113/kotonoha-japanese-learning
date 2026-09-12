@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  clampDictationGoal, compactKana, dictationGap, isConfirmEnter, isStickyMiss, katakanaDiff, matchesErrorBookFilter,
+  clampDictationGoal, compactKana, dictationCandidates, dictationGap, hasUsableKanaReading, isConfirmEnter, isStickyMiss, katakanaDiff, matchesErrorBookFilter,
   matchesKatakanaAnswer, pickDictationWords, pickErrorBookWords, reinsertAfterMiss, removeCurrent,
   sessionMissStats, suggestedReviewWords, toKatakana, unitStudyProgress, wordKatakana,
 } from './dictation'
@@ -18,6 +18,16 @@ describe('kana conversion for dictation', () => {
     expect(matchesKatakanaAnswer('みず', word)).toBe(true)
     expect(matchesKatakanaAnswer('水', word)).toBe(false)
     expect(matchesKatakanaAnswer('ミズウ', word)).toBe(false)
+  })
+
+  it('excludes kanji words that still lack a real kana reading', () => {
+    const ready = makeFallbackWord({ term: '水', reading: 'みず', meaning: '水' })
+    const missing = { ...makeFallbackWord({ term: '電子辞書', reading: '電子辞書', meaning: '电子词典' }), reading: '電子辞書' }
+    const kanaHead = makeFallbackWord({ term: 'てんいん', reading: 'てんいん', meaning: '店员' })
+    expect(hasUsableKanaReading(ready)).toBe(true)
+    expect(hasUsableKanaReading(missing)).toBe(false)
+    expect(hasUsableKanaReading(kanaHead)).toBe(true)
+    expect(dictationCandidates([ready, missing, kanaHead]).map((word) => word.term)).toEqual(['水', 'てんいん'])
   })
 
   it('marks mistyped katakana in red-style diffs', () => {
@@ -90,6 +100,7 @@ describe('error book from dictation misses', () => {
     expect(matchesErrorBookFilter(missed, 'fresh')).toBe(true)
     expect(matchesErrorBookFilter(reviewing, 'reviewing')).toBe(true)
     expect(matchesErrorBookFilter(sticky, 'sticky')).toBe(true)
+    expect(matchesErrorBookFilter({ ...sticky, mastered: true }, 'sticky')).toBe(false)
     expect(matchesErrorBookFilter(learned, 'mastered')).toBe(true)
     expect(pickErrorBookWords([missed, sticky, learned]).map((word) => word.term)).toEqual(['猫', '犬'])
     expect(sessionMissStats({ a: 1, b: 3, c: 8 })).toEqual({ missed: 3, sticky: 2 })

@@ -69,6 +69,41 @@ export function normalizePassageBooks(input, passages = []) {
   return [...map.entries()].map(([id, name]) => ({ id, name })).slice(0, 40)
 }
 
+export function prepareUnitWords(words = []) {
+  const seenIds = new Set()
+  const seenKeys = new Set()
+  const kept = []
+  const dropped = []
+  for (const word of words) {
+    const id = text(word?.id)
+    if (!id) {
+      dropped.push({ reason: 'missing_id', term: text(word?.term) })
+      continue
+    }
+    if (seenIds.has(id)) {
+      dropped.push({ id, reason: 'duplicate_id', term: text(word?.term) })
+      continue
+    }
+    const lex = extractUploadedLexeme(word.term, word.reading)
+    let term = looksLikeVocabularyTerm(lex.term) ? lex.term : ''
+    if (!term && looksLikeVocabularyTerm(text(word.term))) term = text(word.term)
+    if (!term) {
+      dropped.push({ id, reason: 'invalid_term', term: text(word?.term) })
+      continue
+    }
+    const reading = text(lex.reading || word.reading)
+    const key = `${term}\0${reading}`
+    if (seenKeys.has(key)) {
+      dropped.push({ id, reason: 'duplicate_term_reading', term, reading })
+      continue
+    }
+    seenIds.add(id)
+    seenKeys.add(key)
+    kept.push({ word, term, reading, lex })
+  }
+  return { kept, dropped }
+}
+
 export function createDatabase(connectionString) {
   if (!connectionString) throw new Error('DATABASE_URL is required')
   const pool = new Pool({ connectionString, max: 10, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 5_000 })
@@ -121,6 +156,7 @@ export function createDatabase(connectionString) {
   const replaceState = async (input) => {
     const { units, settings } = validateState(input)
     const client = await pool.connect()
+    const dropped = []
     try {
       await client.query('BEGIN')
       await client.query('DELETE FROM units')
@@ -129,12 +165,10 @@ export function createDatabase(connectionString) {
           'INSERT INTO units (id, name, description, color, sort_order) VALUES ($1, $2, $3, $4, $5)',
           [text(unit.id), text(unit.name), text(unit.description), text(unit.color, '#e6533f'), unitIndex],
         )
-        const seenTerms = new Set()
-        for (const [wordIndex, word] of unit.words.entries()) {
-          const lex = extractUploadedLexeme(word.term, word.reading)
-          const term = looksLikeVocabularyTerm(lex.term) ? lex.term : ''
-          if (!term || seenTerms.has(term)) continue
-          seenTerms.add(term)
+        const prepared = prepareUnitWords(unit.words)
+        dropped.push(...prepared.dropped.map((item) => ({ ...item, unitId: text(unit.id) })))
+        for (const [wordIndex, entry] of prepared.kept.entries()) {
+          const { word, term, reading, lex } = entry
           const meaning = text(word.meaning)
           const placeholder = !meaning || /待补充|未知|不明|暂无|未查询|词义缺失|n\/a|unknown/i.test(meaning) || !/[一-鿿]/.test(meaning)
           const dirtyExample = /笔记|批注|手写/.test(`${word.example || ''}${word.translation || ''}`)
@@ -144,7 +178,7 @@ export function createDatabase(connectionString) {
               next_review_at, listening_wrong, meaning_wrong, listening_correct, meaning_correct,
               wrong_book, dictation_misses, error_reviewed, sort_order, created_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,COALESCE($23,NOW()))`,
-            [text(word.id), text(unit.id), term, text(lex.reading || word.reading),
+            [text(word.id), text(unit.id), term, reading,
               placeholder && lex.meaning ? lex.meaning : meaning,
               text(word.partOfSpeech),
               dirtyExample ? `${term}を勉強します。` : text(word.example),
@@ -169,7 +203,8 @@ export function createDatabase(connectionString) {
         [text(settings.avatar, 'ゆ').slice(0, 2), settings.voiceGender === 'male' ? 'male' : 'female'],
       )
       await client.query('COMMIT')
-      return getState()
+      const state = await getState()
+      return dropped.length ? { ...state, droppedCount: dropped.length, dropped } : state
     } catch (error) {
       await client.query('ROLLBACK')
       throw error

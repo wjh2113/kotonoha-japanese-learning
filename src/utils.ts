@@ -118,7 +118,7 @@ export function scheduleReview(word: Word, remembered: boolean, now = Date.now()
 }
 
 export function getReviewState(word: Word, now = Date.now()) {
-  const nextReviewAt = word.nextReviewAt ?? (word.mastered ? 0 : Number.POSITIVE_INFINITY)
+  const nextReviewAt = Number.isFinite(word.nextReviewAt) ? Number(word.nextReviewAt) : Number.POSITIVE_INFINITY
   const due = nextReviewAt <= now
   const daysUntil = Number.isFinite(nextReviewAt) ? Math.ceil((nextReviewAt - now) / DAY) : null
   return { due, nextReviewAt, daysUntil, stage: word.reviewStage ?? 0 }

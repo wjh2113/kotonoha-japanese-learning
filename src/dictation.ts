@@ -163,8 +163,21 @@ export function removeCurrent<T>(items: T[], index: number) {
   return items.filter((_, itemIndex) => itemIndex !== index)
 }
 
+export function hasUsableKanaReading(word: Pick<Word, 'term' | 'reading'>) {
+  const isKanaOnly = (value: string) => {
+    const compact = compactKana(value)
+    return Boolean(compact) && !/[一-龯々〆〇A-Za-z]/.test(compact)
+  }
+  const reading = String(word.reading || '').trim()
+  const term = String(word.term || '').trim()
+  if (reading && isKanaOnly(reading)) return true
+  // Pure kana headwords (no kanji) can be dictated without a separate reading.
+  if (term && !/[一-龯々〆〇]/.test(term) && isKanaOnly(term)) return true
+  return false
+}
+
 export function dictationCandidates(words: Word[]) {
-  return words.filter((word) => looksLikeVocabularyTerm(word.term) && compactKana(wordKatakana(word)))
+  return words.filter((word) => looksLikeVocabularyTerm(word.term) && hasUsableKanaReading(word))
 }
 
 export function isConfirmEnter(event: { key: string; isComposing?: boolean; keyCode?: number }) {
@@ -204,7 +217,7 @@ export function matchesErrorBookFilter(word: Word, filter: ErrorBookFilter) {
   if (!word.wrongBook) return false
   if (filter === 'fresh') return !word.mastered && !word.errorReviewed
   if (filter === 'reviewing') return !word.mastered && Boolean(word.errorReviewed)
-  if (filter === 'sticky') return isStickyMiss(word.dictationMisses)
+  if (filter === 'sticky') return !word.mastered && isStickyMiss(word.dictationMisses)
   if (filter === 'mastered') return Boolean(word.mastered)
   return true
 }

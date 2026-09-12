@@ -74,9 +74,9 @@ describe('spaced review scheduling', () => {
     expect(scheduleReview({ ...baseWord, reviewStage: 4 }, false, now)).toMatchObject({ reviewStage: 0, nextReviewAt: now + 10 * 60 * 1000 })
   })
 
-  it('treats legacy mastered words as due now', () => {
-    expect(getReviewState(baseWord, 1000).due).toBe(true)
-    expect(formatReviewTime(baseWord, 1000)).toBe('现在应复习')
+  it('does not treat mastered words without a schedule as due', () => {
+    expect(getReviewState(baseWord, 1000).due).toBe(false)
+    expect(formatReviewTime(baseWord, 1000)).toBe('尚未进入复习计划')
   })
 })
 

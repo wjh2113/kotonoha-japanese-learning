@@ -43,6 +43,8 @@ function App() {
   const [databaseReady, setDatabaseReady] = useState(false)
   const databaseErrorShown = useRef(false)
   const persistPaused = useRef(true)
+  const persistBusy = useRef(false)
+  const pendingPersist = useRef<{ units: Unit[]; settings: AppSettings } | null>(null)
   const themeRequested = useRef(new Set<string>())
   const [settings, setSettings] = useState<AppSettings>(() => {
     try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '') } } catch { return DEFAULT_SETTINGS }
@@ -60,7 +62,7 @@ function App() {
         if (cancelled) return
         setAuth(!data.required || data.ok ? 'ok' : 'needed')
       } catch {
-        if (!cancelled) setAuth('ok')
+        if (!cancelled) setAuth('needed')
       }
     }
     check()
@@ -122,18 +124,45 @@ function App() {
 
   useEffect(() => {
     if (auth !== 'ok' || !databaseReady) return
-    const timer = window.setTimeout(async () => {
-      if (persistPaused.current) return
-      try {
-        const response = await apiFetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ units, settings }) })
-        if (!response.ok) throw new Error('DATABASE_WRITE_FAILED')
-        databaseErrorShown.current = false
-      } catch {
-        if (!databaseErrorShown.current) {
-          databaseErrorShown.current = true
-          setToast('数据写入 PostgreSQL 失败，请检查服务状态')
+    if (persistPaused.current) return
+    pendingPersist.current = { units, settings }
+    const timer = window.setTimeout(() => {
+      const flush = async () => {
+        if (persistBusy.current || persistPaused.current) return
+        const payload = pendingPersist.current
+        if (!payload) return
+        pendingPersist.current = null
+        persistBusy.current = true
+        try {
+          const response = await apiFetch('/api/state', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          })
+          if (!response.ok) throw new Error('DATABASE_WRITE_FAILED')
+          const stored = await response.json()
+          databaseErrorShown.current = false
+          if (Number(stored.droppedCount) > 0) {
+            setToast(`有 ${stored.droppedCount} 个词未保存（无效或重复）`)
+          }
+          // Apply server-normalized snapshot only when nothing newer is queued.
+          if (!pendingPersist.current && Array.isArray(stored.units)) {
+            persistPaused.current = true
+            setUnits(stored.units)
+            if (stored.settings) setSettings({ ...DEFAULT_SETTINGS, ...stored.settings })
+            window.setTimeout(() => { persistPaused.current = false }, 0)
+          }
+        } catch {
+          if (!databaseErrorShown.current) {
+            databaseErrorShown.current = true
+            setToast('数据写入 PostgreSQL 失败，请检查服务状态')
+          }
+        } finally {
+          persistBusy.current = false
+          if (pendingPersist.current) void flush()
         }
       }
+      void flush()
     }, 350)
     return () => window.clearTimeout(timer)
   }, [units, settings, databaseReady, auth])
@@ -402,7 +431,7 @@ function MobileTabBar({ view, reviewCount, onView }: { view: View; reviewCount: 
     { id: 'review', label: '复习', icon: <Clock3 size={21} />, count: reviewCount },
     { id: 'settings', label: '我的', icon: <UserRound size={21} /> },
   ]
-  const active = view === 'wordbook' || view === 'errorbook' || view === 'test' ? 'settings' : view
+  const active = view === 'wordbook' || view === 'errorbook' || view === 'test' ? '' : view
   return (
     <nav className="mobile-tabbar" aria-label="应用导航">
       {items.map((item) => (
@@ -771,7 +800,7 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
   const next = () => index === questions.length - 1 ? setFinished(true) : setIndex(index + 1)
   const correct = questions.filter((word) => answers[word.id] === word.id).length
 
-  if (!unit.words.length) return <div className="page"><EmptyState onImport={onBack} /></div>
+  if (!unit.words.length) return <div className="page"><EmptyState onImport={onBack} actionLabel="返回学习" /></div>
   if (!kind) {
     return (
       <div className="page test-page">
@@ -1043,7 +1072,9 @@ function NewUnitModal({ onClose, onCreate }: { onClose: () => void; onCreate: (n
   return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><section className="modal small-modal"><button className="modal-close" onClick={onClose}><X /></button><span className="modal-icon"><BookOpen /></span><h2>创建新单元</h2><p>只需填写名称。创建后上传词汇，AI 会根据内容自动归纳主题。</p><label>单元名称<input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：第四单元" /></label><button className="primary-button modal-submit" disabled={!name.trim()} onClick={() => onCreate(name.trim())}>创建并上传词汇</button></section></div>
 }
 
-function EmptyState({ onImport }: { onImport: () => void }) { return <div className="empty-state"><span><FileText /></span><b>这里还没有单词</b><p>导入 TXT、CSV、JSON，或直接粘贴词汇。</p><button onClick={onImport}>添加单词</button></div> }
+function EmptyState({ onImport, actionLabel = '添加单词' }: { onImport: () => void; actionLabel?: string }) {
+  return <div className="empty-state"><span><FileText /></span><b>这里还没有单词</b><p>导入 TXT、CSV、JSON，或直接粘贴词汇。</p><button onClick={onImport}>{actionLabel}</button></div>
+}
 function EmptyDetail({ onImport }: { onImport: () => void }) { return <div className="detail-card empty-detail"><BookOpen /><b>选择一个单词</b><p>查看释义、例句并练习发音。</p><button onClick={onImport}>导入词汇</button></div> }
 
 export default App

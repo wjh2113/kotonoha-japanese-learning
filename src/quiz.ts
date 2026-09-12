@@ -78,15 +78,13 @@ export function recordQuizAnswer(word: Word, kind: 'listening' | 'meaning', corr
   if (kind === 'listening') {
     return {
       ...review,
-      mastered: correct || word.mastered,
       listeningCorrect: tally(tally(word.listeningCorrect) + (correct ? 1 : 0)),
       listeningWrong: tally(tally(word.listeningWrong) + deltaWrong),
     }
   }
   return {
     ...review,
-    mastered: correct || word.mastered,
-      meaningCorrect: tally(tally(word.meaningCorrect) + (correct ? 1 : 0)),
-      meaningWrong: tally(tally(word.meaningWrong) + deltaWrong),
+    meaningCorrect: tally(tally(word.meaningCorrect) + (correct ? 1 : 0)),
+    meaningWrong: tally(tally(word.meaningWrong) + deltaWrong),
   }
 }

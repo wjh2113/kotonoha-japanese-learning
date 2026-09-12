@@ -51,7 +51,7 @@ export async function speakJapanese(text: string, voiceGender: VoiceGender, opti
       options.onEnd?.()
       resolve()
     }
-    const timer = window.setTimeout(finish, 8000)
+    const timer = window.setTimeout(finish, Math.max(12_000, Math.ceil((text.length * 420) / Math.max(0.3, utterance.rate)) + 3000))
     utterance.onstart = () => options.onStart?.()
     utterance.onend = finish
     utterance.onerror = finish
