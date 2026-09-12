@@ -590,12 +590,13 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     const sourceText = (sourceEditing ? sourceDraft : passage.sourceText).trim()
     if (!sourceText || looksLikeErrorDocument(sourceText)) { setNotice('没有原文可以重新解析。'); return }
     setSourceEditing(false)
+    const table = parsePassageTable(sourceText)
     patchPassage(passage.id, {
-      sourceText,
-      sentences: fallbackPassage(sourceText).sentences,
+      sourceText: table ? table.sourceText : sourceText,
+      sentences: table ? table.sentences : fallbackPassage(sourceText).sentences,
       progress: {},
       status: 'processing',
-      statusText: '正在按原文重新翻译…',
+      statusText: table ? '表格内容已导入，正在补全读音…' : '正在按原文重新翻译…',
     })
     setSentenceIndex(0)
     setMode('source')
@@ -955,9 +956,10 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
               value={raw}
               onChange={(event) => setRaw(event.target.value)}
               onPaste={(event) => { void pasteClipboard(event, false) }}
-              placeholder="在这里粘贴日语课文，例如：昨日、学校で日本語を勉強しました。"
+              placeholder={'在这里粘贴日语课文，例如：昨日、学校で日本語を勉強しました。\n\n也支持表格（从 Excel 直接复制）：\n原文\t中文解释\t语法考点\n桜が咲きました。\t樱花开了。\t〜が：提示主语\n【语法】〜たい：表示愿望（语法行跟在每段后面）'}
               disabled={Boolean(busy)}
             />
+            <small className="format-hint"><FileText size={14} />表格导入时，你提供的翻译和语法考点直接使用、不再调用 AI；只有缺失的读音/逐词注释会自动补全。</small>
             <button className="primary-button modal-submit" disabled={Boolean(busy) || ingesting.current || !raw.trim()} onClick={() => {
               if (ingesting.current || !raw.trim()) return
               ingesting.current = true
