@@ -770,7 +770,6 @@ body { background: var(--cream); color: var(--ink); }
   }
   .passage-modes { display: flex; }
   .passage-modes button { flex: 1; min-height: 42px; }
-  .passage-sentences { max-height: 140px; }
   .passage-card h3 { font-size: 22px; }
   .passage-list { display: flex; gap: 8px; overflow: auto; padding: 12px; align-items: center; }
   .passage-list > b { display: none; }
