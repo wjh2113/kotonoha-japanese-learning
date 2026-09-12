@@ -209,7 +209,7 @@ async function enrichWordsWithModel(words, unitName) {
   ].join('')
   const { data, headers } = await callGateway('/api/ai/chat', {
     tenantId,
-    capability: process.env.LLM_GATEWAY_CHAT_CAPABILITY || 'quality-chat',
+    capability: process.env.LLM_GATEWAY_ENRICH_CAPABILITY || 'fast-chat',
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: `单元名称：${unitName || '未命名'}。请解析并归纳以下词汇：${JSON.stringify(words)}` },

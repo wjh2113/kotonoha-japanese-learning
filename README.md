@@ -70,6 +70,7 @@ LLM_GATEWAY_URL=https://aiapimgrapi.aidigitcloud.cn
 LLM_GATEWAY_API_KEY=你的 Japan 租户 Key
 LLM_GATEWAY_TENANT=Japan
 LLM_GATEWAY_CHAT_CAPABILITY=quality-chat
+LLM_GATEWAY_ENRICH_CAPABILITY=fast-chat
 LLM_GATEWAY_SPEECH_CAPABILITY=speech
 ```
 

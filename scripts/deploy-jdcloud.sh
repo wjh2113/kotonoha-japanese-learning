@@ -71,6 +71,7 @@ set_env NODE_ENV production
 set_env LLM_GATEWAY_URL https://aiapimgrapi.aidigitcloud.cn
 set_env LLM_GATEWAY_TENANT Japan
 set_env LLM_GATEWAY_CHAT_CAPABILITY quality-chat
+set_env LLM_GATEWAY_ENRICH_CAPABILITY fast-chat
 set_env LLM_GATEWAY_SPEECH_CAPABILITY speech
 set_env LLM_GATEWAY_VISION_CAPABILITY vision
 set_env DATABASE_URL 'postgresql://kotonoha_app:kotonoha_app@127.0.0.1:5433/kotonoha'
@@ -129,7 +130,7 @@ ensure_japan_tenant() {
   if [[ -n "\${existing_id}" ]]; then
     curl -fsS -X PUT "http://127.0.0.1:8001/admin/api/tenants/\${existing_id}/capabilities" \
       -H "Authorization: Bearer \${token}" -H 'content-type: application/json' \
-      -d '{"capabilities":["quality-chat","speech","vision"]}' >/dev/null || true
+      -d '{"capabilities":["quality-chat","fast-chat","speech","vision"]}' >/dev/null || true
   fi
   if [[ -n "\${key}" ]]; then
     sudo sed -i "s|^LLM_GATEWAY_API_KEY=.*|LLM_GATEWAY_API_KEY=\${key}|" "\${REMOTE_DIR}/.env"
