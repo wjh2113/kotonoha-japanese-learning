@@ -614,7 +614,7 @@ function WordCard({ word, active, onClick }: { word: Word; active: boolean; onCl
       <span className={`status-pill ${word.mastered ? 'mastered' : ''}`}>{word.mastered ? '已掌握' : '学习中'}</span>
       <b className="jp word-term">{word.term}</b>
       <span className="jp word-reading">{word.reading}</span>
-      {toRomaji(word.reading) && <span className="romaji word-romaji">{toRomaji(word.reading)}</span>}
+      {(word.romaji || toRomaji(word.reading)) && <span className="romaji word-romaji">{word.romaji || toRomaji(word.reading)}</span>}
       <span className="word-meaning">{word.meaning}</span>
       <span className="card-bottom"><em>{word.partOfSpeech.split('・')[0]}</em><VolumeButton word={word} small /></span>
     </div>
@@ -656,7 +656,7 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
       <div className="detail-actions"><button onClick={onToggleStar} aria-label={word.starred ? '移出生词本' : '加入生词本'} className={word.starred ? 'starred' : ''}><BookMarked size={17} /></button><button onClick={() => setEditing(!editing)} aria-label="编辑词卡"><SquarePen size={17} /></button></div>
       <div className="detail-main-word">
         <span className="jp">{word.reading}</span>
-        {toRomaji(word.reading) && <small className="romaji">{toRomaji(word.reading)}</small>}
+        {(word.romaji || toRomaji(word.reading)) && <small className="romaji">{word.romaji || toRomaji(word.reading)}</small>}
         <div><h2 className="jp">{word.term}</h2><VolumeButton word={word} /></div>
         <em>{word.partOfSpeech}</em>
       </div>
@@ -664,20 +664,29 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
         <div className="edit-form">
           <label>读音<input value={draft.reading} onChange={(e) => setDraft({ ...draft, reading: e.target.value })} /></label>
           <small className="romaji-hint">罗马音：{toRomaji(draft.reading) || '（填入假名读音后自动生成）'}</small>
+          <label>罗马音（可改）<input value={draft.romaji || ''} onChange={(e) => setDraft({ ...draft, romaji: e.target.value })} placeholder="留空则按读音自动转换" /></label>
           <label>释义<input value={draft.meaning} onChange={(e) => setDraft({ ...draft, meaning: e.target.value })} /></label>
           <label>例句<textarea value={draft.example} onChange={(e) => setDraft({ ...draft, example: e.target.value })} /></label>
+          <label>发音注意事项<input value={draft.pronunciationNote || ''} onChange={(e) => setDraft({ ...draft, pronunciationNote: e.target.value })} /></label>
+          <label>记忆技巧<input value={draft.memoryTip || ''} onChange={(e) => setDraft({ ...draft, memoryTip: e.target.value })} /></label>
           <button className="primary-button compact" onClick={save}>保存修改</button>
         </div>
       ) : (
         <>
           <div className="detail-block"><label>中文释义</label><p className="definition">{word.meaning}</p></div>
           <div className="detail-block example-block">
-            <label><Sparkles size={14} /> AI 初学者例句</label>
+            <label><Sparkles size={14} /> 例句</label>
             <p className="jp example">{word.example}</p>
-            <p className="jp furigana">{word.exampleReading}</p>
-            <p className="translation">{word.translation}</p>
+            {word.exampleReading && <p className="jp furigana">{word.exampleReading}</p>}
+            {word.translation && <p className="translation">{word.translation}</p>}
             <VolumeButton word={word} sentence />
           </div>
+          {word.pronunciationNote && (
+            <div className="detail-block"><label>发音注意事项</label><p className="definition">{word.pronunciationNote}</p></div>
+          )}
+          {word.memoryTip && (
+            <div className="detail-block"><label>记忆技巧</label><p className="definition">{word.memoryTip}</p></div>
+          )}
           <div className="typing-practice">
             <label><SquarePen size={14} /> 打字练习</label>
             <p>输入“{word.meaning}”对应的日语单词或假名</p>
@@ -988,21 +997,39 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
     try {
       const enriched: Partial<Word>[] = Array.from({ length: drafts.length }, () => ({}))
       let themeFromModel = ''
+      // 表格已给全 假名/词性/释义/例句 的词不调用大模型，只补缺失的。
+      const pending = drafts
+        .map((draft, index) => ({ draft, index }))
+        .filter(({ draft }) => !(draft.reading && draft.meaning && draft.partOfSpeech && draft.example))
       const chunkSize = ENRICH_BATCH_SIZE
-      for (let start = 0; start < drafts.length; start += chunkSize) {
-        const chunk = drafts.slice(start, start + chunkSize)
-        setNotice(`AI 正在补全词卡… ${Math.min(start + chunk.length, drafts.length)}/${drafts.length}`)
+      for (let start = 0; start < pending.length; start += chunkSize) {
+        const batch = pending.slice(start, start + chunkSize)
+        setNotice(`AI 正在补全缺失字段… ${Math.min(start + batch.length, pending.length)}/${pending.length}`)
         try {
-          const response = await apiFetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ words: chunk, unitName: unit.name }) })
+          const response = await apiFetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ words: batch.map(({ draft }) => draft), unitName: unit.name }) })
           const data = await response.json()
           if (!response.ok || !Array.isArray(data.words)) throw new Error(data.error || 'AI 解析失败')
-          data.words.forEach((item: Partial<Word>, offset: number) => { enriched[start + offset] = item })
+          data.words.forEach((item: Partial<Word>, offset: number) => { enriched[batch[offset].index] = item })
           if (!themeFromModel && typeof data.unitDescription === 'string' && data.unitDescription.trim()) {
             themeFromModel = data.unitDescription.trim().slice(0, 16)
           }
         } catch { /* this batch stays on local fallback and can be filled later */ }
       }
-      const words: Word[] = drafts.map((draft, index) => mergeEnrichedWord(makeFallbackWord(draft), enriched[index] || {}))
+      const words: Word[] = drafts.map((draft, index) => {
+        const merged = mergeEnrichedWord(makeFallbackWord(draft), enriched[index] || {})
+        // 用户表格里提供的字段优先，模型只补空缺。
+        return {
+          ...merged,
+          reading: String(draft.reading || '').trim() || merged.reading,
+          meaning: String(draft.meaning || '').trim() || merged.meaning,
+          partOfSpeech: String(draft.partOfSpeech || '').trim() || merged.partOfSpeech,
+          example: String(draft.example || '').trim() || merged.example,
+          ...(String(draft.example || '').trim() ? { exampleReading: '', translation: '' } : {}),
+          romaji: String(draft.romaji || '').trim() || merged.romaji,
+          pronunciationNote: String(draft.pronunciationNote || '').trim() || merged.pronunciationNote,
+          memoryTip: String(draft.memoryTip || '').trim() || merged.memoryTip,
+        }
+      })
       const theme = themeFromModel && !isPlaceholderTheme(themeFromModel)
         ? themeFromModel
         : fallbackUnitTheme(unit.name, [...unit.words, ...words])
@@ -1018,18 +1045,18 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <section className="modal import-modal">
         <button className="modal-close" onClick={onClose}><X /></button>
-        <span className="modal-icon"><Import /></span><span className="eyebrow">SMART IMPORT</span><h2>导入到「{unit.name}」</h2><p>粘贴单词或上传文件。导入时会自动去掉笔记、批注和手写说明，只留下真正的日语单词，再由 AI 补全读音、释义与初学者例句。</p>
+        <span className="modal-icon"><Import /></span><span className="eyebrow">SMART IMPORT</span><h2>导入到「{unit.name}」</h2><p>粘贴单词或上传文件。支持 8 列表格（单词、假名、词性、中文释义、罗马音、例句、发音注意事项、记忆技巧）：表格里已有的内容直接采用，只有缺失的字段才交给 AI 补全。</p>
         {!drafts.length ? <>
           <button className="drop-zone" disabled={fileReading} onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); readFile(e.dataTransfer.files[0]) }}>{fileReading ? <span className="spinner dark" /> : <UploadCloud />}<b>{fileReading ? '正在读取 Word 文档…' : '拖入 Word、TXT、CSV 或 JSON 文件'}</b><span>Word 支持段落、列表与三列表格 · DOCX 最大 5MB</span></button>
           <input ref={fileRef} type="file" accept=".docx,.doc,.txt,.csv,.json,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden onChange={(e) => readFile(e.target.files?.[0])} />
           <div className="or"><span />或直接粘贴<span /></div>
-          <textarea className="import-textarea" value={raw} onChange={(e) => setRaw(e.target.value)} placeholder={'猫\n食べる, たべる, 吃\n図書館\tとしょかん\t图书馆'} />
-          <small className="format-hint"><FileText size={14} />每行一个词；也支持“单词, 读音, 释义”。扫描稿里的批注行会被自动过滤。</small>
+          <textarea className="import-textarea" value={raw} onChange={(e) => setRaw(e.target.value)} placeholder={'猫\n食べる, たべる, 吃\n单词\t假名\t词性\t中文释义\t罗马音\t例句\t发音注意事项\t记忆技巧\n桜\tさくら\t名词\t樱花\tsakura\t桜が咲きました。\t\t“撒库拉”谐音'} />
+          <small className="format-hint"><FileText size={14} />每行一个词；支持“单词, 读音, 释义”，也支持从 Excel 直接复制的 8 列表格（带表头自动识别）。扫描稿里的批注行会被自动过滤。</small>
           {notice && <div className="modal-notice">{notice}</div>}
           <button className="primary-button modal-submit" disabled={!raw.trim()} onClick={() => parse()}>解析单词<ChevronRight size={18} /></button>
         </> : <>
           <div className="preview-heading"><b>识别到 {drafts.length} 个单词</b><button onClick={() => setDrafts([])}>重新编辑</button></div>
-          <div className="import-preview">{drafts.map((draft, i) => <div key={`${draft.term}-${i}`}><span>{i + 1}</span><b className="jp">{draft.term}</b><small>{draft.reading ? `${draft.reading}${toRomaji(draft.reading) ? ` · ${toRomaji(draft.reading)}` : ''}` : 'AI 自动识别读音'}</small><em>{draft.meaning || 'AI 自动查询释义'}</em></div>)}</div>
+          <div className="import-preview">{drafts.map((draft, i) => <div key={`${draft.term}-${i}`}><span>{i + 1}</span><b className="jp">{draft.term}</b><small>{draft.reading ? `${draft.reading}${(draft.romaji || toRomaji(draft.reading)) ? ` · ${draft.romaji || toRomaji(draft.reading)}` : ''}` : 'AI 自动识别读音'}</small><em>{draft.meaning || 'AI 自动查询释义'}</em></div>)}</div>
           {notice && <div className="modal-notice">{notice}</div>}
           <button className="primary-button modal-submit" disabled={loading} onClick={enrich}>{loading ? <><span className="spinner" />AI 正在整理词卡并归纳主题…</> : <><Sparkles size={18} />生成并导入词卡</>}</button>
         </>}

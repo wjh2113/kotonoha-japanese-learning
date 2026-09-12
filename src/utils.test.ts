@@ -15,6 +15,31 @@ describe('parseVocabulary', () => {
     expect(parseVocabulary('[{"word":"図書館","kana":"としょかん","definition":"图书馆"}]')[0]).toEqual({ term: '図書館', reading: 'としょかん', meaning: '图书馆' })
   })
 
+  it('parses an 8-column table with header', () => {
+    const table = '单词\t假名\t词性\t中文释义\t罗马音\t例句\t发音注意事项\t记忆技巧\n桜\tさくら\t名词\t樱花\tsakura\t桜が咲きました。\t注意轻音\t“撒库拉”谐音'
+    expect(parseVocabulary(table)).toEqual([{
+      term: '桜',
+      reading: 'さくら',
+      partOfSpeech: '名词',
+      meaning: '樱花',
+      romaji: 'sakura',
+      example: '桜が咲きました。',
+      pronunciationNote: '注意轻音',
+      memoryTip: '“撒库拉”谐音',
+    }])
+  })
+
+  it('parses an 8-column table without header positionally', () => {
+    const table = '桜\tさくら\t名词\t樱花\tsakura\t桜が咲きました。\t\t'
+    expect(parseVocabulary(table)[0]).toMatchObject({
+      term: '桜', reading: 'さくら', partOfSpeech: '名词', meaning: '樱花', romaji: 'sakura', example: '桜が咲きました。',
+    })
+  })
+
+  it('keeps the legacy 3-column mapping', () => {
+    expect(parseVocabulary('食べる,たべる,吃')[0]).toEqual({ term: '食べる', reading: 'たべる', meaning: '吃' })
+  })
+
   it('extracts 降る from OCR annotation lines instead of importing the note', () => {
     expect(parseVocabulary('・✍️ 笔记：手写批注：降る（ふる）、雨が降る（「雨が降る」下方有红色下划线）。')).toMatchObject([
       { term: '降る', reading: 'ふる' },

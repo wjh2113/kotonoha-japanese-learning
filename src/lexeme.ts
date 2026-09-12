@@ -16,6 +16,25 @@ export type ImportLexeme = {
   term: string
   reading?: string
   meaning?: string
+  partOfSpeech?: string
+  romaji?: string
+  example?: string
+  pronunciationNote?: string
+  memoryTip?: string
+}
+
+type ImportExtras = Omit<ImportLexeme, 'term' | 'reading' | 'meaning'>
+
+function cleanExtras(extras?: ImportExtras): ImportExtras {
+  if (!extras) return {}
+  const clean = (value?: string) => String(value || '').trim() || undefined
+  return {
+    partOfSpeech: clean(extras.partOfSpeech),
+    romaji: clean(extras.romaji),
+    example: clean(extras.example),
+    pronunciationNote: clean(extras.pronunciationNote),
+    memoryTip: clean(extras.memoryTip),
+  }
 }
 
 export function looksLikeVocabularyTerm(term?: string) {
@@ -50,7 +69,7 @@ export function quizGloss(meaning?: string) {
     .slice(0, 16)
 }
 
-function uniqueDrafts(items: Array<{ term?: string; reading?: string; meaning?: string }>): ImportLexeme[] {
+function uniqueDrafts(items: Array<{ term?: string; reading?: string; meaning?: string } & ImportExtras>): ImportLexeme[] {
   const out: ImportLexeme[] = []
   const seen: string[] = []
   for (const item of items) {
@@ -65,6 +84,7 @@ function uniqueDrafts(items: Array<{ term?: string; reading?: string; meaning?: 
       term,
       reading: reading || undefined,
       meaning: meaning || undefined,
+      ...cleanExtras(item),
     })
   }
   return out
@@ -86,10 +106,11 @@ function collectCandidates(term: string, reading: string): ImportLexeme[] {
   return found
 }
 
-export function extractImportDrafts(term?: string, reading = '', meaning = '') {
+export function extractImportDrafts(term?: string, reading = '', meaning = '', extras?: ImportExtras) {
   const rawTerm = String(term || '').trim()
   const rawReading = String(reading || '').trim()
   const rawMeaning = String(meaning || '').trim()
+  const extra = cleanExtras(extras)
 
   const numbered = rawTerm.match(/^\s*\d+\.\s*([^\s：:]{1,16})（([ぁ-んァ-ンー]+)）\s*[：:]\s*(.+)$/s)
   if (numbered) {
@@ -97,12 +118,13 @@ export function extractImportDrafts(term?: string, reading = '', meaning = '') {
       term: numbered[1].trim(),
       reading: numbered[2],
       meaning: firstMeaningClause(numbered[3]).slice(0, 40) || rawMeaning,
+      ...extra,
     }])
   }
 
   const compact = rawTerm.match(/^([\u3040-\u30ff\u4e00-\u9fffー]{1,12})（([ぁ-んァ-ンー]+)）$/)
   if (compact && looksLikeVocabularyTerm(compact[1])) {
-    return uniqueDrafts([{ term: compact[1], reading: compact[2], meaning: rawMeaning }])
+    return uniqueDrafts([{ term: compact[1], reading: compact[2], meaning: rawMeaning, ...extra }])
   }
 
   if (/东西用ある|记忆口诀/.test(rawTerm) || (rawTerm === 'ある' && /いる/.test(rawReading))) {
@@ -113,7 +135,7 @@ export function extractImportDrafts(term?: string, reading = '', meaning = '') {
   }
 
   if (looksLikeVocabularyTerm(rawTerm) && !NOTE_NOISE.test(rawReading) && rawTerm.length <= MAX_TERM) {
-    return uniqueDrafts([{ term: rawTerm, reading: rawReading, meaning: rawMeaning }])
+    return uniqueDrafts([{ term: rawTerm, reading: rawReading, meaning: rawMeaning, ...extra }])
   }
 
   const drafts = uniqueDrafts(collectCandidates(rawTerm, rawReading).map((item) => ({
@@ -137,8 +159,8 @@ export function extractUploadedLexeme(term?: string, reading = '') {
   return { term: String(term || '').trim().slice(0, MAX_TERM), reading: String(reading || '').trim().slice(0, 24), cleaned: false }
 }
 
-export function normalizeImportDrafts(drafts?: Array<{ term?: string; reading?: string; meaning?: string }>) {
+export function normalizeImportDrafts(drafts?: Array<{ term?: string; reading?: string; meaning?: string } & ImportExtras>) {
   return uniqueDrafts((Array.isArray(drafts) ? drafts : []).flatMap((draft) => (
-    extractImportDrafts(draft?.term, draft?.reading, draft?.meaning)
+    extractImportDrafts(draft?.term, draft?.reading, draft?.meaning, draft)
   )))
 }

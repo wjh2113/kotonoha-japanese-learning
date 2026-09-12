@@ -4,6 +4,49 @@ import { extractUploadedLexeme, looksLikeVocabularyTerm, normalizeImportDrafts }
 
 export const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
+const TABLE_HEADER_ALIASES: Array<[keyof ImportDraft, RegExp]> = [
+  ['term', /^(单词|単語|term|word)$/i],
+  ['reading', /^(假名|读音|かな|kana|reading)$/i],
+  ['partOfSpeech', /^(词性|詞性|品词|pos|partofspeech)$/i],
+  ['meaning', /^(中文释义|释义|意思|中文|meaning|definition)$/i],
+  ['romaji', /^(罗马音|ローマ字|romaji|romanji)$/i],
+  ['example', /^(例句|例文|example|sentence)$/i],
+  ['pronunciationNote', /^(发音注意事项|发音注意|发音|pronunciation)/i],
+  ['memoryTip', /^(记忆技巧|记忆法|记忆|口诀|memory|memo)/i],
+]
+
+function matchTableHeader(cols: string[]): Array<keyof ImportDraft | null> | null {
+  const keys = cols.map((col) => {
+    const label = col.trim()
+    const hit = TABLE_HEADER_ALIASES.find(([, pattern]) => pattern.test(label))
+    return hit ? hit[0] : null
+  })
+  return keys.includes('term') && keys.filter(Boolean).length >= 2 ? keys : null
+}
+
+function draftFromTableRow(cols: string[], header: Array<keyof ImportDraft | null> | null): ImportDraft | null {
+  const pick = (key: keyof ImportDraft, index: number) => {
+    if (header) {
+      const at = header.indexOf(key)
+      return at >= 0 ? String(cols[at] || '').trim() : ''
+    }
+    return String(cols[index] || '').trim()
+  }
+  const term = pick('term', 0)
+  if (!term) return null
+  const wide = header ? Boolean(header.includes('romaji') || header.includes('partOfSpeech')) : cols.length >= 4
+  return {
+    term,
+    reading: pick('reading', 1) || undefined,
+    meaning: wide ? pick('meaning', 3) || undefined : pick('meaning', 2) || undefined,
+    partOfSpeech: wide ? pick('partOfSpeech', 2) || undefined : undefined,
+    romaji: wide ? pick('romaji', 4) || undefined : undefined,
+    example: wide ? pick('example', 5) || undefined : undefined,
+    pronunciationNote: wide ? pick('pronunciationNote', 6) || undefined : undefined,
+    memoryTip: wide ? pick('memoryTip', 7) || undefined : undefined,
+  }
+}
+
 function rawImportDrafts(raw: string): ImportDraft[] {
   const trimmed = raw.trim()
   if (!trimmed) return []
@@ -13,20 +56,31 @@ function rawImportDrafts(raw: string): ImportDraft[] {
     if (Array.isArray(arr)) {
       return arr.map((item) => typeof item === 'string' ? { term: item } : {
         term: String(item.term || item.word || item['单词'] || '').trim(),
-        reading: String(item.reading || item.kana || item['读音'] || '').trim() || undefined,
-        meaning: String(item.meaning || item.definition || item['释义'] || '').trim() || undefined,
+        reading: String(item.reading || item.kana || item['读音'] || item['假名'] || '').trim() || undefined,
+        meaning: String(item.meaning || item.definition || item['释义'] || item['中文释义'] || '').trim() || undefined,
+        partOfSpeech: String(item.partOfSpeech || item.pos || item['词性'] || '').trim() || undefined,
+        romaji: String(item.romaji || item['罗马音'] || '').trim() || undefined,
+        example: String(item.example || item.sentence || item['例句'] || '').trim() || undefined,
+        pronunciationNote: String(item.pronunciationNote || item['发音注意事项'] || item['发音注意'] || '').trim() || undefined,
+        memoryTip: String(item.memoryTip || item['记忆技巧'] || item['记忆法'] || '').trim() || undefined,
       }).filter((item) => item.term)
     }
   } catch { /* plain text or CSV */ }
 
-  return trimmed.split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && !/^(单词|word)[,\t]/i.test(line))
-    .map((line) => {
-      const cols = line.split(/\t|,|，/).map((part) => part.trim())
-      return { term: cols[0], reading: cols[1] || undefined, meaning: cols[2] || undefined }
-    })
-    .filter((item) => item.term)
+  const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  let header: Array<keyof ImportDraft | null> | null = null
+  const out: ImportDraft[] = []
+  for (const line of lines) {
+    const cols = line.split(/\t|,|，/).map((part) => part.trim())
+    if (!header) {
+      const matched = matchTableHeader(cols)
+      if (matched) { header = matched; continue }
+    }
+    if (/^(单词|word)[,\t]/i.test(line) && cols.length <= 3) continue
+    const draft = draftFromTableRow(cols, header)
+    if (draft) out.push(draft)
+  }
+  return out
 }
 
 export function parseVocabulary(raw: string): ImportDraft[] {
@@ -40,13 +94,17 @@ export function makeFallbackWord(draft: ImportDraft): Word {
   const term = cleaned.term || draft.term
   const known = fallbackLexicon[term] || {}
   const reading = cleaned.reading || draft.reading || known.reading || toHiragana(term)
+  const userExample = String(draft.example || '').trim()
   return {
     id: uid(), term, reading,
     meaning: draft.meaning || cleaned.meaning || known.meaning || '待补充释义',
-    partOfSpeech: known.partOfSpeech || '词性待确认',
-    example: known.example || `${term}を勉強します。`,
-    exampleReading: known.exampleReading || `${reading}を べんきょうします。`,
-    translation: known.translation || `学习“${term}”这个词。`,
+    partOfSpeech: String(draft.partOfSpeech || '').trim() || known.partOfSpeech || '词性待确认',
+    example: userExample || known.example || `${term}を勉強します。`,
+    exampleReading: userExample ? '' : (known.exampleReading || `${reading}を べんきょうします。`),
+    translation: userExample ? '' : (known.translation || `学习“${term}”这个词。`),
+    romaji: String(draft.romaji || '').trim() || toRomaji(reading) || undefined,
+    pronunciationNote: String(draft.pronunciationNote || '').trim() || undefined,
+    memoryTip: String(draft.memoryTip || '').trim() || undefined,
     mastered: false, createdAt: Date.now(),
   }
 }

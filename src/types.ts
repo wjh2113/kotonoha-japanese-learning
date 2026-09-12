@@ -7,6 +7,9 @@ export type Word = {
   example: string
   exampleReading: string
   translation: string
+  romaji?: string
+  pronunciationNote?: string
+  memoryTip?: string
   mastered: boolean
   createdAt: number
   starred?: boolean
@@ -48,6 +51,11 @@ export type ImportDraft = {
   term: string
   reading?: string
   meaning?: string
+  partOfSpeech?: string
+  romaji?: string
+  example?: string
+  pronunciationNote?: string
+  memoryTip?: string
 }
 
 export type PassageToken = {
