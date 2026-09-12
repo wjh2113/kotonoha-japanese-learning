@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">言の葉</string>
+    <string name="title_activity_main">言の葉</string>
+    <string name="package_name">cn.aidigitcloud.kotonoha</string>
+    <string name="custom_url_scheme">cn.aidigitcloud.kotonoha</string>
+</resources>

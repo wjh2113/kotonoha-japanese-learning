@@ -17,9 +17,14 @@
     "db:local:stop:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres-local.ps1 stop",
     "preview": "vite preview",
     "start": "node --env-file-if-exists=.env server.mjs",
-    "deploy": "bash scripts/deploy-jdcloud.sh"
+    "deploy": "bash scripts/deploy-jdcloud.sh",
+    "cap:sync": "npm run build && npx cap sync android",
+    "android:open": "npx cap open android"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
     "@vitejs/plugin-react": "latest",
     "concurrently": "latest",
     "express": "latest",

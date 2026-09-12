@@ -5,7 +5,7 @@ import {
   Mic, NotebookPen, Palette, Pause, Plus, Search, Settings, Sparkles, SquarePen,
   Trash2, Trophy, UploadCloud, UserRound, Volume2, X,
 } from 'lucide-react'
-import { apiFetch, AUTH_REQUIRED_EVENT, getAccessToken, setAccessToken } from './api'
+import { apiFetch, apiUrl, AUTH_REQUIRED_EVENT, getAccessToken, setAccessToken } from './api'
 import { initialUnits } from './data'
 import { readVocabularyFile } from './docx'
 import { PassageView } from './PassageView'
@@ -64,7 +64,7 @@ function App() {
         const headers: HeadersInit = {}
         const token = getAccessToken()
         if (token) headers.Authorization = `Bearer ${token}`
-        const response = await fetch('/api/auth/check', { headers })
+        const response = await fetch(apiUrl('/api/auth/check'), { headers })
         const data = await response.json()
         if (cancelled) return
         setAuth(!data.required || data.ok ? 'ok' : 'needed')
@@ -860,7 +860,7 @@ function AccessGate({ onUnlock }: { onUnlock: () => void }) {
     if (!password.trim() || busy) return
     setBusy(true); setError('')
     try {
-      const response = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) })
+      const response = await fetch(apiUrl('/api/auth/login'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) })
       const data = await response.json().catch(() => ({}))
       if (!response.ok || !data.token) {
         setError(data.message || '密码错误')

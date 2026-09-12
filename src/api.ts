@@ -1,5 +1,14 @@
+import { Capacitor } from '@capacitor/core'
+
 export const ACCESS_TOKEN_KEY = 'kotonoha-access-token'
 export const AUTH_REQUIRED_EVENT = 'kotonoha-auth-required'
+
+/** 安卓 APK（Capacitor WebView）里页面源是 https://localhost，API 要打到线上域名。 */
+export const API_BASE = Capacitor.isNativePlatform() ? 'https://japan.aidigitcloud.cn' : ''
+
+export function apiUrl(path: string) {
+  return `${API_BASE}${path}`
+}
 
 export function getAccessToken() {
   return localStorage.getItem(ACCESS_TOKEN_KEY) || ''
@@ -14,7 +23,7 @@ export async function apiFetch(url: string, options: RequestInit = {}) {
   const headers = new Headers(options.headers)
   const token = getAccessToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  const response = await fetch(url, { ...options, headers })
+  const response = await fetch(apiUrl(url), { ...options, headers })
   if (response.status === 401 && !url.includes('/api/auth/')) {
     setAccessToken('')
     window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT))

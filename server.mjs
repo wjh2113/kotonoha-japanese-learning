@@ -18,6 +18,21 @@ const database = createDatabase(process.env.DATABASE_URL)
 app.set('trust proxy', 1)
 app.use(express.json({ limit: '12mb' }))
 
+// Capacitor 安卓壳跨域访问 API（WebView 源：https://localhost / capacitor://localhost）
+const NATIVE_ORIGINS = new Set(['https://localhost', 'capacitor://localhost', 'http://localhost'])
+app.use((req, res, next) => {
+  const origin = req.headers.origin
+  if (origin && NATIVE_ORIGINS.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin)
+    res.setHeader('Vary', 'Origin')
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Access-Token')
+    res.setHeader('Access-Control-Max-Age', '86400')
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204)
+  next()
+})
+
 function sha256buf(value) {
   return crypto.createHash('sha256').update(String(value), 'utf8').digest()
 }
