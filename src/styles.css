@@ -489,6 +489,16 @@ body { background: var(--cream); color: var(--ink); }
 .passage-transcript-cont { margin-left: auto; }
 .passage-go-intensive { height: 36px !important; }
 
+.passage-grammar-summary { margin-top: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.passage-grammar-summary.pending { color: #8d8e89; font-size: 12px; text-align: center; }
+.passage-grammar-summary h4 { margin: 0 0 10px; display: flex; align-items: center; gap: 6px; font-size: 13px; color: #2b2d31; }
+.passage-grammar-summary h4 small { color: #a09b94; font-weight: 400; }
+.passage-grammar-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.passage-grammar-grid article { padding: 10px 12px; border: 1px solid #efe8e2; border-radius: 9px; background: #fdfaf7; }
+.passage-grammar-grid article b { display: block; font-size: 12px; color: var(--red); }
+.passage-grammar-grid article code { display: inline-block; margin-top: 4px; padding: 2px 6px; border-radius: 5px; background: #f3ece5; font-size: 11px; color: #6e5a52; }
+.passage-grammar-grid article p { margin: 6px 0 0; font-size: 12px; line-height: 1.6; color: #555960; }
+
 .intensive-page { display: grid; gap: 14px; }
 .intensive-top { display: grid; gap: 10px; }
 .intensive-player { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }

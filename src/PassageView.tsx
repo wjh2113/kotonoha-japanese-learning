@@ -883,6 +883,32 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                           前往精听页面
                         </button>
                       </div>
+                      {(() => {
+                        const seen = new Set<string>()
+                        const points = passage.sentences.flatMap((item) => item.grammar || []).filter((point) => {
+                          const key = `${point.name}|${point.pattern}`
+                          if (!point.name || seen.has(key)) return false
+                          seen.add(key)
+                          return true
+                        })
+                        if (!points.length) return passage.status === 'processing'
+                          ? <p className="passage-grammar-summary pending">语法点整理中，解析完成后会显示在这里。</p>
+                          : null
+                        return (
+                          <section className="passage-grammar-summary" aria-label="本课语法点">
+                            <h4><ScrollText size={15} />本课语法点 <small>{points.length} 个</small></h4>
+                            <div className="passage-grammar-grid">
+                              {points.map((point, index) => (
+                                <article key={`${point.name}-${index}`}>
+                                  <b>{point.name}</b>
+                                  {point.pattern && <code className="jp">{point.pattern}</code>}
+                                  <p>{point.explanation}</p>
+                                </article>
+                              ))}
+                            </div>
+                          </section>
+                        )
+                      })()}
                     </>
                   ) : (
                     <pre className="jp passage-source">{passage.sourceText || '这篇课文还没有可点选的句子。可以点「编辑原文」补上后重新解析。'}</pre>
