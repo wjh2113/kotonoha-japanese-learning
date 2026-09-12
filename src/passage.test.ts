@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractPassageVocab, unusedPassageVocab, listPassageBooks, mergeAnalyzedSentences, passageProgressSummary, recordSentenceScore } from './passage'
+import { extractPassageVocab, unusedPassageVocab, isTransientPassage, listPassageBooks, mergeAnalyzedSentences, passageNeedsAnalysis, passageProgressSummary, recordSentenceScore, recoverInterruptedIngest } from './passage'
 import type { Passage } from './types'
 
 const passage: Passage = {
@@ -69,5 +69,37 @@ describe('mergeAnalyzedSentences', () => {
     expect(merged[0].id).toBe('s1')
     expect(merged[0].translation).toBe('在学校遇见了朋友。')
     expect(merged[0].tokens[0].surface).toBe('学校')
+  })
+})
+
+describe('interrupted passage ingest', () => {
+  it('does not treat OCR placeholders as analyzable sentences', () => {
+    expect(isTransientPassage({
+      status: 'processing',
+      sourceText: '（正在识别课文…）',
+      sentences: [{ id: 's1', text: '（正在识别课文…）', reading: '', translation: '', tokens: [], grammar: [] }],
+    })).toBe(true)
+    expect(passageNeedsAnalysis({
+      ...passage,
+      status: 'processing',
+      sourceText: '（正在识别课文…）',
+      sentences: [{ id: 's1', text: '（正在识别课文…）', reading: '', translation: '', tokens: [], grammar: [] }],
+    })).toBe(false)
+  })
+
+  it('turns leftover OCR stubs into a retryable error instead of keeping them processing', () => {
+    const recovered = recoverInterruptedIngest({
+      ...passage,
+      title: '<html><head><title>502 Bad Gateway</title></head></html>',
+      sourceText: '（正在识别课文…）',
+      status: 'processing',
+      statusText: '<html>502 Bad Gateway</html>',
+      sentences: [{ id: 's1', text: '（正在识别课文…）', reading: '', translation: '', tokens: [], grammar: [] }],
+    })
+    expect(recovered.title).toBe('课文')
+    expect(recovered.sourceText).toBe('')
+    expect(recovered.sentences).toEqual([])
+    expect(recovered.status).toBe('error')
+    expect(recovered.statusText).toContain('重新上传')
   })
 })

@@ -1,3 +1,4 @@
+import { isPassagePlaceholder, looksLikeErrorDocument, PASSAGE_OCR_PLACEHOLDER } from './error-text'
 import { looksLikeVocabularyTerm } from './lexeme'
 import type { ImportDraft, Passage, PassageSentence, SentenceProgress } from './types'
 
@@ -14,8 +15,40 @@ export function sentenceNeedsAnalysis(sentence: PassageSentence) {
 }
 
 export function passageNeedsAnalysis(passage: Passage) {
+  if (isTransientPassage(passage)) return false
   if (passage.status === 'processing' || passage.status === 'error') return true
   return (passage.sentences || []).some(sentenceNeedsAnalysis)
+}
+
+export function isTransientPassage(passage: Pick<Passage, 'status' | 'sourceText' | 'sentences'>) {
+  const source = String(passage.sourceText || '').trim()
+  const sentences = (passage.sentences || []).filter((sentence) => sentence.text && !isPassagePlaceholder(sentence.text))
+  return passage.status === 'processing' && (!source || isPassagePlaceholder(source)) && !sentences.length
+}
+
+export function sanitizePassageRecord<T extends Partial<Passage>>(passage: T): T {
+  const title = looksLikeErrorDocument(String(passage.title || '')) ? '课文' : passage.title
+  const rawSource = String(passage.sourceText || '')
+  const sourceText = looksLikeErrorDocument(rawSource) || rawSource.trim() === PASSAGE_OCR_PLACEHOLDER ? '' : rawSource
+  const sentences = Array.isArray(passage.sentences)
+    ? passage.sentences.filter((sentence) => sentence?.text && !isPassagePlaceholder(sentence.text))
+    : passage.sentences
+  const statusText = looksLikeErrorDocument(String(passage.statusText || ''))
+    ? '课文解析暂时失败，请稍后重试。'
+    : passage.statusText
+  return { ...passage, title, sourceText, sentences, statusText }
+}
+
+export function recoverInterruptedIngest(passage: Passage): Passage {
+  const next = sanitizePassageRecord(passage)
+  if (!isTransientPassage(next)) return next
+  return {
+    ...next,
+    sourceText: '',
+    sentences: [],
+    status: 'error',
+    statusText: '课文识别未完成，请重新上传或粘贴原文。',
+  }
 }
 
 export function chunkItems<T>(items: T[], size = PASSAGE_ANALYZE_CHUNK) {

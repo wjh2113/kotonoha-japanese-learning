@@ -3,12 +3,13 @@ import {
   BookOpen, BookmarkPlus, ChevronLeft, ChevronRight, Copy, FileText, LoaderCircle, Mic, Pause,
   ScrollText, Sparkles, SquarePen, Trash2, UploadCloud, Volume2, X,
 } from 'lucide-react'
-import { apiFetch } from './api'
+import { apiFetch, readApiJson } from './api'
 import { extractDocxPassage, htmlToPassageText, readPassageSource } from './docx'
+import { PASSAGE_OCR_PLACEHOLDER, isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import {
-  chunkItems, extractPassageVocab, hasChineseTranslation, mergeAnalyzedSentences, mergePassageBooks,
+  chunkItems, extractPassageVocab, hasChineseTranslation, isTransientPassage, mergeAnalyzedSentences, mergePassageBooks,
   normalizePassageSentence, passageProgressSummary, recordSentenceScore,
-  sentenceNeedsAnalysis, unusedPassageVocab,
+  recoverInterruptedIngest, sentenceNeedsAnalysis, unusedPassageVocab,
 } from './passage'
 import { SettingsContext } from './settings-context'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
@@ -36,15 +37,16 @@ function hydrateProgress(value: unknown) {
 }
 
 function fallbackPassage(sourceText: string): Passage {
+  const text = isPassagePlaceholder(sourceText) ? '' : sourceText.trim()
   return {
     id: uid(),
     title: '课文',
-    sourceText,
+    sourceText: text,
     createdAt: Date.now(),
     status: 'processing',
-    sentences: splitJapaneseSentences(sourceText).map((text) => ({
-      id: uid(), text, reading: '', translation: '', tokens: [], grammar: [],
-    })),
+    sentences: text ? splitJapaneseSentences(text).map((line) => ({
+      id: uid(), text: line, reading: '', translation: '', tokens: [], grammar: [],
+    })) : [],
   }
 }
 
@@ -55,7 +57,7 @@ function hydratePassage(item: unknown): Passage | null {
   if (!id) return null
   const sentences = Array.isArray(record.sentences) ? record.sentences : []
   const status = record.status === 'processing' || record.status === 'error' ? record.status : 'ready'
-  return {
+  return recoverInterruptedIngest({
     id,
     title: passageTitle(record.title),
     sourceText: String(record.sourceText || ''),
@@ -69,7 +71,7 @@ function hydratePassage(item: unknown): Passage | null {
       const next = normalizePassageSentence(sentence, uid())
       return { ...next, id: next.id || uid() }
     }).filter((sentence) => sentence.text),
-  }
+  })
 }
 
 function isPasteField(target: EventTarget | null) {
@@ -132,6 +134,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   const persistEnabled = useRef(false)
   const ingesting = useRef(false)
   const analyzing = useRef(new Set<string>())
+  const ingestingIds = useRef(new Set<string>())
   const resumed = useRef(false)
   const passagesRef = useRef<Passage[]>([])
   const fillPassageRef = useRef<(id: string) => Promise<void>>(async () => undefined)
@@ -152,7 +155,22 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     analyzing.current.add(passageId)
     try {
       const current = passagesRef.current.find((item) => item.id === passageId)
-      if (!current?.sentences.length) return
+      if (!current) return
+      if (isTransientPassage(current) || current.sentences.some((sentence) => isPassagePlaceholder(sentence.text))) {
+        if (ingestingIds.current.has(passageId)) return
+        patchPassage(passageId, {
+          status: 'error',
+          statusText: '课文识别未完成，请重新上传或粘贴原文。',
+          sourceText: looksLikeErrorDocument(current.sourceText) ? '' : current.sourceText,
+          sentences: current.sentences.filter((sentence) => !isPassagePlaceholder(sentence.text)),
+          title: looksLikeErrorDocument(current.title) ? '课文' : current.title,
+        })
+        return
+      }
+      if (!current.sentences.length) {
+        patchPassage(passageId, { status: 'error', statusText: '还没有可解析的句子，请重新上传或粘贴原文。' })
+        return
+      }
       const pending = current.sentences.filter(sentenceNeedsAnalysis)
       if (!pending.length) {
         patchPassage(passageId, { status: 'ready', statusText: '' })
@@ -168,15 +186,17 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sentences: chunk.map((sentence) => ({ text: sentence.text })) }),
         })
-        const data = await response.json()
-        if (!response.ok) throw new Error(data.error || '解析失败')
+        const data = await readApiJson<{ title?: string; sentences?: unknown[]; error?: string }>(response)
+        if (!response.ok) throw new Error(publicApiMessage(data.error, '课文解析失败，请稍后重试。'))
         const latest = passagesRef.current.find((item) => item.id === passageId)
         if (!latest) return
         finished = Math.min(total, finished + chunk.length)
+        const analyzedTitle = passageTitle(data.title, '')
         patchPassage(passageId, {
           sentences: mergeAnalyzedSentences(latest.sentences, data.sentences),
           status: 'processing',
           statusText: `正在生成整句翻译 ${finished}/${total}`,
+          ...(latest.title === '课文' && analyzedTitle && !looksLikeErrorDocument(analyzedTitle) ? { title: analyzedTitle } : {}),
         })
       }
       const latest = passagesRef.current.find((item) => item.id === passageId)
@@ -187,9 +207,12 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
         statusText: missing ? `还有 ${missing} 句没有中文翻译，可点重试` : '',
       })
     } catch (reason) {
+      const latest = passagesRef.current.find((item) => item.id === passageId)
       patchPassage(passageId, {
         status: 'error',
-        statusText: reason instanceof Error ? reason.message : '课文解析失败',
+        statusText: publicApiMessage(reason instanceof Error ? reason.message : '', '课文解析失败，请稍后重试。'),
+        ...(latest && looksLikeErrorDocument(latest.title) ? { title: '课文' } : {}),
+        ...(latest && looksLikeErrorDocument(latest.sourceText) ? { sourceText: '' } : {}),
       })
     } finally {
       analyzing.current.delete(passageId)
@@ -200,8 +223,8 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   useEffect(() => {
     let cancelled = false
     apiFetch('/api/passages').then(async (response) => {
-      const data = await response.json()
-      if (cancelled || !response.ok) throw new Error(data.error || '读取课文失败')
+      const data = await readApiJson<{ passages?: unknown[]; books?: unknown[]; error?: string }>(response)
+      if (cancelled || !response.ok) throw new Error(publicApiMessage(data.error, '读取课文失败'))
       const next = (Array.isArray(data.passages) ? data.passages as unknown[] : []).map(hydratePassage).filter((item): item is Passage => Boolean(item))
       persistEnabled.current = true
       setPassages(next)
@@ -217,7 +240,10 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   useEffect(() => {
     if (!ready || resumed.current) return
     resumed.current = true
-    const pending = passages.filter((item) => item.status === 'processing' || item.sentences.some((sentence) => !hasChineseTranslation(sentence.translation)))
+    const pending = passages.filter((item) => (
+      !isTransientPassage(item)
+      && item.sentences.some((sentence) => sentence.text && !isPassagePlaceholder(sentence.text) && sentenceNeedsAnalysis(sentence))
+    ))
     void (async () => {
       for (const item of pending) await fillPassageRef.current(item.id)
     })()
@@ -227,7 +253,14 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     if (!ready || !persistEnabled.current) return
     const timer = window.setTimeout(async () => {
       try {
-        const response = await apiFetch('/api/passages', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passages, books }) })
+        const response = await apiFetch('/api/passages', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            passages: passages.filter((item) => !isTransientPassage(item)),
+            books,
+          }),
+        })
         if (!response.ok) throw new Error('WRITE_FAILED')
         persistError.current = false
       } catch {
@@ -273,9 +306,10 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   }
 
   const processIngest = async (passageId: string, text: string, images: Blob[]) => {
+    ingestingIds.current.add(passageId)
     try {
       const parts: string[] = []
-      if (text.trim()) parts.push(text.trim())
+      if (text.trim() && !isPassagePlaceholder(text) && !looksLikeErrorDocument(text)) parts.push(text.trim())
       for (const [index, image] of images.slice(0, 4).entries()) {
         if (!passagesRef.current.some((item) => item.id === passageId)) return
         patchPassage(passageId, { status: 'processing', statusText: `正在识别课文图片 ${index + 1}/${Math.min(images.length, 4)}…` })
@@ -283,7 +317,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
         if (recognized) parts.push(recognized)
       }
       const sourceText = parts.join('\n\n').trim()
-      if (!sourceText) throw new Error('没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
+      if (!sourceText || looksLikeErrorDocument(sourceText)) throw new Error('没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
       const sentences = fallbackPassage(sourceText).sentences
       patchPassage(passageId, {
         sourceText,
@@ -295,17 +329,21 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     } catch (reason) {
       patchPassage(passageId, {
         status: 'error',
-        statusText: reason instanceof Error ? reason.message : '课文读取失败。',
+        statusText: publicApiMessage(reason instanceof Error ? reason.message : '', '课文读取失败。'),
+        sourceText: '',
+        sentences: [],
       })
-      setNotice(reason instanceof Error ? reason.message : '课文读取失败。')
+      setNotice(publicApiMessage(reason instanceof Error ? reason.message : '', '课文读取失败。'))
+    } finally {
+      ingestingIds.current.delete(passageId)
     }
   }
 
   const queueIngest = (text: string, images: Blob[] = [], title?: string) => {
     const book = books.find((item) => item.id === draftBookId)
-    const sourceText = text.trim()
+    const sourceText = isPassagePlaceholder(text) ? '' : text.trim()
     const stub = {
-      ...fallbackPassage(sourceText || '（正在识别课文…）'),
+      ...fallbackPassage(sourceText),
       title: passageTitle(title),
       status: 'processing' as const,
       statusText: images.length ? '正在识别课文图片…' : '正在生成整句翻译…',
@@ -313,6 +351,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       bookName: book?.name || '',
     }
     addPassage(stub)
+    ingestingIds.current.add(stub.id)
     void processIngest(stub.id, sourceText, images)
   }
 
@@ -320,9 +359,13 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     const file = blob instanceof File ? blob : new File([blob], 'paste.jpg', { type: blob.type || 'image/jpeg' })
     const imageBase64 = await fileToCompressedJpeg(file)
     const response = await apiFetch('/api/passage/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageBase64, mimeType: 'image/jpeg' }) })
-    const data = await response.json()
-    if (!response.ok) throw new Error(data.error || '识别失败')
-    return String(data.text || '').trim()
+    const data = await readApiJson<{ text?: string; error?: string }>(response)
+    if (!response.ok) throw new Error(publicApiMessage(data.error, '图片识别失败，请稍后重试。'))
+    const text = String(data.text || '').trim()
+    if (!text || looksLikeErrorDocument(text) || text === PASSAGE_OCR_PLACEHOLDER) {
+      throw new Error('没有识别到日语课文，请换更清晰的照片或直接粘贴文本。')
+    }
+    return text
   }
 
   const readUpload = async (file?: File) => {
@@ -420,7 +463,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   const reanalyze = () => {
     if (!passage) return
     const sourceText = (sourceEditing ? sourceDraft : passage.sourceText).trim()
-    if (!sourceText) { setNotice('没有原文可以重新解析。'); return }
+    if (!sourceText || looksLikeErrorDocument(sourceText)) { setNotice('没有原文可以重新解析。'); return }
     setSourceEditing(false)
     patchPassage(passage.id, {
       sourceText,
@@ -552,7 +595,9 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
               {passage.status === 'error' && (
                 <div className="passage-status error">
                   {passage.statusText || '处理失败'}
-                  <button type="button" onClick={() => void fillPassage(passage.id)}>重试</button>
+                  {passage.sentences.some((item) => item.text && !isPassagePlaceholder(item.text)) && (
+                    <button type="button" onClick={() => void fillPassage(passage.id)}>重试</button>
+                  )}
                 </div>
               )}
               <div className="passage-toolbar">

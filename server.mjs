@@ -113,6 +113,14 @@ app.put('/api/state', async (req, res) => {
   }
 })
 
+function looksLikeErrorDocument(text) {
+  const value = String(text || '')
+  return /<\s*html\b/i.test(value)
+    || /<\s*head\b/i.test(value)
+    || /502\s*Bad\s*Gateway/i.test(value)
+    || /nginx\/\d/i.test(value)
+}
+
 function gatewayError(status, payload) {
   const known = {
     401: '网关 API Key 无效或租户已停用。',
@@ -120,10 +128,29 @@ function gatewayError(status, payload) {
     403: '当前数据级别超出租户能力权限。',
     404: '租户未开通所需能力。',
     409: '请求幂等键冲突。',
+    502: 'AI 网关暂时不可用，请稍后重试。',
     503: '网关当前没有健康的模型路由。',
+    504: 'AI 网关超时，请稍后重试。',
   }
   const detail = payload?.detail || payload?.message || payload?.error
+  if (typeof detail === 'string' && looksLikeErrorDocument(detail)) {
+    return known[status] || 'AI 网关请求失败，请稍后重试。'
+  }
   return known[status] || (typeof detail === 'string' ? detail : `网关请求失败（HTTP ${status}）。`)
+}
+
+function publicStatus(error) {
+  const status = Number(error?.status) || 500
+  if (status === 502 || status === 504) return 503
+  return status
+}
+
+function clientGatewayMessage(error, abortMessage, fallback) {
+  if (error?.message === 'LLM_NOT_CONFIGURED') return fallback
+  if (error?.name === 'AbortError') return abortMessage
+  const message = String(error?.message || '')
+  if (!message || looksLikeErrorDocument(message)) return fallback
+  return message
 }
 
 function parseJsonContent(content) {
@@ -357,7 +384,7 @@ app.post('/api/enrich', rateLimit(60_000, 40), async (req, res) => {
     })
   } catch (error) {
     console.error(error)
-    res.status(error.status || 500).json({ error: error.name === 'AbortError' ? '网关请求超时。' : error.message || 'AI 解析失败，请稍后再试。' })
+    res.status(publicStatus(error)).json({ error: error.name === 'AbortError' ? '网关请求超时。' : clientGatewayMessage(error, '网关请求超时。', 'AI 解析失败，请稍后再试。') })
   }
 })
 
@@ -377,7 +404,7 @@ app.post('/api/enrich-missing', rateLimit(60_000, 40), async (_req, res) => {
     res.json({ ...result, running: backfillRunning, units: state.units, settings: state.settings })
   } catch (error) {
     console.error(error)
-    res.status(error.status || 500).json({ error: error.message || '补全已上传单词失败。' })
+    res.status(publicStatus(error)).json({ error: clientGatewayMessage(error, '补全已上传单词失败。', '补全已上传单词失败。') })
   }
 })
 
@@ -411,8 +438,7 @@ app.post('/api/unit-theme', rateLimit(60_000, 20), async (req, res) => {
     res.json({ unitDescription })
   } catch (error) {
     console.error(error)
-    const message = error.message === 'LLM_NOT_CONFIGURED' ? '尚未配置 AI 网关，无法归纳主题。' : error.message || '归纳主题失败。'
-    res.status(error.status || 500).json({ error: error.name === 'AbortError' ? '归纳主题超时。' : message })
+    res.status(publicStatus(error)).json({ error: clientGatewayMessage(error, '归纳主题超时。', '归纳主题失败。') })
   }
 })
 
@@ -434,7 +460,7 @@ app.post('/api/transcribe', rateLimit(60_000, 12), async (req, res) => {
     res.json({ text: data.text, language: data.language, gateway: data.gateway, requestId: headers.get('x-request-id') || data.gateway?.requestId })
   } catch (error) {
     console.error(error)
-    res.status(error.status || 500).json({ error: error.name === 'AbortError' ? '语音转写超时。' : error.message || '语音转写失败。' })
+    res.status(publicStatus(error)).json({ error: error.name === 'AbortError' ? '语音转写超时。' : clientGatewayMessage(error, '语音转写超时。', '语音转写失败。') })
   }
 })
 
@@ -479,18 +505,17 @@ app.post('/api/passage/ocr', rateLimit(60_000, 8), async (req, res) => {
       max_tokens: 4096,
     }, 120000)
     const text = String(data?.choices?.[0]?.message?.content || '').trim()
-    if (!text) return res.status(422).json({ error: '没有识别到日语课文，请换更清晰的照片或直接粘贴文本。' })
+    if (!text || looksLikeErrorDocument(text)) return res.status(422).json({ error: '没有识别到日语课文，请换更清晰的照片或直接粘贴文本。' })
     res.json({ text })
   } catch (error) {
     console.error(error)
-    const message = error.message === 'LLM_NOT_CONFIGURED' ? '尚未配置 AI 网关，无法识别图片。' : error.message || '图片识别失败。'
-    res.status(error.status || 500).json({ error: error.name === 'AbortError' ? '图片识别超时。' : message })
+    res.status(publicStatus(error)).json({ error: clientGatewayMessage(error, '图片识别超时。', '图片识别失败，请稍后重试。') })
   }
 })
 
 async function analyzePassageWithModel(sourceText, exactSentences) {
   const lines = Array.isArray(exactSentences)
-    ? exactSentences.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 6)
+    ? exactSentences.map((item) => String(item || '').trim()).filter((text) => text && !looksLikeErrorDocument(text) && text !== '（正在识别课文…）').slice(0, 6)
     : []
   const system = [
     '你是严谨的日语教师，服务中文母语的日语初学者。',
@@ -504,7 +529,7 @@ async function analyzePassageWithModel(sourceText, exactSentences) {
   if (lines.length) {
     system.push('必须按给定句子逐条解析，不要合并、拆分、改写或省略。sentences 数量必须等于输入句数，text 必须与输入完全一致。')
   }
-  const { data } = await callGateway('/api/ai/chat', {
+  const payload = {
     tenantId,
     capability: process.env.LLM_GATEWAY_CHAT_CAPABILITY || 'quality-chat',
     messages: [
@@ -518,30 +543,45 @@ async function analyzePassageWithModel(sourceText, exactSentences) {
     stream: false,
     temperature: 0.15,
     max_tokens: lines.length ? 4096 : 8192,
-  }, lines.length ? 90_000 : 120_000)
-  const parsed = parseJsonContent(data?.choices?.[0]?.message?.content)
-  if (!Array.isArray(parsed.sentences) || !parsed.sentences.length) throw new Error('模型没有返回句子。')
-  if (lines.length) {
-    parsed.sentences = lines.map((text, index) => {
-      const match = parsed.sentences.find((item) => String(item?.text || '').trim() === text) || parsed.sentences[index] || {}
-      return { ...match, text }
-    })
   }
-  return parsed
+  const timeoutMs = lines.length ? 90_000 : 120_000
+  let lastError
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const { data } = await callGateway('/api/ai/chat', payload, timeoutMs)
+      const parsed = parseJsonContent(data?.choices?.[0]?.message?.content)
+      if (!Array.isArray(parsed.sentences) || !parsed.sentences.length) throw new Error('模型没有返回句子。')
+      if (looksLikeErrorDocument(String(parsed.title || ''))) parsed.title = ''
+      if (lines.length) {
+        parsed.sentences = lines.map((text, index) => {
+          const match = parsed.sentences.find((item) => String(item?.text || '').trim() === text) || parsed.sentences[index] || {}
+          return { ...match, text }
+        })
+      }
+      return parsed
+    } catch (error) {
+      lastError = error
+      if (![502, 503, 504].includes(error.status) || attempt === 1) throw error
+      await new Promise((resolve) => setTimeout(resolve, 600))
+    }
+  }
+  throw lastError
 }
 
 app.post('/api/passage/analyze', rateLimit(60_000, 30), async (req, res) => {
   const sourceText = String(req.body?.text || '').trim().slice(0, 8000)
   const requested = Array.isArray(req.body?.sentences)
-    ? req.body.sentences.map((item) => String(item?.text || item || '').trim()).filter(Boolean).slice(0, 6)
+    ? req.body.sentences.map((item) => String(item?.text || item || '').trim()).filter((text) => text && !looksLikeErrorDocument(text) && text !== '（正在识别课文…）').slice(0, 6)
     : []
+  if (looksLikeErrorDocument(sourceText) || sourceText === '（正在识别课文…）') {
+    return res.status(400).json({ error: '课文原文无效，请重新上传或粘贴正文。' })
+  }
   if (!sourceText && !requested.length) return res.status(400).json({ error: '请提供课文内容。' })
   try {
     res.json(await analyzePassageWithModel(sourceText, requested))
   } catch (error) {
     console.error(error)
-    const message = error.message === 'LLM_NOT_CONFIGURED' ? '尚未配置 AI 网关，无法解析课文。' : error.message || '课文解析失败。'
-    res.status(error.status || 500).json({ error: error.name === 'AbortError' ? '课文解析超时。' : message })
+    res.status(publicStatus(error)).json({ error: clientGatewayMessage(error, '课文解析超时。', '课文解析失败，请稍后重试。') })
   }
 })
 

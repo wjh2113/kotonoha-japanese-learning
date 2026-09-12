@@ -26,6 +26,24 @@ export function validateState(input) {
 }
 
 const BOOKS_META_ID = '__kotonoha_books__'
+const looksLikeErrorDocument = (value) => /<\s*html\b/i.test(String(value || '')) || /502\s*Bad\s*Gateway/i.test(String(value || ''))
+
+function storePassageTitle(value) {
+  const next = text(value)
+  return looksLikeErrorDocument(next) ? '课文' : (next.slice(0, 80) || '课文')
+}
+
+function storePassageSource(value) {
+  const next = text(value)
+  if (looksLikeErrorDocument(next) || next === '（正在识别课文…）') return ''
+  return next.slice(0, 20_000)
+}
+
+function storeStatusText(value) {
+  const next = text(value)
+  if (looksLikeErrorDocument(next)) return '课文解析暂时失败，请稍后重试。'
+  return next.slice(0, 120)
+}
 
 export function validatePassages(input) {
   const passages = Array.isArray(input?.passages)
@@ -192,18 +210,23 @@ export function createDatabase(connectionString) {
       await client.query('BEGIN')
       await client.query('DELETE FROM passages')
       for (const [index, passage] of passages.entries()) {
-        const sentences = Array.isArray(passage.sentences) ? passage.sentences.slice(0, 80) : []
+        const sentences = Array.isArray(passage.sentences)
+          ? passage.sentences.filter((item) => {
+            const line = text(item?.text)
+            return line && !looksLikeErrorDocument(line) && line !== '（正在识别课文…）'
+          }).slice(0, 80)
+          : []
         const progress = passage.progress && typeof passage.progress === 'object' ? passage.progress : {}
         await client.query(
           'INSERT INTO passages (id, title, source_text, analysis, sort_order, created_at) VALUES ($1, $2, $3, $4, $5, COALESCE($6, NOW()))',
-          [text(passage.id), text(passage.title).slice(0, 80), text(passage.sourceText).slice(0, 20_000),
+          [text(passage.id), storePassageTitle(passage.title), storePassageSource(passage.sourceText),
             JSON.stringify({
               sentences,
               bookId: text(passage.bookId).slice(0, 40),
               bookName: text(passage.bookName).slice(0, 80),
               progress,
               status: passage.status === 'processing' || passage.status === 'error' ? passage.status : 'ready',
-              statusText: text(passage.statusText).slice(0, 120),
+              statusText: storeStatusText(passage.statusText),
             }), index, timestamp(passage.createdAt)],
         )
       }
