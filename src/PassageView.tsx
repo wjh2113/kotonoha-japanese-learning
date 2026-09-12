@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState, type ClipboardEvent } from 'react'
 import {
-  BookOpen, BookmarkPlus, ChevronLeft, ChevronRight, Copy, FileText, LoaderCircle, Mic, Pause, Play,
-  ScrollText, Sparkles, SquarePen, Trash2, UploadCloud, Volume2, X,
+  BookOpen, BookmarkPlus, Bot, CheckCircle2, ChevronLeft, ChevronRight, Circle, Copy, FileText, Headphones, LoaderCircle, Mic, Pause, Play,
+  RefreshCw, Repeat, ScrollText, Sparkles, SquarePen, Trash2, TriangleAlert, UploadCloud, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, readApiJson } from './api'
 import { clipboardImageFiles, normalizeOcrText } from './clipboard-images'
@@ -19,7 +19,7 @@ import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
 import type { ImportDraft, Passage, PassageBook, PassageSentence, Unit, Word } from './types'
 import { makeFallbackWord, normalizeJapanese, pronunciationScoreFor, splitJapaneseSentences, uid } from './utils'
 
-type Mode = 'source' | 'intensive' | 'shadow'
+type Mode = 'source' | 'translation' | 'intensive' | 'shadow'
 
 function passageTitle(value?: string, fallback = '课文') {
   return String(value || '').trim().slice(0, 80) || fallback
@@ -139,6 +139,9 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   const [vocabUnitId, setVocabUnitId] = useState('')
   const [vocabPicked, setVocabPicked] = useState<Record<string, boolean>>({})
   const [playingFull, setPlayingFull] = useState(false)
+  const [shadowRetry, setShadowRetry] = useState(0)
+  const [playSpeed, setPlaySpeed] = useState(1)
+  const [playLoop, setPlayLoop] = useState(false)
   const persistError = useRef(false)
   const persistEnabled = useRef(false)
   const ingesting = useRef(false)
@@ -547,11 +550,18 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     const start = Math.max(0, Math.min(startIndex, passage.sentences.length - 1))
     setPlayingFull(true)
     setSentenceIndex(start)
-    void speakJapaneseQueue(passage.sentences.slice(start).map((item) => item.text), voiceGender, {
-      sentence: true,
-      onIndex: (index) => setSentenceIndex(start + index),
-      onAllEnd: () => setPlayingFull(false),
-    })
+    const run = (from: number) => {
+      void speakJapaneseQueue(passage.sentences.slice(from).map((item) => item.text), voiceGender, {
+        sentence: true,
+        speed: playSpeed,
+        onIndex: (index) => setSentenceIndex(from + index),
+        onAllEnd: () => {
+          if (playLoop) run(0)
+          else setPlayingFull(false)
+        },
+      })
+    }
+    run(start)
   }
 
   const playAll = () => playFrom(0)
@@ -657,63 +667,115 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
 
   const renderPassageButton = (item: Passage) => {
     const progress = passageProgressSummary(item)
+    const done = progress.total > 0 && progress.practiced >= progress.total
     return (
-      <button key={item.id} className={`passage-item ${item.id === passage?.id ? 'active' : ''}`} onClick={() => setSelectedId(item.id)}>
-        <span>{item.title}</span>
-        <small>
-          {item.status === 'processing' ? (item.statusText || '处理中…')
-            : item.status === 'error' ? (item.statusText || '处理失败')
-              : `${item.sentences.length} 句${progress.practiced ? ` · 已跟读 ${progress.practiced}/${progress.total}` : ''}`}
-        </small>
+      <button key={item.id} type="button" className={`passage-item ${item.id === passage?.id ? 'active' : ''}`} onClick={() => { setSelectedId(item.id); setMode('source') }}>
+        <span className="passage-item-status">
+          {done ? <CheckCircle2 size={14} strokeWidth={1.6} /> : <Circle size={14} strokeWidth={1.6} />}
+        </span>
+        <span className="passage-item-copy">
+          <strong>{item.title}</strong>
+          <small>
+            {item.status === 'processing' ? (item.statusText || '处理中…')
+              : item.status === 'error' ? (item.statusText || '处理失败')
+                : `${item.sentences.length} 句${progress.practiced ? ` · 已跟读 ${progress.practiced}/${progress.total}` : ''}`}
+          </small>
+        </span>
+        <ChevronRight size={14} strokeWidth={1.6} className="passage-item-arrow" />
       </button>
     )
   }
 
+  const orderedPassages = [
+    ...books.flatMap((book) => visiblePassages.filter((item) => item.bookId === book.id)),
+    ...visiblePassages.filter((item) => !item.bookId),
+  ]
+  const passageOrderIndex = passage ? orderedPassages.findIndex((item) => item.id === passage.id) : -1
+  const nextPassage = passageOrderIndex >= 0 ? orderedPassages[passageOrderIndex + 1] : undefined
+  const progressPct = passage?.sentences.length
+    ? Math.round(((sentenceIndex + (playingFull ? 0.4 : 0)) / Math.max(passage.sentences.length, 1)) * 100)
+    : 0
+
+  const grammarPoints = (() => {
+    if (!passage) return [] as NonNullable<PassageSentence['grammar']>
+    const seen = new Set<string>()
+    return passage.sentences.flatMap((item) => item.grammar || []).filter((point) => {
+      const key = `${point.name}|${point.pattern}`
+      if (!point.name || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  })()
+
   return (
-    <div className="page hub-page passage-page">
-      <section className="hub-hero">
+    <div className="page hub-page passage-page passage-design">
+      <section className="hub-hero passage-hero-compact">
         <div>
-          <span className="eyebrow">TEXTBOOK PASSAGE</span>
           <h1>课文学习</h1>
-          <p>上传后默认看全文：点某一行可听、可跟读。也可切换逐句跟读、逐词解释与语法标注。</p>
+          <p>点选课程目录进入原文；可切换译文、精听与跟读。</p>
         </div>
         <div className="hero-actions">
-          <button className="primary-button" disabled={!ready} onClick={() => setUploadOpen(true)}><UploadCloud size={17} />添加课文</button>
+          <button className="primary-button" disabled={!ready} onClick={() => setUploadOpen(true)}><UploadCloud size={17} strokeWidth={1.6} />添加课文</button>
         </div>
       </section>
 
       {notice && <div className="passage-notice">{notice}<button onClick={() => setNotice('')} aria-label="关闭"><X size={14} /></button></div>}
 
       {passages.length ? (
-        <div className="passage-layout">
-          <aside className="passage-list">
-            <b>课文库 {passages.length}</b>
-            <input className="passage-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题或原文" />
-            <button type="button" className="passage-book-new" onClick={() => createBook(false)}><BookOpen size={14} />新建课本</button>
-            {books.map((book) => {
-              const items = visiblePassages.filter((item) => item.bookId === book.id)
-              if (query.trim() && !items.length && !book.name.includes(query.trim())) return null
-              return (
-                <div key={book.id} className="passage-book">
-                  <div className="passage-book-head">
-                    <strong>{book.name}</strong>
-                    <span>
-                      <button type="button" onClick={() => renameBook(book)}>改</button>
-                      <button type="button" onClick={() => deleteBook(book)}>删</button>
-                    </span>
-                  </div>
-                  {items.map(renderPassageButton)}
-                  {!items.length && <small className="passage-list-empty">还没有课文</small>}
+        <div className="passage-workspace">
+          <aside className="passage-nav-col">
+            <section className="passage-catalog">
+              <header><BookOpen size={15} strokeWidth={1.6} /><b>课程目录</b></header>
+              <input className="passage-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题或原文" />
+              <button type="button" className="passage-book-new" onClick={() => createBook(false)}><BookOpen size={14} strokeWidth={1.6} />新建课本</button>
+              <div className="passage-catalog-scroll">
+                {books.map((book) => {
+                  const items = visiblePassages.filter((item) => item.bookId === book.id)
+                  if (query.trim() && !items.length && !book.name.includes(query.trim())) return null
+                  return (
+                    <div key={book.id} className="passage-book">
+                      <div className="passage-book-head">
+                        <strong>{book.name}</strong>
+                        <span>
+                          <button type="button" onClick={() => renameBook(book)}>改</button>
+                          <button type="button" onClick={() => deleteBook(book)}>删</button>
+                        </span>
+                      </div>
+                      {items.map(renderPassageButton)}
+                      {!items.length && <small className="passage-list-empty">还没有课文</small>}
+                    </div>
+                  )
+                })}
+                <div className="passage-book">
+                  <div className="passage-book-head"><strong>未分组</strong></div>
+                  {visiblePassages.filter((item) => !item.bookId).map(renderPassageButton)}
                 </div>
-              )
-            })}
-            <div className="passage-book">
-              <div className="passage-book-head"><strong>未分组</strong></div>
-              {visiblePassages.filter((item) => !item.bookId).map(renderPassageButton)}
-            </div>
-            {query.trim() && !visiblePassages.length && <small className="passage-list-empty">没有匹配的课文</small>}
+                {query.trim() && !visiblePassages.length && <small className="passage-list-empty">没有匹配的课文</small>}
+              </div>
+            </section>
+            {passage && (
+              <section className="passage-outline">
+                <header><FileText size={15} strokeWidth={1.6} /><b>课文解析</b></header>
+                <div className="passage-outline-scroll">
+                  {passage.sentences.map((item, index) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`passage-outline-item ${index === sentenceIndex ? 'active' : ''}`}
+                      onClick={() => goSentence(index, true)}
+                    >
+                      <em>{index + 1}</em>
+                      <span className="jp">{item.text}</span>
+                      <ChevronRight size={14} strokeWidth={1.6} />
+                    </button>
+                  ))}
+                  {!passage.sentences.length && <small className="passage-list-empty">暂无句子</small>}
+                </div>
+              </section>
+            )}
           </aside>
-          {passage && (
+
+          {passage ? (
             <section className="passage-stage">
               {passage.status === 'processing' && Date.now() - (passage.createdAt || 0) > 120_000 && (
                 <div className="passage-status error">
@@ -721,51 +783,59 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                   <button type="button" onClick={() => setUploadOpen(true)}>重新添加</button>
                 </div>
               )}
-              <div className="passage-toolbar">
-                <div>
-                  <label className="passage-title-label">
-                    <SquarePen size={14} />
-                    <input
-                      className="passage-title-input"
-                      value={passage.title}
-                      maxLength={80}
-                      aria-label="课文标题"
-                      onChange={(event) => patchPassage(passage.id, { title: event.target.value.slice(0, 80) })}
-                      onBlur={(event) => patchPassage(passage.id, { title: passageTitle(event.target.value) })}
-                    />
-                  </label>
-                  <small>{passage.sentences.length} 句 · 已跟读 {summary.practiced}/{summary.total}{summary.practiced ? ` · 平均最高分 ${summary.average}` : ''} · 可改标题</small>
-                  <label className="passage-book-assign">课本
-                    <select value={passage.bookId || ''} onChange={(event) => movePassage(event.target.value)}>
-                      <option value="">未分组</option>
-                      {books.map((book) => <option key={book.id} value={book.id}>{book.name}</option>)}
-                    </select>
-                    <button type="button" onClick={() => createBook(true)}>新建</button>
-                  </label>
-                </div>
+
+              <div className="passage-stage-head">
+                <label className="passage-title-label">
+                  <SquarePen size={14} strokeWidth={1.6} />
+                  <input
+                    className="passage-title-input"
+                    value={passage.title}
+                    maxLength={80}
+                    aria-label="课文标题"
+                    onChange={(event) => patchPassage(passage.id, { title: event.target.value.slice(0, 80) })}
+                    onBlur={(event) => patchPassage(passage.id, { title: passageTitle(event.target.value) })}
+                  />
+                </label>
                 <div className="passage-toolbar-actions">
-                  <button type="button" onClick={playAll}>{playingFull ? '停止朗读' : '朗读全文'}</button>
-                  <button type="button" onClick={openVocab}><BookmarkPlus size={15} />抽生词</button>
-                  <button type="button" onClick={() => { setMode('source'); setSourceDraft(passage.sourceText); setSourceEditing(false) }}>原文</button>
-                  <button className="remove-word" onClick={() => {
+                  <button type="button" onClick={openVocab}><BookmarkPlus size={15} strokeWidth={1.6} />抽生词</button>
+                  <button type="button" className="remove-word" onClick={() => {
                     if (!window.confirm(`删除课文「${passage.title}」？此操作不可恢复。`)) return
                     ingestingIds.current.delete(passage.id)
                     const remaining = passagesRef.current.filter((item) => item.id !== passage.id)
                     commitPassages(remaining)
                     setSelectedId(remaining[0]?.id || '')
-                    setSelectedId(remaining[0]?.id || '')
-                  }}><Trash2 size={15} />删除</button>
+                  }}><Trash2 size={15} strokeWidth={1.6} />删除</button>
                 </div>
               </div>
-                <div className="passage-modes">
-                {([['source', '原文'], ['intensive', '精听'], ['shadow', '跟读']] as const).map(([id, label]) => (
-                  <button key={id} className={mode === id ? 'active' : ''} onClick={() => {
+
+              <div className="passage-modes">
+                {([
+                  ['source', '原文', BookOpen],
+                  ['translation', '译文', FileText],
+                  ['intensive', '精听', Headphones],
+                  ['shadow', '跟读', Mic],
+                ] as const).map(([id, label, Icon]) => (
+                  <button key={id} type="button" className={mode === id ? 'active' : ''} onClick={() => {
                     setMode(id)
-                    if (id === 'source') { setSourceDraft(passage.sourceText); setSourceEditing(false) }
-                    if (id === 'source') { setPlayingFull(false); stopSpeaking() }
-                  }}>{label}</button>
+                    if (id === 'source' || id === 'translation') {
+                      setSourceDraft(passage.sourceText)
+                      setSourceEditing(false)
+                      if (id === 'source') { setPlayingFull(false); stopSpeaking() }
+                    }
+                    if (id === 'translation') setShowTranslations(true)
+                  }}><Icon size={14} strokeWidth={1.6} />{label}</button>
                 ))}
+                <button
+                  type="button"
+                  className="passage-reparse"
+                  disabled={passage.status === 'processing' || !(sourceEditing ? sourceDraft : passage.sourceText).trim()}
+                  onClick={reanalyze}
+                >
+                  <RefreshCw size={14} strokeWidth={1.6} />重新解析
+                </button>
               </div>
+
+              <div className="passage-stage-body">
               {mode === 'intensive' ? (
                 <PassageIntensive
                   passage={passage}
@@ -780,46 +850,105 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                   onBack={() => { setPlayingFull(false); stopSpeaking(); setMode('source') }}
                 />
               ) : mode === 'shadow' && sentence ? (
-                <div className="shadow-layout">
-                  <ol className="passage-sentences shadow-list">
-                    {passage.sentences.map((item, index) => (
-                      <li key={item.id}>
-                        <button type="button" className={index === sentenceIndex ? 'active' : ''} onClick={() => { setSentenceIndex(index); void speakJapanese(item.text, voiceGender, { sentence: true }) }}>
-                          <em>{index + 1}</em>
-                          <span className="jp">{item.text}</span>
-                          <Play size={14} />
-                        </button>
-                      </li>
-                    ))}
-                  </ol>
-                  <article className="shadow-panel">
+                <div className="shadow-layout shadow-design">
+                  <section className="shadow-list-card">
                     <header>
-                      <b>AI 发音评估</b>
+                      <b><FileText size={15} strokeWidth={1.6} />逐句原文</b>
                       <small>{sentenceIndex + 1} / {passage.sentences.length}</small>
                     </header>
-                    <h3 className="jp">{sentence.text}</h3>
+                    <ol className="passage-sentences shadow-list">
+                      {passage.sentences.map((item, index) => (
+                        <li key={item.id}>
+                          <button type="button" className={index === sentenceIndex ? 'active' : ''} onClick={() => { setSentenceIndex(index); void speakJapanese(item.text, voiceGender, { sentence: true }) }}>
+                            <em>{index + 1}</em>
+                            <span className="intensive-line-play" aria-hidden><Play size={14} strokeWidth={1.6} /></span>
+                            <span className="jp">{item.text}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ol>
+                    <footer>
+                      <button type="button" className="intensive-play-all" onClick={playAll}>
+                        {playingFull ? <Pause size={15} strokeWidth={1.6} /> : <Play size={15} strokeWidth={1.6} />}
+                        {playingFull ? '停止播放' : '播放全部'}
+                      </button>
+                    </footer>
+                  </section>
+                  <article className="shadow-panel">
+                    <header>
+                      <b><Bot size={15} strokeWidth={1.6} />AI 发音评估</b>
+                      <small>{sentenceIndex + 1} / {passage.sentences.length}</small>
+                    </header>
+                    <h3 className="jp shadow-target">{sentence.text}</h3>
+                    {sentence.reading && <p className="jp shadow-reading">{sentence.reading}</p>}
                     {hasChineseTranslation(sentence.translation) && <p className="translation">{sentence.translation}</p>}
                     <SentencePronunciation
                       sentence={sentence}
                       onScore={(score) => patchPassage(passage.id, { progress: recordSentenceScore(passage.progress, sentence.id, score) })}
+                      resetKey={`${sentence.id}-${shadowRetry}`}
                     />
-                    <div className="detail-nav">
-                      <button type="button" disabled={sentenceIndex <= 0} onClick={() => setSentenceIndex((i) => i - 1)}><ChevronLeft size={16} />上一句</button>
-                      <button type="button" disabled={sentenceIndex >= passage.sentences.length - 1} onClick={() => setSentenceIndex((i) => i + 1)}>下一句<ChevronRight size={16} /></button>
+                    <div className="shadow-footer">
+                      <button type="button" className="secondary-button" onClick={() => setShadowRetry((n) => n + 1)}>
+                        <RefreshCw size={15} strokeWidth={1.6} />重新跟读
+                      </button>
+                      <button
+                        type="button"
+                        className="primary-button"
+                        disabled={sentenceIndex >= passage.sentences.length - 1}
+                        onClick={() => setSentenceIndex((i) => i + 1)}
+                      >
+                        下一句<ChevronRight size={16} strokeWidth={1.6} />
+                      </button>
                     </div>
                   </article>
                 </div>
-              ) : mode === 'source' ? (
-                <article className="passage-card passage-transcript-card">
+              ) : mode === 'source' || mode === 'translation' ? (
+                <article className="passage-reader">
+                  <div className="passage-audio-bar">
+                    <button
+                      type="button"
+                      className="passage-audio-play"
+                      onClick={() => playFrom(sentenceIndex)}
+                      aria-label={playingFull ? '暂停' : '播放'}
+                    >
+                      {playingFull ? <Pause size={18} strokeWidth={1.6} /> : <Play size={18} strokeWidth={1.6} />}
+                    </button>
+                    <div className="passage-audio-progress" aria-hidden>
+                      <i style={{ width: `${Math.min(100, Math.max(0, progressPct))}%` }} />
+                    </div>
+                    <em>{sentenceIndex + 1} / {Math.max(passage.sentences.length, 1)}</em>
+                    <select
+                      className="passage-speed"
+                      value={playSpeed}
+                      aria-label="播放速度"
+                      onChange={(event) => setPlaySpeed(Number(event.target.value))}
+                    >
+                      <option value={0.75}>0.75x</option>
+                      <option value={1}>1x</option>
+                      <option value={1.25}>1.25x</option>
+                      <option value={1.5}>1.5x</option>
+                    </select>
+                    <button
+                      type="button"
+                      className={`passage-loop ${playLoop ? 'active' : ''}`}
+                      onClick={() => setPlayLoop((value) => !value)}
+                      aria-label="循环播放"
+                    >
+                      <Repeat size={15} strokeWidth={1.6} />
+                    </button>
+                  </div>
+
                   <div className="passage-source-actions">
-                    <button type="button" onClick={() => { setSourceDraft(passage.sourceText); setSourceEditing(true) }}><SquarePen size={15} />编辑原文</button>
-                    <button type="button" disabled={!passage.sourceText} onClick={() => void copySource()}><Copy size={15} />复制原文</button>
-                    <button type="button" disabled={passage.status === 'processing' || !(sourceEditing ? sourceDraft : passage.sourceText).trim()} onClick={reanalyze}>重新解析</button>
-                    <label className="passage-toggle">
-                      <span>译文</span>
-                      <input type="checkbox" checked={showTranslations} onChange={(event) => setShowTranslations(event.target.checked)} />
+                    <button type="button" onClick={() => { setSourceDraft(passage.sourceText); setSourceEditing(true) }}><SquarePen size={15} strokeWidth={1.6} />编辑原文</button>
+                    <button type="button" disabled={!passage.sourceText} onClick={() => void copySource()}><Copy size={15} strokeWidth={1.6} />复制原文</button>
+                    <label className="passage-book-assign">课本
+                      <select value={passage.bookId || ''} onChange={(event) => movePassage(event.target.value)}>
+                        <option value="">未分组</option>
+                        {books.map((book) => <option key={book.id} value={book.id}>{book.name}</option>)}
+                      </select>
                     </label>
                   </div>
+
                   {sourceEditing ? (
                     <>
                       <textarea className="passage-source-editor jp" value={sourceDraft} onChange={(event) => setSourceDraft(event.target.value)} rows={12} />
@@ -830,115 +959,86 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                     </>
                   ) : passage.sentences.length ? (
                     <>
-                      <ol className="passage-transcript">
+                      <ol className="passage-bilingual">
                         {passage.sentences.map((item, index) => {
                           const active = index === sentenceIndex
-                          const practice = passage.progress?.[item.id]
                           return (
                             <li
                               key={item.id}
                               className={`${active ? 'active' : ''} ${playingFull && active ? 'speaking' : ''}`}
                               ref={active ? (node) => { node?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) } : undefined}
                             >
-                              <button
-                                type="button"
-                                className="passage-transcript-line"
-                                onClick={() => goSentence(index, true)}
-                              >
+                              <button type="button" className="passage-bilingual-row" onClick={() => goSentence(index, true)}>
                                 <em>{index + 1}</em>
-                                <span className="passage-transcript-body">
+                                <span className="passage-bilingual-jp">
                                   <span className="jp">{item.text}</span>
-                                  {showTranslations && hasChineseTranslation(item.translation) && (
-                                    <small className="passage-transcript-tr">{item.translation}</small>
-                                  )}
+                                  {item.reading && <small className="jp passage-furi">{item.reading}</small>}
                                 </span>
-                                {practice?.attempts ? <small className="sentence-progress done">{practice.bestScore}分</small> : null}
+                                {(mode === 'translation' || mode === 'source') && hasChineseTranslation(item.translation) && (
+                                  <span className={`passage-bilingual-tr ${mode === 'source' ? '' : ''}`}>{item.translation}</span>
+                                )}
                               </button>
-                              {active && (
-                                <div className="passage-transcript-practice">
-                                  <div className="passage-transcript-meta">
-                                    <span className="jp reading">{item.reading || '—'}</span>
-                                    <span className="passage-transcript-actions">
-                                      <button
-                                        type="button"
-                                        className="volume-button"
-                                        onClick={() => void speakJapanese(item.text, voiceGender, { sentence: true })}
-                                        aria-label="再听一遍"
-                                      >
-                                        <Volume2 size={18} />
-                                      </button>
-                                      <SentencePronunciation
-                                        compact
-                                        sentence={item}
-                                        onScore={(score) => patchPassage(passage.id, { progress: recordSentenceScore(passage.progress, item.id, score) })}
-                                      />
-                                    </span>
-                                  </div>
-                                </div>
-                              )}
                             </li>
                           )
                         })}
                       </ol>
-                      <div className="passage-transcript-bar" role="toolbar" aria-label="课文听读控制">
-                        <button
-                          type="button"
-                          className="passage-transcript-play"
-                          onClick={() => {
-                            if (playingFull) playFrom(sentenceIndex)
-                            else playCurrentLine()
-                          }}
-                          aria-label={playingFull ? '停止' : '听当前句'}
-                        >
-                          {playingFull ? <Pause size={20} /> : <Play size={20} />}
-                        </button>
-                        <button type="button" disabled={sentenceIndex <= 0} onClick={() => goSentence(sentenceIndex - 1, true)}>
-                          <ChevronLeft size={16} />上一句
-                        </button>
-                        <span>{sentenceIndex + 1} / {passage.sentences.length}</span>
-                        <button type="button" disabled={sentenceIndex >= passage.sentences.length - 1} onClick={() => goSentence(sentenceIndex + 1, true)}>
-                          下一句<ChevronRight size={16} />
-                        </button>
-                        <button type="button" className="passage-transcript-cont" onClick={() => playFrom(sentenceIndex)}>
-                          {playingFull ? '停止连读' : '从此连读'}
-                        </button>
-                        <button type="button" className="primary-button passage-go-intensive" onClick={() => { setPlayingFull(false); stopSpeaking(); setMode('intensive') }}>
-                          前往精听页面
-                        </button>
-                      </div>
-                      {(() => {
-                        const seen = new Set<string>()
-                        const points = passage.sentences.flatMap((item) => item.grammar || []).filter((point) => {
-                          const key = `${point.name}|${point.pattern}`
-                          if (!point.name || seen.has(key)) return false
-                          seen.add(key)
-                          return true
-                        })
-                        if (!points.length) return passage.status === 'processing'
-                          ? <p className="passage-grammar-summary pending">语法点整理中，解析完成后会显示在这里。</p>
-                          : null
-                        return (
-                          <section className="passage-grammar-summary" aria-label="本课语法点">
-                            <h4><ScrollText size={15} />本课语法点 <small>{points.length} 个</small></h4>
-                            <div className="passage-grammar-grid">
-                              {points.map((point, index) => (
-                                <article key={`${point.name}-${index}`}>
-                                  <b>{point.name}</b>
-                                  {point.pattern && <code className="jp">{point.pattern}</code>}
-                                  <p>{point.explanation}</p>
-                                </article>
-                              ))}
-                            </div>
-                          </section>
-                        )
-                      })()}
+
+                      <section className="passage-grammar-block" aria-label="本课语法说明">
+                        <h4><ScrollText size={15} strokeWidth={1.6} />本课语法说明</h4>
+                        {grammarPoints.length ? (
+                          <div className="passage-grammar-cards">
+                            {grammarPoints.map((point, index) => (
+                              <article key={`${point.name}-${index}`}>
+                                <b>{index + 1}. {point.pattern || point.name}</b>
+                                {point.name && point.pattern && <code>{point.name}</code>}
+                                {point.explanation && (
+                                  <div className="passage-grammar-tip">
+                                    <span>用法提示</span>
+                                    <em>{point.explanation}</em>
+                                  </div>
+                                )}
+                              </article>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="passage-grammar-empty">
+                            {passage.status === 'processing' ? '语法点整理中，解析完成后会显示在这里。' : '本课暂无语法标注。'}
+                          </p>
+                        )}
+                      </section>
                     </>
                   ) : (
                     <pre className="jp passage-source">{passage.sourceText || '这篇课文还没有可点选的句子。可以点「编辑原文」补上后重新解析。'}</pre>
                   )}
                 </article>
               ) : null}
+              </div>
+
+              <footer className="passage-lesson-footer">
+                <b>{passage.title}</b>
+                <div className="passage-lesson-progress">
+                  <span>{Math.min(sentenceIndex + 1, passage.sentences.length || 1)} / {Math.max(passage.sentences.length, 1)}</span>
+                  <i><em style={{ width: `${Math.min(100, Math.max(0, progressPct))}%` }} /></i>
+                </div>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={!nextPassage}
+                  onClick={() => {
+                    if (!nextPassage) return
+                    setSelectedId(nextPassage.id)
+                    setMode('source')
+                    setSentenceIndex(0)
+                    setPlayingFull(false)
+                    stopSpeaking()
+                  }}
+                >
+                  下一课<ChevronRight size={16} strokeWidth={1.6} />
+                </button>
+              </footer>
             </section>
+          ) : (
+            <div className="wide-empty compact"><ScrollText /><h2>选择左侧课程</h2><p>从课程目录点开一篇课文开始学习。</p></div>
           )}
         </div>
       ) : (
@@ -1030,7 +1130,12 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   )
 }
 
-function SentencePronunciation({ sentence, onScore, compact }: { sentence: PassageSentence; onScore?: (score: number) => void; compact?: boolean }) {
+function SentencePronunciation({ sentence, onScore, compact, resetKey = 0 }: {
+  sentence: PassageSentence
+  onScore?: (score: number) => void
+  compact?: boolean
+  resetKey?: number | string
+}) {
   const [transcript, setTranscript] = useState('')
   const [score, setScore] = useState<number | null>(null)
   const practice = usePronunciationPractice((text) => {
@@ -1043,7 +1148,7 @@ function SentencePronunciation({ sentence, onScore, compact }: { sentence: Passa
   useEffect(() => {
     setTranscript('')
     setScore(null)
-  }, [sentence.id])
+  }, [sentence.id, resetKey])
 
   const recordButton = (
     <button
@@ -1056,8 +1161,8 @@ function SentencePronunciation({ sentence, onScore, compact }: { sentence: Passa
       }}
       aria-label={practice.evaluating ? '正在分析' : practice.recording ? '结束跟读' : '开始跟读'}
     >
-      {practice.evaluating ? <span className="spinner" /> : practice.recording ? <Pause size={compact ? 15 : 18} /> : <Mic size={compact ? 15 : 18} />}
-      {!compact && <span>{practice.evaluating ? '正在分析…' : practice.recording ? '结束跟读' : '开始跟读'}</span>}
+      {practice.evaluating ? <span className="spinner" /> : practice.recording ? <Pause size={compact ? 15 : 22} strokeWidth={1.6} /> : <Mic size={compact ? 15 : 22} strokeWidth={1.6} />}
+      {!compact && practice.evaluating && <span>正在分析…</span>}
     </button>
   )
 
@@ -1078,23 +1183,28 @@ function SentencePronunciation({ sentence, onScore, compact }: { sentence: Passa
 
   return (
     <div className="inline-practice shadow-practice">
-      <div className="shadow-wave" aria-hidden>
-        {Array.from({ length: 24 }, (_, i) => <i key={i} style={{ height: `${8 + ((i * 7) % 18)}px` }} />)}
+      <div className="shadow-mic-wrap">
+        <div className="shadow-wave" aria-hidden>
+          {Array.from({ length: 10 }, (_, i) => <i key={`l${i}`} style={{ height: `${8 + ((i * 7) % 18)}px` }} />)}
+        </div>
+        {recordButton}
+        <div className="shadow-wave" aria-hidden>
+          {Array.from({ length: 10 }, (_, i) => <i key={`r${i}`} style={{ height: `${8 + ((i * 5) % 18)}px` }} />)}
+        </div>
       </div>
-      {recordButton}
       <p className="shadow-hint">{practice.recording ? '正在聆听，说完再点结束' : '点击麦克风开始跟读'}</p>
       {practice.error && <div className="speech-error">{practice.error}</div>}
       {score !== null && (
         <>
           <div className="shadow-metrics">
-            <div><b>{score}</b><small>发音准确</small></div>
+            <div><b>{score}</b><small>发音准确度</small></div>
             <div><b>{Math.min(100, score + 5)}</b><small>流利度</small></div>
             <div><b>{Math.max(0, score - 5)}</b><small>音调</small></div>
           </div>
           <div className="shadow-overall">
-            <span>综合评分</span>
+            <span>整体评分</span>
             <div className="shadow-overall-bar"><i style={{ width: `${score}%` }} /></div>
-            <b>{score}/100</b>
+            <b>{score} / 100</b>
           </div>
           <div className="shadow-tokens">
             {(sentence.tokens.length ? sentence.tokens : [{ surface: sentence.text, reading: sentence.reading, meaning: '' }]).map((token, index) => {
@@ -1104,14 +1214,14 @@ function SentencePronunciation({ sentence, onScore, compact }: { sentence: Passa
               return (
                 <article key={`${token.surface}-${index}`} className={ok ? 'ok' : 'warn'}>
                   <b className="jp">{token.surface}</b>
-                  <span>{ok ? '发音正确' : '略有偏差，建议再练一遍'}</span>
+                  <span>
+                    {ok
+                      ? <><CheckCircle2 size={14} strokeWidth={1.6} />发音正确</>
+                      : <><TriangleAlert size={14} strokeWidth={1.6} />发音稍有偏差，建议再练</>}
+                  </span>
                 </article>
               )
             })}
-          </div>
-          <div className={`inline-score ${score >= 80 ? 'great' : score >= 55 ? 'okay' : 'retry'}`}>
-            <b>{score}<small>分</small></b>
-            <span>{score >= 80 ? '跟读很接近课文' : score >= 55 ? '已经听得出大意了' : '请再慢一点、按课文朗读'}<small>识别结果：{transcript}</small></span>
           </div>
         </>
       )}

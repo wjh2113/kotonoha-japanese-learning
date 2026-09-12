@@ -66,6 +66,7 @@ export function stopSpeaking() {
 
 export async function speakJapaneseQueue(texts: string[], voiceGender: VoiceGender, options: {
   sentence?: boolean
+  speed?: number
   onIndex?: (index: number) => void
   onAllEnd?: () => void
 } = {}) {
@@ -74,10 +75,12 @@ export async function speakJapaneseQueue(texts: string[], voiceGender: VoiceGend
   if (!lines.length) return
   speechSynthesis.cancel()
   const voice = selectJapaneseVoice(await loadSpeechVoices(), voiceGender).voice
+  const base = options.sentence ? 0.82 : 0.72
+  const speed = Number.isFinite(options.speed) ? Number(options.speed) : 1
   lines.forEach((text, index) => {
     const utterance = new SpeechSynthesisUtterance(text)
     utterance.lang = 'ja-JP'
-    utterance.rate = options.sentence ? 0.82 : 0.72
+    utterance.rate = Math.max(0.3, Math.min(2, base * speed))
     utterance.pitch = voiceGender === 'male' ? 0.72 : 1.06
     utterance.voice = voice
     utterance.onstart = () => options.onIndex?.(index)

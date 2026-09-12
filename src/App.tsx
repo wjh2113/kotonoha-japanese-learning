@@ -732,25 +732,41 @@ function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImpo
   const selectedIndex = selectedWord ? filtered.findIndex((word) => word.id === selectedWord.id) : -1
 
   return (
-    <div className="page study-page">
-      <section className="page-intro study-intro">
+    <div className="page study-page study-design">
+      <div className="study-topbar">
+        <label className="study-unit-chip">
+          <BookOpen size={16} strokeWidth={1.6} />
+          <select aria-label="学习单元" value={unit.id} onChange={(event) => onUnit(event.target.value)}>
+            {units.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+        </label>
+        <label className="study-search">
+          <Search size={17} strokeWidth={1.6} />
+          <input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="搜索单词、假名或中文释义…" />
+        </label>
+        <div className="view-toggle">
+          <button type="button" className={layout === 'grid' ? 'active' : ''} onClick={() => setLayout('grid')} aria-label="网格视图"><LayoutGrid size={17} strokeWidth={1.6} /></button>
+          <button type="button" className={layout === 'list' ? 'active' : ''} onClick={() => setLayout('list')} aria-label="列表视图"><List size={18} strokeWidth={1.6} /></button>
+        </div>
+      </div>
+
+      <section className="study-heading">
         <div>
-          <PageUnitSelect units={units} unit={unit} onUnit={onUnit} label="学习单元" />
-          <h1>单词学习</h1>
+          <h1><BookOpen size={22} strokeWidth={1.6} />单词学习</h1>
           <p>选择单词卡片，开始学习和记忆吧！</p>
         </div>
-        <div className="hero-actions">
-          <button className="secondary-button" onClick={onDictation}><Keyboard size={18} />听写</button>
-          <button className="secondary-button" onClick={onTest}><GraduationCap size={18} />单元测试</button>
-          <button className="primary-button" onClick={onImport}><UploadCloud size={18} />导入单词</button>
+        <div className="study-mastery-meta">
+          <span>共 {unit.words.length} 个单词</span>
+          <div className="study-mastery-bar" aria-label={`${mastered}/${unit.words.length} 已掌握`}>
+            <i style={{ width: `${percent}%` }} />
+          </div>
+          <b>{mastered}/{unit.words.length} 已掌握</b>
         </div>
-      </section>
-
-      <label className="study-search"><Search size={17} /><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="搜索单词、假名或中文释义…" /></label>
-
-      <section className="overview-card">
-        <div className="overview-copy"><span>共 {unit.words.length} 个单词 · {mastered}/{unit.words.length} 已掌握</span><b>{percent}%</b></div>
-        <div className="overview-bar"><i style={{ width: `${percent}%` }} /></div>
+        <div className="hero-actions study-heading-actions">
+          <button className="secondary-button" onClick={onDictation}><Keyboard size={16} strokeWidth={1.6} />听写</button>
+          <button className="secondary-button" onClick={onTest}><GraduationCap size={16} strokeWidth={1.6} />单元测试</button>
+          <button className="primary-button" onClick={onImport}><UploadCloud size={16} strokeWidth={1.6} />导入单词</button>
+        </div>
       </section>
 
       <div className="content-columns">
@@ -761,7 +777,6 @@ function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImpo
                 <button key={id} className={filter === id ? 'active' : ''} onClick={() => setFilter(id)}>{label}<span>{id === 'all' ? unit.words.length : id === 'mastered' ? mastered : unit.words.length - mastered}</span></button>
               ))}
             </div>
-            <div className="view-toggle"><button className={layout === 'grid' ? 'active' : ''} onClick={() => setLayout('grid')}><LayoutGrid size={17} /></button><button className={layout === 'list' ? 'active' : ''} onClick={() => setLayout('list')}><List size={18} /></button></div>
           </div>
           {filtered.length ? (
             <div className={`word-grid ${layout === 'list' ? 'word-list' : ''}`}>
@@ -848,16 +863,16 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
         <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
           {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
         </span>
-        <button onClick={onToggleStar} aria-label={word.starred ? '移出生词本' : '加入生词本'} className={word.starred ? 'starred' : ''}><BookMarked size={17} /></button>
-        <button onClick={() => setEditing(!editing)} aria-label="编辑词卡"><SquarePen size={17} /></button>
+        <button onClick={onToggleStar} aria-label={word.starred ? '移出生词本' : '加入生词本'} className={word.starred ? 'starred' : ''}><BookMarked size={17} strokeWidth={1.6} /></button>
+        <button onClick={() => setEditing(!editing)} aria-label="编辑词卡"><SquarePen size={17} strokeWidth={1.6} /></button>
       </div>
       <div className="detail-main-word">
+        <h2 className="jp">{word.term}</h2>
         <span className="jp">{word.reading}</span>
         {(word.romaji || toRomaji(word.reading)) && <small className="romaji">{word.romaji || toRomaji(word.reading)}</small>}
-        <div><h2 className="jp">{word.term}</h2></div>
         <div className="detail-meta-row">
           <em>{word.partOfSpeech}</em>
-          <VolumeButton word={word} />
+          <span className="detail-speak"><VolumeButton word={word} /><b>发音</b></span>
         </div>
       </div>
       {editing ? (
@@ -876,9 +891,9 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
         </div>
       ) : (
         <>
-          <div className="detail-block"><label>中文释义</label><p className="definition">{word.meaning}</p></div>
+          <div className="detail-block"><label><BookOpen size={14} strokeWidth={1.6} />中文释义</label><p className="definition meaning-wash">{word.meaning}</p></div>
           <div className="detail-block example-block">
-            <label><Sparkles size={14} /> 例句</label>
+            <label><FileText size={14} strokeWidth={1.6} />例句</label>
             <p className="jp example">{word.example}</p>
             {word.exampleReading && <p className="jp furigana">{word.exampleReading}</p>}
             {word.translation && <p className="translation">{word.translation}</p>}
@@ -887,21 +902,22 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
           {(splitWordList(word.similarWords).length > 0 || splitWordList(word.synonyms).length > 0) && (
             <div className="detail-related">
               {splitWordList(word.similarWords).length > 0 && (
-                <div className="detail-block"><label>形近词</label><p className="word-chips">{splitWordList(word.similarWords).map((item) => <span key={item} className="jp">{item}</span>)}</p></div>
+                <div className="detail-block"><label><Sparkles size={14} strokeWidth={1.6} />相似词</label><p className="word-chips">{splitWordList(word.similarWords).map((item) => <span key={item} className="jp">{item}</span>)}</p></div>
               )}
               {splitWordList(word.synonyms).length > 0 && (
-                <div className="detail-block"><label>同义词</label><p className="word-chips">{splitWordList(word.synonyms).map((item) => <span key={item} className="jp">{item}</span>)}</p></div>
+                <div className="detail-block"><label><Sparkles size={14} strokeWidth={1.6} />同义词</label><p className="word-chips">{splitWordList(word.synonyms).map((item) => <span key={item} className="jp">{item}</span>)}</p></div>
               )}
             </div>
           )}
           {word.pronunciationNote && (
-            <div className="detail-block"><label>发音注意事项</label><p className="definition">{word.pronunciationNote}</p></div>
-          )}
-          {word.memoryTip && (
-            <div className="detail-block"><label>记忆技巧</label><p className="definition">{word.memoryTip}</p></div>
+            <div className="detail-block"><label><Mic size={14} strokeWidth={1.6} />发音注意事项</label><p className="definition">{word.pronunciationNote}</p></div>
           )}
           <div className="detail-block">
-            <label>我的笔记</label>
+            <label><SquarePen size={14} strokeWidth={1.6} />记忆技巧</label>
+            <p className="definition">{word.memoryTip || '暂无记忆技巧，可点右上角编辑补充。'}</p>
+          </div>
+          <div className="detail-block">
+            <label><NotebookPen size={14} strokeWidth={1.6} />我的笔记</label>
             <textarea
               className="notes-input"
               value={notesDraft}
@@ -1045,11 +1061,10 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
   if (!unit.words.length) return <div className="page"><EmptyState onImport={onBack} actionLabel="返回学习" /></div>
   if (!kind) {
     return (
-      <div className="page test-page">
-        <button className="back-link" onClick={onBack}><ChevronLeft size={17} />退出测试</button>
+      <div className="page test-page quiz-design">
+        <button className="back-link" onClick={onBack}><ChevronLeft size={17} strokeWidth={1.6} />退出测试</button>
         <div className="test-top">
           <div>
-            <span className="eyebrow">UNIT TEST</span>
             <PageUnitSelect units={units} unit={unit} onUnit={onUnit} label="测试单元" />
             <h1>选择测试方式</h1>
             <p className="test-mode-copy">听错和词义错分开计数。弱项会排在本轮前面，其余单词仍会测到。</p>
@@ -1058,12 +1073,12 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
         </div>
         <div className="test-mode-grid">
           <button className="test-mode-card" disabled={usableListening.length < 1} onClick={() => start('listening')}>
-            <Headphones size={28} />
+            <Headphones size={28} strokeWidth={1.6} />
             <b>听力测试</b>
             <span>先听日语发音，再从四个单词里选出你听到的那一个。听错过的词会优先出现。</span>
           </button>
           <button className="test-mode-card" disabled={usableMeaning.length < 1} onClick={() => start('meaning')}>
-            <BookOpen size={28} />
+            <BookOpen size={28} strokeWidth={1.6} />
             <b>单词词义测试</b>
             <span>看到日语单词和读音后，选出正确的中文意思。词义错过的词会优先出现。</span>
           </button>
@@ -1074,10 +1089,9 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
     )
   }
   if (finished) return (
-    <div className="page result-page">
+    <div className="page result-page quiz-design">
       <div className="result-card">
-        <span className="result-icon"><Trophy /></span>
-        <span className="eyebrow">TEST COMPLETE</span>
+        <span className="result-icon"><Trophy size={28} strokeWidth={1.6} /></span>
         <h1>{correct >= questions.length * .8 ? 'よくできました！' : 'もう一度、挑戦しよう。'}</h1>
         <p>{kind === 'listening' ? '听力测试' : '词义测试'}已测完 <b>{questions.length}</b> 个单词，答对 {correct} 题。错过的词会在下次同类型测试里优先出现。</p>
         <div className="result-score">{questions.length ? Math.round(correct / questions.length * 100) : 0}<small>分</small></div>
@@ -1094,14 +1108,25 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
   const revealed = Boolean(picked) || !listening
   return (
     <div className="page test-page quiz-design">
+      <div className="quiz-hero-deco" aria-hidden>
+        <svg viewBox="0 0 220 120" className="home-torii" fill="none">
+          <circle cx="168" cy="32" r="22" fill="currentColor" opacity=".16" />
+          <circle cx="168" cy="32" r="12" fill="currentColor" opacity=".08" />
+          <path d="M42 48 H178" stroke="currentColor" strokeWidth="5" strokeLinecap="round" opacity=".28" />
+          <path d="M36 40 H184" stroke="currentColor" strokeWidth="4" strokeLinecap="round" opacity=".22" />
+          <path d="M58 48 V92 M162 48 V92" stroke="currentColor" strokeWidth="5" strokeLinecap="round" opacity=".26" />
+          <path d="M50 58 H170" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" opacity=".2" />
+          <path d="M18 102 C48 82 72 92 96 78 C118 66 140 84 178 70 C192 64 204 68 214 62" stroke="currentColor" strokeWidth="2.2" opacity=".18" />
+        </svg>
+      </div>
       <div className="test-top quiz-top-bar">
         <div className="quiz-chips">
-          <span><BookOpen size={14} />{unit.name}</span>
-          <span><Headphones size={14} />{listening ? '听发音，选出单词' : '选出正确释义'}</span>
-        </div>
-        <div className="quiz-progress-inline">
-          <b>{index + 1} / {questions.length}</b>
-          <div className="test-progress"><i style={{ width: `${((index + (picked ? 1 : 0)) / questions.length) * 100}%` }} /></div>
+          <span><BookOpen size={14} strokeWidth={1.6} />{unit.name}</span>
+          <span><Headphones size={14} strokeWidth={1.6} />{listening ? '听发音，选出单词' : '选出正确释义'}</span>
+          <span className="quiz-progress-chip">
+            <b>{index + 1} / {questions.length}</b>
+            <i className="quiz-progress-mini"><em style={{ width: `${((index + (picked ? 1 : 0)) / questions.length) * 100}%` }} /></i>
+          </span>
         </div>
       </div>
       <section className="quiz-card quiz-card-design">
@@ -1113,7 +1138,7 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
         ) : (
           <div className="quiz-listen">
             <button className="quiz-listen-play" onClick={() => void speakJapanese(current.term, voiceGender)} aria-label="播放单词">
-              <Volume2 size={36} />
+              <Volume2 size={36} strokeWidth={1.6} />
             </button>
             <b>点击播放</b>
             <span>听完后选择下面的单词</span>
@@ -1123,12 +1148,12 @@ function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit; units
           const selected = picked === option.id
           const showCorrect = picked && option.id === current.id
           const wrong = selected && option.id !== current.id
-          return <button key={`${option.id}-${i}`} className={`${selected ? 'selected' : ''} ${showCorrect ? 'correct' : ''} ${wrong ? 'wrong' : ''}`} onClick={() => choose(option.id)}><em>{String.fromCharCode(65 + i)}</em>{listening ? <strong className="jp">{optionLabel(option, 'listening')}</strong> : optionLabel(option, 'meaning')}{selected && <CheckCircle2 size={18} />}</button>
+          return <button key={`${option.id}-${i}`} className={`${selected ? 'selected' : ''} ${showCorrect ? 'correct' : ''} ${wrong ? 'wrong' : ''}`} onClick={() => choose(option.id)}><em>{String.fromCharCode(65 + i)}</em>{listening ? <strong className="jp">{optionLabel(option, 'listening')}</strong> : optionLabel(option, 'meaning')}{selected && <CheckCircle2 size={18} strokeWidth={1.6} />}</button>
         })}</div>
         {picked && <div className={`answer-feedback ${picked === current.id ? 'correct' : 'wrong'}`}><b>{picked === current.id ? '回答正确' : '再记一次'}</b><span className="jp">{current.example}</span><small>{current.translation}</small></div>}
-        <button className="primary-button quiz-next" disabled={!picked} onClick={next}>{index === questions.length - 1 ? '查看结果' : '下一题'}<ChevronRight size={18} /></button>
+        <button className="primary-button quiz-next" disabled={!picked} onClick={next}>{index === questions.length - 1 ? '查看结果' : '下一题'}<ChevronRight size={18} strokeWidth={1.6} /></button>
       </section>
-      <button className="back-link" onClick={() => setKind(null)}><ChevronLeft size={17} />返回选择</button>
+      <button className="back-link" onClick={() => setKind(null)}><ChevronLeft size={17} strokeWidth={1.6} />返回选择</button>
     </div>
   )
 }
@@ -1152,57 +1177,79 @@ function WordbookView({ units, onRemove }: { units: Unit[]; onRemove: (wordId: s
 function ReviewView({ units, onReview }: { units: Unit[]; onReview: (word: Word, unitId: string, remembered: boolean) => void }) {
   const entries = units.flatMap((unit) => unit.words.map((word) => ({ word, unit, state: getReviewState(word) })))
   const due = entries.filter((item) => item.state.due).sort((a, b) => a.state.nextReviewAt - b.state.nextReviewAt)
+  const stageGoals: Record<number, string> = {
+    1: '初步巩固，强化记忆',
+    2: '加深印象，减少遗忘',
+    4: '巩固记忆，提升熟练度',
+    7: '长期记忆，稳固掌握',
+    15: '最终巩固，形成长期记忆',
+    30: '周期回访，保持激活',
+  }
   const stageCounts = REVIEW_INTERVAL_DAYS.map((day, index) => ({
     day,
     count: entries.filter((item) => (item.word.reviewStage ?? 0) === index && Number.isFinite(item.word.nextReviewAt)).length,
+    goal: stageGoals[day] || '',
+    primary: day <= 15,
   }))
   const [activeIndex, setActiveIndex] = useState(0)
+  const [sessionOpen, setSessionOpen] = useState(false)
   const active = due[activeIndex] || due[0]
   return (
     <div className="page hub-page review-design">
-      <section className="hub-hero">
+      <section className="hub-hero review-hero">
         <div>
           <h1>待复习</h1>
-          <p>今日 <b>{due.length}</b> 词待复习。根据艾宾浩斯记忆曲线，合理安排复习计划。</p>
+          <p className="review-today-line">今日 <b>{due.length}</b> 词待复习</p>
+          <p>根据艾宾浩斯遗忘曲线，合理安排复习计划，巩固日语记忆。</p>
+        </div>
+        <div className="quiz-hero-deco review-hero-deco" aria-hidden>
+          <svg viewBox="0 0 220 120" className="home-torii" fill="none">
+            <circle cx="168" cy="32" r="22" fill="currentColor" opacity=".16" />
+            <path d="M42 48 H178" stroke="currentColor" strokeWidth="5" strokeLinecap="round" opacity=".28" />
+            <path d="M58 48 V92 M162 48 V92" stroke="currentColor" strokeWidth="5" strokeLinecap="round" opacity=".26" />
+            <path d="M18 102 C48 82 72 92 96 78 C118 66 140 84 178 70 C192 64 204 68 214 62" stroke="currentColor" strokeWidth="2.2" opacity=".18" />
+          </svg>
         </div>
       </section>
       <section className="home-card memory-curve-card">
-        <div className="curve-copy"><Target size={18} /><div><b>艾宾浩斯间隔重复</b><span>科学安排复习时间，让记忆更牢固。</span></div></div>
+        <div className="curve-copy"><Target size={18} strokeWidth={1.6} /><div><b>艾宾浩斯间隔重复</b><span>科学安排复习时间，让记忆更牢固。</span></div></div>
         <div className="curve-steps curve-steps-rich">
-          {stageCounts.map(({ day, count }) => (
-            <span key={day}>
+          {stageCounts.map(({ day, count, goal, primary }, index) => (
+            <span key={day} className={primary ? '' : 'curve-stage-soft'}>
               <i>{day}d</i>
+              <strong>{day}天后复习</strong>
+              <small>{goal}</small>
               <b>{count} 词</b>
-              <small>{day} 天后复习</small>
+              {index < stageCounts.length - 1 && <em className="curve-arrow" aria-hidden>→</em>}
             </span>
           ))}
         </div>
       </section>
       <section className="home-card review-queue-card">
         <header>
-          <b>今日复习队列</b>
-          <small>共 {due.length} 词</small>
+          <div><Clock3 size={16} strokeWidth={1.6} /><b>今日复习队列</b></div>
+          <small>共 {due.length} 词 · 按下次复习时间排序</small>
         </header>
         {due.length ? (
           <div className="review-table">
-            <div className="review-table-head"><span>单词</span><span>下次复习</span><span>熟练度</span><span>操作</span></div>
-            {due.map(({ word, unit, state }, index) => (
-              <div key={word.id} className={`review-table-row ${index === activeIndex ? 'active' : ''}`}>
+            <div className="review-table-head"><span>单词</span><span>下次复习时间</span><span>熟练度</span><span>操作</span></div>
+            {due.map(({ word, state }, index) => (
+              <div key={word.id} className={`review-table-row ${index % 2 ? 'zebra' : ''} ${index === activeIndex ? 'active' : ''}`}>
                 <div>
                   <b className="jp">{word.term}</b>
                   <small className="jp">{word.reading}</small>
                   <em>{word.meaning}</em>
                 </div>
-                <span>{formatReviewTime(word)} · 第 {state.stage + 1} 阶段</span>
-                <span className="review-prof"><i style={{ width: `${proficiencyPercent(word)}%` }} /><b>{proficiencyPercent(word)}%</b></span>
-                <button type="button" onClick={() => setActiveIndex(index)} aria-label="开始复习"><ChevronRight size={16} /></button>
+                <span className="review-next-time"><Clock3 size={14} strokeWidth={1.6} />{formatReviewTime(word)} · 第 {state.stage + 1} 阶段</span>
+                <span className="review-prof"><span className="review-prof-track"><i style={{ width: `${proficiencyPercent(word)}%` }} /></span><b>{proficiencyPercent(word)}%</b></span>
+                <button type="button" onClick={() => { setActiveIndex(index); setSessionOpen(true) }} aria-label="开始复习"><ChevronRight size={16} strokeWidth={1.6} /></button>
               </div>
             ))}
           </div>
         ) : (
-          <div className="wide-empty compact"><CheckCircle2 /><h2>今天的复习完成了</h2><p>系统会根据下一次到期时间自动把单词放回这里。</p></div>
+          <div className="wide-empty compact"><CheckCircle2 strokeWidth={1.6} /><h2>今天的复习完成了</h2><p>系统会根据下一次到期时间自动把单词放回这里。</p></div>
         )}
-        {active && (
+        {sessionOpen && active && (
           <div className="review-active-card">
             <div>
               <span className="review-unit">{active.unit.name}</span>
@@ -1213,17 +1260,20 @@ function ReviewView({ units, onReview }: { units: Unit[]; onReview: (word: Word,
             <VolumeButton word={active.word} />
             <div className="review-actions">
               <button onClick={() => onReview(active.word, active.unit.id, false)}>没记住</button>
-              <button onClick={() => onReview(active.word, active.unit.id, true)}><Check size={16} />记住了</button>
+              <button onClick={() => onReview(active.word, active.unit.id, true)}><Check size={16} strokeWidth={1.6} />记住了</button>
             </div>
           </div>
         )}
-        {due.length > 0 && active && (
+        {due.length > 0 && (
           <button
             type="button"
             className="primary-button review-start"
-            onClick={() => onReview(active.word, active.unit.id, true)}
+            onClick={() => {
+              setActiveIndex(0)
+              setSessionOpen(true)
+            }}
           >
-            开始今日复习
+            <AudioLines size={18} strokeWidth={1.6} />开始今日复习
           </button>
         )}
       </section>

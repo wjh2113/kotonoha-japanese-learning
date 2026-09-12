@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronLeft, Pause, Play, Star } from 'lucide-react'
+import { Check, CheckCircle2, ChevronLeft, Eye, FileText, Headphones, Pause, Play, SquarePen, Star } from 'lucide-react'
 import { hasChineseTranslation } from './passage'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
 import type { Passage, PassageSentence, VoiceGender } from './types'
@@ -47,9 +47,6 @@ export function PassageIntensive({
     if (!starredOnly) return passage.sentences
     return passage.sentences.filter((item) => starred[item.id])
   }, [passage.sentences, starred, starredOnly])
-
-  const total = Math.max(1, passage.sentences.length)
-  const progressPct = Math.round(((sentenceIndex + (playing ? 0.55 : 0)) / total) * 1000) / 10
 
   useEffect(() => {
     const next: Record<string, string> = {}
@@ -108,117 +105,128 @@ export function PassageIntensive({
       .filter((index) => index >= 0)
   }, [passage.sentences, starred, starredOnly])
 
+  const rowIndexes = starredOnly ? visibleIndexes : passage.sentences.map((_, index) => index)
+  const filledCount = passage.sentences.filter((item) => (drafts[item.id] || '').trim()).length
+
   return (
-    <div className="intensive-page">
-      <div className="intensive-top">
-        <button type="button" className="back-link" onClick={onBack}><ChevronLeft size={16} />返回课文</button>
-        <div className="intensive-player">
-          <span>音频播放</span>
-          <button
-            type="button"
-            className="intensive-play"
-            onClick={() => playContinuous(sentenceIndex)}
-            aria-label={playing ? '暂停' : '播放'}
-          >
-            {playing ? <Pause size={18} /> : <Play size={18} />}
-          </button>
-          <div className="intensive-progress" aria-label="播放进度">
-            <i style={{ width: `${Math.min(100, Math.max(0, progressPct))}%` }} />
-          </div>
-          <em>{sentenceIndex + 1} / {passage.sentences.length}</em>
-          <label className="intensive-check">
-            <input type="checkbox" checked={starredOnly} onChange={(event) => setStarredOnly(event.target.checked)} />
-            仅显示标记的句子
-          </label>
-          <label className="intensive-check">
-            <input type="checkbox" checked={!autoNext} onChange={(event) => setAutoNext(!event.target.checked)} />
-            当句播完不自动下一句
-          </label>
+    <div className="intensive-page intensive-design">
+      <div className="intensive-heading">
+        <div>
+          <h2><Headphones size={20} strokeWidth={1.6} />精听模式</h2>
+          <p>边听边写，提升听力与记忆</p>
         </div>
+        <button type="button" className="back-link" onClick={onBack}><ChevronLeft size={16} strokeWidth={1.6} />返回课文</button>
       </div>
 
-      <div className="intensive-layout">
-        <section className="intensive-main">
-          <div className="intensive-cols-head">
-            <div>
-              <b>逐句原文</b>
-              <small>{sentenceIndex + 1} / {passage.sentences.length}</small>
-            </div>
-            <div>
-              <b>听写输入</b>
-              <small>请听写这句的日文</small>
-            </div>
+      <div className="intensive-toolbar">
+        <label className="intensive-check">
+          <input type="checkbox" checked={starredOnly} onChange={(event) => setStarredOnly(event.target.checked)} />
+          仅显示标记的句子
+        </label>
+        <label className="intensive-check">
+          <input type="checkbox" checked={!autoNext} onChange={(event) => setAutoNext(!event.target.checked)} />
+          当句播完不自动下一句
+        </label>
+        <label className="intensive-check">
+          <input type="checkbox" checked={loopPlay} onChange={(event) => setLoopPlay(event.target.checked)} />
+          循环播放
+        </label>
+        <label className="intensive-check">
+          <input type="checkbox" checked={showTranslation} onChange={(event) => setShowTranslation(event.target.checked)} />
+          显示译文
+        </label>
+      </div>
+
+      <div className="intensive-dual">
+        <section className="intensive-col">
+          <header>
+            <b><FileText size={15} strokeWidth={1.6} />逐句原文</b>
+            <small>{sentenceIndex + 1} / {passage.sentences.length}</small>
+          </header>
+          <div className="intensive-col-body">
+            {rowIndexes.map((index) => {
+              const item = passage.sentences[index]
+              if (!item) return null
+              const active = index === sentenceIndex
+              return (
+                <div key={item.id} className={`intensive-line ${active ? 'active' : ''} ${playing && active ? 'speaking' : ''}`}>
+                  <em>{index + 1}</em>
+                  <button type="button" className="intensive-line-play" onClick={() => playOne(index)} aria-label="播放这句">
+                    {playing && active ? <Pause size={14} strokeWidth={1.6} /> : <Play size={14} strokeWidth={1.6} />}
+                  </button>
+                  <button type="button" className="intensive-line-text" onClick={() => playOne(index)}>
+                    {showOriginal
+                      ? <span className="jp">{item.text}</span>
+                      : <span className="intensive-hidden">原文已隐藏</span>}
+                    {showTranslation && hasChineseTranslation(item.translation) && <small>{item.translation}</small>}
+                  </button>
+                  <button
+                    type="button"
+                    className={`intensive-star ${starred[item.id] ? 'on' : ''}`}
+                    onClick={() => setStarred((current) => ({ ...current, [item.id]: !current[item.id] }))}
+                    aria-label="标记句子"
+                  >
+                    <Star size={14} strokeWidth={1.6} />
+                  </button>
+                </div>
+              )
+            })}
+            {!sentences.length && <p className="empty-grammar">没有可精听的句子。可取消「仅显示标记」。</p>}
           </div>
-          <div className="intensive-rows">
-            {(starredOnly ? visibleIndexes : passage.sentences.map((_, index) => index)).map((index) => {
+          <footer>
+            <button type="button" className="intensive-play-all" onClick={() => playContinuous(0)}>
+              {playing ? <Pause size={15} strokeWidth={1.6} /> : <Play size={15} strokeWidth={1.6} />}
+              {playing ? '停止播放' : '播放全部'}
+            </button>
+          </footer>
+        </section>
+
+        <section className="intensive-col">
+          <header>
+            <b><SquarePen size={15} strokeWidth={1.6} />听写输入</b>
+            <small>请听写这句的日文 · 已填 {filledCount}/{passage.sentences.length}</small>
+          </header>
+          <div className="intensive-col-body">
+            {rowIndexes.map((index) => {
               const item = passage.sentences[index]
               if (!item) return null
               const active = index === sentenceIndex
               const typed = drafts[item.id] || ''
-              const match = proof ? lineMatch(typed, item) : null
+              const match = proof ? lineMatch(typed, item) : (typed.trim() ? 'filled' : null)
               return (
-                <div key={item.id} className={`intensive-row ${active ? 'active' : ''} ${playing && active ? 'speaking' : ''}`}>
-                  <button
-                    type="button"
-                    className="intensive-source"
-                    onClick={() => playOne(index)}
-                  >
-                    <span
-                      className={`intensive-star ${starred[item.id] ? 'on' : ''}`}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setStarred((current) => ({ ...current, [item.id]: !current[item.id] }))
-                      }}
-                      role="presentation"
-                    >
-                      <Star size={14} />
-                    </span>
-                    <em>{index + 1}</em>
-                    <span className="intensive-source-text">
-                      {showOriginal
-                        ? <span className="jp">{item.text}</span>
-                        : <span className="intensive-hidden">原文已隐藏</span>}
-                      {showTranslation && hasChineseTranslation(item.translation) && (
-                        <small>{item.translation}</small>
-                      )}
-                    </span>
+                <label key={item.id} className={`intensive-input-row ${active ? 'active' : ''} ${match || ''}`}>
+                  <em>{index + 1}</em>
+                  <button type="button" className="intensive-line-play" onClick={() => playOne(index)} aria-label="播放这句">
+                    <Play size={14} strokeWidth={1.6} />
                   </button>
-                  <label className={`intensive-dictation ${match || ''}`}>
-                    <input
-                      value={typed}
-                      placeholder="在此输入听写内容，Tab 进入下一格"
-                      onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
-                      onFocus={() => onIndex(index)}
-                      onBlur={() => onDictation(item.id, drafts[item.id] || '')}
-                    />
-                  </label>
-                </div>
+                  <input
+                    value={typed}
+                    placeholder="请听写这句的日文"
+                    onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
+                    onFocus={() => onIndex(index)}
+                    onBlur={() => onDictation(item.id, drafts[item.id] || '')}
+                  />
+                  {(match === 'exact' || match === 'filled') && <CheckCircle2 size={16} strokeWidth={1.6} className="intensive-check-icon" />}
+                  {match === 'close' && <Check size={16} strokeWidth={1.6} className="intensive-check-icon soft" />}
+                </label>
               )
             })}
-            {!sentences.length && <p className="empty-grammar">没有可精听的句子。可取消「仅显示标记」。 </p>}
           </div>
+          <footer className="intensive-actions">
+            <button type="button" className="secondary-button" onClick={() => { setProof(true); saveAll() }}>
+              <Check size={15} strokeWidth={1.6} />检查答案
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => setShowOriginal((value) => !value)}
+            >
+              <Eye size={15} strokeWidth={1.6} />{showOriginal ? '隐藏原文' : '显示原文'}
+            </button>
+          </footer>
         </section>
-
-        <aside className="intensive-side">
-          <button type="button" className="primary-button" onClick={saveAll}>保存听写</button>
-          <button type="button" className={loopPlay ? 'active' : ''} onClick={() => setLoopPlay((value) => !value)}>循环播放</button>
-          <button type="button" className={playing ? 'active' : ''} onClick={() => playContinuous(sentenceIndex)}>
-            {playing ? '暂停播放' : '开始播放'}
-          </button>
-          <button type="button" disabled={sentenceIndex <= 0} onClick={() => playOne(sentenceIndex - 1)}>上一句</button>
-          <button type="button" disabled={sentenceIndex >= passage.sentences.length - 1} onClick={() => playOne(sentenceIndex + 1)}>下一句</button>
-          <button type="button" className={!showOriginal ? 'active' : ''} onClick={() => setShowOriginal((value) => !value)}>
-            {showOriginal ? '隐藏原文' : '显示原文'}
-          </button>
-          <button type="button" className={showTranslation ? 'active' : ''} onClick={() => setShowTranslation((value) => !value)}>
-            {showTranslation ? '隐藏译文' : '显示译文'}
-          </button>
-          <button type="button" className={proof ? 'active proof' : 'proof'} onClick={() => setProof((value) => !value)}>
-            {proof ? '关闭校对' : '一键校对'}
-          </button>
-          <button type="button" className="back-quiet" onClick={onBack}><ChevronLeft size={14} />返回课文全文</button>
-        </aside>
       </div>
     </div>
   )
 }
+
