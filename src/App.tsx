@@ -2,8 +2,8 @@ import { useContext, useEffect, useRef, useState } from 'react'
 import {
   AudioLines, Bell, BookMarked, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronLeft, ChevronRight,
   Clock3, FileText, GraduationCap, Headphones, Home, Import, Keyboard, LayoutGrid, LibraryBig, List, Menu,
-  Mic, NotebookPen, Palette, Pause, Plus, Search, Settings, Sparkles, SquarePen, Sprout, Target,
-  Trash2, Trophy, UploadCloud, UserRound, Volume2, X,
+  Mic, NotebookPen, Palette, PanelLeft, PanelLeftClose, Pause, Plus, Search, Settings, Sparkles, SquarePen,
+  Sprout, Target, Trash2, Trophy, UploadCloud, UserRound, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, apiUrl, AUTH_REQUIRED_EVENT, getAccessToken, setAccessToken } from './api'
 import { initialUnits } from './data'
@@ -23,7 +23,16 @@ import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer
 const STORAGE_KEY = 'kotonoha-units-v1'
 const SETTINGS_KEY = 'kotonoha-settings-v1'
 const THEME_USER_PICKED_KEY = 'kotonoha-theme-user-picked'
+const SIDEBAR_COLLAPSED_KEY = 'kotonoha-sidebar-collapsed'
 const COLORS = ['#dd5b43', '#668b87', '#d39a43', '#786f95', '#6d8d55']
+
+function readSidebarCollapsed(): boolean {
+  try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1' } catch { return false }
+}
+
+function writeSidebarCollapsed(collapsed: boolean) {
+  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0') } catch { /* ignore */ }
+}
 
 /** Until the user explicitly picks a theme, force design default matcha (overrides legacy aka in DB). */
 function withPromotedMatchaTheme(settings: AppSettings): AppSettings {
@@ -53,6 +62,7 @@ function App() {
   const [newUnitOpen, setNewUnitOpen] = useState(false)
   const [pendingDeleteUnit, setPendingDeleteUnit] = useState<Unit | null>(null)
   const [mobileNav, setMobileNav] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [toast, setToast] = useState('')
   const [databaseReady, setDatabaseReady] = useState(false)
   const databaseErrorShown = useRef(false)
@@ -323,6 +333,14 @@ function App() {
     setImportOpen(true)
   }
 
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((current) => {
+      const next = !current
+      writeSidebarCollapsed(next)
+      return next
+    })
+  }
+
   const importUnit = units.find((item) => item.id === importUnitId) || unit
 
   if (auth === 'checking') {
@@ -334,14 +352,18 @@ function App() {
 
   return (
     <SettingsContext.Provider value={settings}>
-    <div className="app-shell">
+    <div className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
       <AppHeader
         open={mobileNav} view={view}
         starredCount={starredCount} errorBookCount={errorBookCount} reviewCount={reviewCount}
         onMenu={() => setMobileNav((current) => !current)} onView={nav}
+        onCollapse={toggleSidebarCollapsed}
       />
       <div className="workspace">
-        <DesktopTopBar settings={settings} onView={nav} onSettingsChange={setSettings} />
+        <DesktopTopBar
+          settings={settings} onView={nav} onSettingsChange={setSettings}
+          sidebarCollapsed={sidebarCollapsed} onToggleSidebar={toggleSidebarCollapsed}
+        />
         <MobileTopBar view={view} settings={settings} onView={nav} onSettingsChange={setSettings} onMenu={() => setMobileNav((current) => !current)} />
         {missingMeanings > 0 && (
           <div className="enrich-banner">正在补全全部单词释义，还剩 {missingMeanings} 个。补完后测试会覆盖整个单元。</div>
@@ -508,9 +530,9 @@ function AvatarThemeMenu({
   )
 }
 
-function AppHeader({ open, view, starredCount, errorBookCount, reviewCount, onMenu, onView }: {
+function AppHeader({ open, view, starredCount, errorBookCount, reviewCount, onMenu, onView, onCollapse }: {
   open: boolean; view: View; starredCount: number; errorBookCount: number; reviewCount: number
-  onMenu: () => void; onView: (view: View) => void
+  onMenu: () => void; onView: (view: View) => void; onCollapse: () => void
 }) {
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'home', label: '首页', icon: <Home size={18} strokeWidth={1.6} /> },
@@ -525,6 +547,11 @@ function AppHeader({ open, view, starredCount, errorBookCount, reviewCount, onMe
   ]
   return (
     <aside className={`app-sidebar ${open ? 'open' : ''}`}>
+      <div className="sidebar-desktop-head">
+        <button type="button" className="sidebar-toggle" onClick={onCollapse} aria-label="隐藏菜单" title="隐藏菜单">
+          <PanelLeftClose size={18} strokeWidth={1.6} />
+        </button>
+      </div>
       <div className="sidebar-mobile-head">
         <span className="sidebar-leaf" aria-hidden><Sprout size={18} strokeWidth={1.75} /></span>
         <b>にほんご学習</b>
@@ -554,18 +581,26 @@ function AppHeader({ open, view, starredCount, errorBookCount, reviewCount, onMe
   )
 }
 
-function DesktopTopBar({ settings, onView, onSettingsChange }: {
+function DesktopTopBar({ settings, onView, onSettingsChange, sidebarCollapsed, onToggleSidebar }: {
   settings: AppSettings; onView: (view: View) => void; onSettingsChange: (settings: AppSettings) => void
+  sidebarCollapsed: boolean; onToggleSidebar: () => void
 }) {
   return (
     <header className="desktop-topbar">
-      <button type="button" className="topbar-brand" onClick={() => onView('home')}>
-        <span className="topbar-leaf" aria-hidden><Sprout size={18} strokeWidth={1.75} /></span>
-        <span className="topbar-brand-text">
-          <b>日语学习</b>
-          <small>一词一句，遇见更好的自己</small>
-        </span>
-      </button>
+      <div className="topbar-left">
+        {sidebarCollapsed && (
+          <button type="button" className="icon-button sidebar-toggle" onClick={onToggleSidebar} aria-label="显示菜单" title="显示菜单">
+            <PanelLeft size={18} strokeWidth={1.6} />
+          </button>
+        )}
+        <button type="button" className="topbar-brand" onClick={() => onView('home')}>
+          <span className="topbar-leaf" aria-hidden><Sprout size={18} strokeWidth={1.75} /></span>
+          <span className="topbar-brand-text">
+            <b>日语学习</b>
+            <small>一词一句，遇见更好的自己</small>
+          </span>
+        </button>
+      </div>
       <div className="topbar-right">
         <button type="button" className="icon-button" aria-label="通知"><Bell size={18} strokeWidth={1.6} /></button>
         <div className="topbar-user">
