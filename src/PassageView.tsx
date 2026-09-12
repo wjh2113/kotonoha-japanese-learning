@@ -8,7 +8,7 @@ import { clipboardImageFiles, normalizeOcrText } from './clipboard-images'
 import { extractDocxPassage, htmlToPassageText, readPassageSource } from './docx'
 import { PASSAGE_OCR_PLACEHOLDER, isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import {
-  chunkItems, extractPassageVocab, hasChineseTranslation, isTransientPassage, mergeAnalyzedSentences, mergePassageBooks,
+  chunkItems, extractPassageVocab, hasChineseTranslation, isPrimarilyChineseLine, isTransientPassage, mergeAnalyzedSentences, mergePassageBooks,
   normalizePassageSentence, passageProgressSummary, recordSentenceScore,
   recoverInterruptedIngest, sentenceNeedsAnalysis, unusedPassageVocab,
 } from './passage'
@@ -180,22 +180,46 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       }
       const pending = current.sentences.filter(sentenceNeedsAnalysis)
       if (!pending.length) {
-        patchPassage(passageId, { status: 'ready', statusText: '' })
+        // Mark Chinese notes as self-translated so UI leaves "生成中".
+        const normalized = current.sentences.map((sentence) => (
+          isPrimarilyChineseLine(sentence.text) && !hasChineseTranslation(sentence.translation)
+            ? { ...sentence, translation: sentence.text, tokens: sentence.tokens?.length ? sentence.tokens : [{ surface: sentence.text, reading: '', meaning: sentence.text }] }
+            : sentence
+        ))
+        patchPassage(passageId, { sentences: normalized, status: 'ready', statusText: '' })
         return
       }
-      const total = current.sentences.length
-      let finished = total - pending.length
+      // Prefill Chinese instructional lines so they do not block progress counts.
+      patchPassage(passageId, {
+        sentences: current.sentences.map((sentence) => (
+          isPrimarilyChineseLine(sentence.text) && !hasChineseTranslation(sentence.translation)
+            ? { ...sentence, translation: sentence.text, tokens: sentence.tokens?.length ? sentence.tokens : [{ surface: sentence.text, reading: '', meaning: sentence.text }] }
+            : sentence
+        )),
+      })
+      const latestForPending = passagesRef.current.find((item) => item.id === passageId) || current
+      const work = latestForPending.sentences.filter(sentenceNeedsAnalysis)
+      const total = latestForPending.sentences.length
+      let finished = total - work.length
       let chunkErrors = 0
-      for (const chunk of chunkItems(pending)) {
+      for (const chunk of chunkItems(work)) {
         if (!passagesRef.current.some((item) => item.id === passageId)) return
         patchPassage(passageId, { status: 'processing', statusText: `正在生成整句翻译 ${finished}/${total}` })
         try {
-          const response = await apiFetch('/api/passage/analyze', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sentences: chunk.map((sentence) => ({ text: sentence.text })) }),
-          })
-          const data = await readApiJson<{ title?: string; sentences?: unknown[]; error?: string }>(response)
+          const controller = new AbortController()
+          const timeout = window.setTimeout(() => controller.abort(), 100_000)
+          let response: Response
+          try {
+            response = await apiFetch('/api/passage/analyze', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sentences: chunk.map((sentence) => ({ text: sentence.text })) }),
+              signal: controller.signal,
+            })
+          } finally {
+            window.clearTimeout(timeout)
+          }
+          const data = await readApiJson<{ title?: string; sentences?: unknown[]; error?: string }>(response, '课文解析失败，请稍后重试。')
           if (!response.ok) throw new Error(publicApiMessage(data.error, '课文解析失败，请稍后重试。'))
           const latest = passagesRef.current.find((item) => item.id === passageId)
           if (!latest) return
@@ -210,7 +234,6 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
         } catch (reason) {
           chunkErrors += 1
           console.error('passage analyze chunk failed:', reason)
-          // Keep going so one bad batch does not leave the whole lesson untranslated.
         }
       }
       const latest = passagesRef.current.find((item) => item.id === passageId)
@@ -759,7 +782,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
               </ol>
               <article className="passage-card">
                 <div className="passage-card-head">
-                  <span className="jp reading">{sentence.reading || (passage.status === 'processing' ? '读音生成中…' : '读音由 AI 生成')}</span>
+                  <span className="jp reading">{sentence.reading || (passage.status === 'processing' ? '读音生成中…' : '暂无读音')}</span>
                   <button className="volume-button" onClick={() => void speakJapanese(sentence.text, voiceGender, { sentence: true })} aria-label="朗读这句"><Volume2 size={19} /></button>
                 </div>
                 <h3 className="jp">{sentence.text}</h3>
@@ -921,7 +944,6 @@ function SentencePronunciation({ sentence, onScore }: { sentence: PassageSentenc
 
   return (
     <div className="inline-practice">
-      <p>先听标准朗读，再跟读这一句。优先用浏览器识别（不耗积分）；国内常因连不上 Google 而自动改用云端转写。</p>
       <button
         className={`inline-record ${practice.recording ? 'recording' : ''}`}
         disabled={practice.evaluating}

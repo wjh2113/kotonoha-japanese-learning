@@ -103,3 +103,14 @@ describe('interrupted passage ingest', () => {
     expect(recovered.statusText).toContain('重新上传')
   })
 })
+
+describe('chinese instructional lines in OCR', () => {
+  it('skips primarily Chinese notes from analysis queue', async () => {
+    const { isPrimarilyChineseLine, sentenceNeedsAnalysis } = await import('./passage')
+    expect(isPrimarilyChineseLine('能够向店员询问商品，并能请店员帮助寻找其他商品。')).toBe(true)
+    expect(isPrimarilyChineseLine('てんいん')).toBe(false)
+    expect(sentenceNeedsAnalysis({
+      id: '1', text: '能够向店员询问商品，并能请店员帮助寻找其他商品。', reading: '', translation: '', tokens: [], grammar: [],
+    })).toBe(false)
+  })
+})

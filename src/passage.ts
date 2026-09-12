@@ -4,13 +4,23 @@ import type { ImportDraft, Passage, PassageSentence, SentenceProgress } from './
 
 const PARTICLES = /^(は|が|を|に|の|と|も|で|へ|や|か|ね|よ|な|だ|です|ます|した|して)$/
 
-export const PASSAGE_ANALYZE_CHUNK = 3
+export const PASSAGE_ANALYZE_CHUNK = 2
 
 export function hasChineseTranslation(text?: string) {
   return /[\u4e00-\u9fff]/.test(String(text || '').trim())
 }
 
+/** Chinese study notes mixed into OCR — treat as already “translated”. */
+export function isPrimarilyChineseLine(text?: string) {
+  const value = String(text || '').trim()
+  if (!value || /[\u3040-\u30ff]/.test(value)) return false
+  const compact = value.replace(/\s/g, '')
+  const cn = (compact.match(/[\u4e00-\u9fff]/g) || []).length
+  return cn >= 6 && cn * 2 >= compact.length
+}
+
 export function sentenceNeedsAnalysis(sentence: PassageSentence) {
+  if (isPrimarilyChineseLine(sentence.text)) return false
   return !hasChineseTranslation(sentence.translation) || !(sentence.tokens || []).length
 }
 

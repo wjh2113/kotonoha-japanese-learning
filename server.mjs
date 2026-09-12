@@ -162,27 +162,61 @@ function clientGatewayMessage(error, abortMessage, fallback) {
 
 function parseJsonContent(content) {
   const cleaned = String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+  const tryParse = (slice) => {
+    try {
+      return JSON.parse(slice)
+    } catch {
+      const repaired = slice
+        .replace(/,\s*([}\]])/g, '$1')
+        .replace(/[\u201c\u201d]/g, '"')
+        .replace(/[\u2018\u2019]/g, "'")
+      return JSON.parse(repaired)
+    }
+  }
+  const candidates = []
+  for (let i = 0; i < cleaned.length; i += 1) {
+    const ch = cleaned[i]
+    if (ch !== '{' && ch !== '[') continue
+    let depth = 0
+    for (let j = i; j < cleaned.length; j += 1) {
+      const cur = cleaned[j]
+      if (cur === '{' || cur === '[') depth += 1
+      else if (cur === '}' || cur === ']') {
+        depth -= 1
+        if (depth === 0) {
+          const slice = cleaned.slice(i, j + 1)
+          if (/\"sentences\"\s*:/.test(slice) || /\"words\"\s*:/.test(slice) || ch === '[') candidates.push(slice)
+          break
+        }
+      }
+    }
+  }
+  for (const slice of candidates.reverse()) {
+    try {
+      return tryParse(slice)
+    } catch {
+      // keep trying earlier candidates
+    }
+  }
   const firstObj = cleaned.indexOf('{')
   const firstArr = cleaned.indexOf('[')
   const useArray = firstArr >= 0 && (firstObj < 0 || firstArr < firstObj)
   const first = useArray ? firstArr : firstObj
   const last = useArray ? cleaned.lastIndexOf(']') : cleaned.lastIndexOf('}')
   if (first < 0 || last < first) throw new Error('模型没有返回有效 JSON。')
-  const slice = cleaned.slice(first, last + 1)
   try {
-    return JSON.parse(slice)
+    return tryParse(cleaned.slice(first, last + 1))
   } catch {
-    // Common model glitches: trailing commas, smart quotes
-    const repaired = slice
-      .replace(/,\s*([}\]])/g, '$1')
-      .replace(/[\u201c\u201d]/g, '"')
-      .replace(/[\u2018\u2019]/g, "'")
-    try {
-      return JSON.parse(repaired)
-    } catch {
-      throw new Error('模型没有返回有效 JSON。')
-    }
+    throw new Error('模型没有返回有效 JSON。')
   }
+}
+
+/** Reasoning models often leave content empty and put the answer in reasoning_content. */
+function chatMessageText(data) {
+  const message = data?.choices?.[0]?.message || {}
+  const content = String(message.content || '').trim()
+  if (content) return content
+  return String(message.reasoning_content || message.reasoning || '').trim()
 }
 
 async function callGateway(pathname, payload, timeoutMs = 90000) {
@@ -244,7 +278,7 @@ async function enrichWordsWithModel(words, unitName) {
     temperature: 0.2,
     max_tokens: Math.min(4096, Math.max(1536, words.length * 160)),
   })
-  const parsed = parseJsonContent(data?.choices?.[0]?.message?.content)
+  const parsed = parseJsonContent(chatMessageText(data))
   if (!Array.isArray(parsed.words) || parsed.words.length !== words.length) throw new Error('模型返回的词汇数量不匹配。')
   const unitDescription = typeof parsed.unitDescription === 'string' ? parsed.unitDescription.trim().slice(0, 16) : ''
   return { parsed: { ...parsed, unitDescription }, headers, gateway: data.gateway }
@@ -510,7 +544,7 @@ async function analyzePassageWithModel(sourceText, exactSentences) {
     'tokens 按出现顺序覆盖整句；surface 用原文字形；reading 用平假名；meaning 用简明中文。',
     'grammar 只标对理解有帮助的语法（助词、活用、句型），name 用日语或通用语法名，explanation 用中文。',
     'translation 必须是完整中文句子，禁止留空，禁止只用日语或罗马音。对话行保留 A/B 角色。',
-    '只返回一个 JSON 对象，不要 Markdown。格式：',
+    '不要输出思考过程或解释。最终答案必须是一个可解析的 JSON 对象（可放在 content）。格式：',
     '{"title":"","sentences":[{"text":"","reading":"","translation":"","tokens":[{"surface":"","reading":"","meaning":""}],"grammar":[{"name":"","pattern":"","explanation":""}]}]}',
   ]
   if (lines.length) {
@@ -529,14 +563,15 @@ async function analyzePassageWithModel(sourceText, exactSentences) {
     fallback: true,
     stream: false,
     temperature: 0.15,
-    max_tokens: lines.length ? Math.min(3072, Math.max(1024, lines.length * 700)) : 4096,
+    // Reasoning models burn tokens before content; keep headroom.
+    max_tokens: lines.length ? Math.min(4096, Math.max(2200, lines.length * 900)) : 4096,
   }
   const timeoutMs = lines.length ? 90_000 : 120_000
   let lastError
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const { data } = await callGateway('/api/ai/chat', payload, timeoutMs)
-      const parsed = parseJsonContent(data?.choices?.[0]?.message?.content)
+      const parsed = parseJsonContent(chatMessageText(data))
       if (!Array.isArray(parsed.sentences) || !parsed.sentences.length) throw new Error('模型没有返回句子。')
       if (looksLikeErrorDocument(String(parsed.title || ''))) parsed.title = ''
       if (lines.length) {
