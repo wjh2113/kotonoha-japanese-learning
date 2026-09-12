@@ -921,7 +921,7 @@ function SentencePronunciation({ sentence, onScore }: { sentence: PassageSentenc
 
   return (
     <div className="inline-practice">
-      <p>先听标准朗读，再跟读这一句。默认用浏览器识别（不耗积分）；不可用时再走云端转写。</p>
+      <p>先听标准朗读，再跟读这一句。优先用浏览器识别（不耗积分）；国内常因连不上 Google 而自动改用云端转写。</p>
       <button
         className={`inline-record ${practice.recording ? 'recording' : ''}`}
         disabled={practice.evaluating}

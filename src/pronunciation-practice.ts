@@ -1,12 +1,30 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiFetch } from './api'
 
+const GATEWAY_PREF_KEY = 'kotonoha.preferSpeechGateway'
+
 function browserSpeechSupported() {
   return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition)
 }
 
 function shouldEscalateToGateway(errorCode: string) {
   return ['network', 'service-not-allowed', 'not-supported'].includes(errorCode)
+}
+
+function readPreferGateway() {
+  try {
+    return sessionStorage.getItem(GATEWAY_PREF_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writePreferGateway() {
+  try {
+    sessionStorage.setItem(GATEWAY_PREF_KEY, '1')
+  } catch {
+    // ignore quota / private mode
+  }
 }
 
 export function usePronunciationPractice(onTranscript: (text: string) => void, resetKey?: string) {
@@ -18,8 +36,8 @@ export function usePronunciationPractice(onTranscript: (text: string) => void, r
   const stream = useRef<MediaStream | null>(null)
   const chunks = useRef<Blob[]>([])
   const onTranscriptRef = useRef(onTranscript)
-  // Default: free browser STT. Only escalate to paid speech after browser fails hard.
-  const preferGateway = useRef(false)
+  // Default: free browser STT. Escalate to paid speech after Google STT fails (common in CN).
+  const preferGateway = useRef(readPreferGateway())
   onTranscriptRef.current = onTranscript
 
   const cleanup = () => {
@@ -100,11 +118,18 @@ export function usePronunciationPractice(onTranscript: (text: string) => void, r
     }
   }
 
+  const escalateToGateway = () => {
+    preferGateway.current = true
+    writePreferGateway()
+    // Mic permission is fine; Chrome's Google STT cloud is unreachable (common in CN).
+    setError('浏览器自带识别连不上（需访问 Google），已改用云端识别。')
+    void startGateway()
+  }
+
   const startBrowser = () => {
     const Constructor = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!Constructor) {
-      preferGateway.current = true
-      void startGateway()
+      escalateToGateway()
       return
     }
     const instance = new Constructor()
@@ -124,8 +149,7 @@ export function usePronunciationPractice(onTranscript: (text: string) => void, r
         return
       }
       if (shouldEscalateToGateway(event.error)) {
-        preferGateway.current = true
-        setError('浏览器识别不可用，已切换到云端识别，请再试一次。')
+        escalateToGateway()
         return
       }
       setError('没有听清，请再读一次。')
@@ -133,12 +157,17 @@ export function usePronunciationPractice(onTranscript: (text: string) => void, r
     instance.onend = () => setRecording(false)
     setError('')
     setRecording(true)
-    instance.start()
+    try {
+      instance.start()
+    } catch {
+      escalateToGateway()
+    }
   }
 
   const start = () => {
     if (preferGateway.current || !browserSpeechSupported()) {
       preferGateway.current = true
+      writePreferGateway()
       void startGateway()
       return
     }
