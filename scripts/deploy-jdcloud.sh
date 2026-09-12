@@ -72,6 +72,7 @@ set_env LLM_GATEWAY_URL https://aiapimgrapi.aidigitcloud.cn
 set_env LLM_GATEWAY_TENANT Japan
 set_env LLM_GATEWAY_CHAT_CAPABILITY quality-chat
 set_env LLM_GATEWAY_ENRICH_CAPABILITY fast-chat
+set_env LLM_GATEWAY_PASSAGE_CAPABILITY fast-chat
 set_env LLM_GATEWAY_SPEECH_CAPABILITY speech
 set_env LLM_GATEWAY_VISION_CAPABILITY vision
 set_env DATABASE_URL 'postgresql://kotonoha_app:kotonoha_app@127.0.0.1:5433/kotonoha'
