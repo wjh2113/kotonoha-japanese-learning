@@ -319,71 +319,74 @@ function App() {
     <SettingsContext.Provider value={settings}>
     <div className="app-shell">
       <AppHeader
-        open={mobileNav} view={view} settings={settings}
+        open={mobileNav} view={view}
         starredCount={starredCount} errorBookCount={errorBookCount} reviewCount={reviewCount}
-        onMenu={() => setMobileNav((current) => !current)} onView={nav} onSettingsChange={setSettings}
+        onMenu={() => setMobileNav((current) => !current)} onView={nav}
       />
-      <MobileTopBar view={view} settings={settings} onView={nav} onSettingsChange={setSettings} onMenu={() => setMobileNav((current) => !current)} />
-      {missingMeanings > 0 && (
-        <div className="enrich-banner">正在补全全部单词释义，还剩 {missingMeanings} 个。补完后测试会覆盖整个单元。</div>
-      )}
-      <main className="main">
-        {view === 'home' && <HomeView units={units} unit={unit} settings={settings} onView={nav} />}
-        {view === 'library' && <LibraryView units={units} unitId={unitId} onUnit={setUnitId} onImport={openImport} onNewUnit={() => setNewUnitOpen(true)} onRenameUnit={renameUnit} onDeleteUnit={requestDeleteUnit} />}
-        {view === 'study' && unit && (
-          <StudyView
-            unit={unit} units={units} selectedWord={selectedWord} onUnit={setUnitId}
-            onSelect={setSelectedId} onImport={() => openImport()}
-            onToggleMastered={toggleMastered}
-            onEdit={(word, changes) => updateWord(word.id, changes)}
-            onToggleStar={(word) => { updateWord(word.id, { starred: !word.starred }); setToast(word.starred ? '已移出生词本' : '已加入生词本') }}
-            search={search} onSearch={setSearch}
-            onTest={() => setView('test')}
-            onDictation={() => openDictation('plan')}
-          />
+      <div className="workspace">
+        <DesktopTopBar settings={settings} onView={nav} onSettingsChange={setSettings} />
+        <MobileTopBar view={view} settings={settings} onView={nav} onSettingsChange={setSettings} onMenu={() => setMobileNav((current) => !current)} />
+        {missingMeanings > 0 && (
+          <div className="enrich-banner">正在补全全部单词释义，还剩 {missingMeanings} 个。补完后测试会覆盖整个单元。</div>
         )}
-        {view === 'test' && unit && <TestView unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')} onAnswer={(word, kind, correct) => updateWord(word.id, recordQuizAnswer(word, kind, correct))} />}
-        {view === 'dictation' && unit && (
-          <DictationView
-            key={`${dictationMode}-${dictationSeed.length}-${dictationSeed[0]?.id || unit.id}`}
-            unit={unit} units={units} mode={dictationMode} seedWords={dictationSeed}
-            autoStart={dictationMode === 'errors' && dictationSeed.length > 0}
-            onUnit={setUnitId}
-            onBack={() => setView(dictationMode === 'errors' ? 'errorbook' : 'study')}
-            onCorrect={(word) => updateWordById(word.id, (live) => ({
-              ...recordQuizAnswer(live, 'listening', true),
-              mastered: live.mastered,
-              ...(dictationMode === 'errors' ? { errorReviewed: true } : {}),
-            }))}
-            onMiss={(word) => updateWordById(word.id, (live) => ({
-              ...recordQuizAnswer(live, 'listening', false),
-              wrongBook: true,
-              dictationMisses: Math.min(99, (live.dictationMisses || 0) + 1),
-              ...(dictationMode === 'errors' ? { errorReviewed: true } : {}),
-            }))}
-            onMaster={(word) => updateWordById(word.id, (live) => ({ mastered: true, ...scheduleReview(live, true) }))}
-            onOpenErrorBook={() => nav('errorbook')}
-            onOpenTest={() => nav('test')}
-            onOpenStudy={() => nav('study')}
-          />
-        )}
-        {view === 'wordbook' && <WordbookView units={units} onRemove={(wordId, targetUnitId) => { updateWord(wordId, { starred: false }, targetUnitId); setToast('已移出生词本') }} />}
-        {view === 'errorbook' && (
-          <ErrorBookView
-            units={units}
-            onBack={() => nav('study')}
-            onStart={(words) => openDictation('errors', words)}
-            onRemove={(wordId, targetUnitId) => { updateWord(wordId, { wrongBook: false, dictationMisses: 0, errorReviewed: false }, targetUnitId); setToast('已移出错词本') }}
-            onMaster={(word, targetUnitId) => { updateWord(word.id, { mastered: true, ...scheduleReview(word, true) }, targetUnitId); setToast('已标记掌握') }}
-          />
-        )}
-        {view === 'review' && <ReviewView units={units} onReview={(word, targetUnitId, remembered) => { updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId); setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒') }} />}
-        {view === 'passage' && <PassageView units={units} onAddWords={(targetUnitId, words) => {
-          const target = units.find((item) => item.id === targetUnitId)
-          if (target) addImportedWords(target, words)
-        }} />}
-        {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} starredCount={starredCount} errorBookCount={errorBookCount} onView={nav} />}
-      </main>
+        <main className="main">
+          {view === 'home' && <HomeView units={units} unit={unit} settings={settings} onView={nav} />}
+          {view === 'library' && <LibraryView units={units} unitId={unitId} onUnit={setUnitId} onImport={openImport} onNewUnit={() => setNewUnitOpen(true)} onRenameUnit={renameUnit} onDeleteUnit={requestDeleteUnit} />}
+          {view === 'study' && unit && (
+            <StudyView
+              unit={unit} units={units} selectedWord={selectedWord} onUnit={setUnitId}
+              onSelect={setSelectedId} onImport={() => openImport()}
+              onToggleMastered={toggleMastered}
+              onEdit={(word, changes) => updateWord(word.id, changes)}
+              onToggleStar={(word) => { updateWord(word.id, { starred: !word.starred }); setToast(word.starred ? '已移出生词本' : '已加入生词本') }}
+              search={search} onSearch={setSearch}
+              onTest={() => setView('test')}
+              onDictation={() => openDictation('plan')}
+            />
+          )}
+          {view === 'test' && unit && <TestView unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')} onAnswer={(word, kind, correct) => updateWord(word.id, recordQuizAnswer(word, kind, correct))} />}
+          {view === 'dictation' && unit && (
+            <DictationView
+              key={`${dictationMode}-${dictationSeed.length}-${dictationSeed[0]?.id || unit.id}`}
+              unit={unit} units={units} mode={dictationMode} seedWords={dictationSeed}
+              autoStart={dictationMode === 'errors' && dictationSeed.length > 0}
+              onUnit={setUnitId}
+              onBack={() => setView(dictationMode === 'errors' ? 'errorbook' : 'study')}
+              onCorrect={(word) => updateWordById(word.id, (live) => ({
+                ...recordQuizAnswer(live, 'listening', true),
+                mastered: live.mastered,
+                ...(dictationMode === 'errors' ? { errorReviewed: true } : {}),
+              }))}
+              onMiss={(word) => updateWordById(word.id, (live) => ({
+                ...recordQuizAnswer(live, 'listening', false),
+                wrongBook: true,
+                dictationMisses: Math.min(99, (live.dictationMisses || 0) + 1),
+                ...(dictationMode === 'errors' ? { errorReviewed: true } : {}),
+              }))}
+              onMaster={(word) => updateWordById(word.id, (live) => ({ mastered: true, ...scheduleReview(live, true) }))}
+              onOpenErrorBook={() => nav('errorbook')}
+              onOpenTest={() => nav('test')}
+              onOpenStudy={() => nav('study')}
+            />
+          )}
+          {view === 'wordbook' && <WordbookView units={units} onRemove={(wordId, targetUnitId) => { updateWord(wordId, { starred: false }, targetUnitId); setToast('已移出生词本') }} />}
+          {view === 'errorbook' && (
+            <ErrorBookView
+              units={units}
+              onBack={() => nav('study')}
+              onStart={(words) => openDictation('errors', words)}
+              onRemove={(wordId, targetUnitId) => { updateWord(wordId, { wrongBook: false, dictationMisses: 0, errorReviewed: false }, targetUnitId); setToast('已移出错词本') }}
+              onMaster={(word, targetUnitId) => { updateWord(word.id, { mastered: true, ...scheduleReview(word, true) }, targetUnitId); setToast('已标记掌握') }}
+            />
+          )}
+          {view === 'review' && <ReviewView units={units} onReview={(word, targetUnitId, remembered) => { updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId); setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒') }} />}
+          {view === 'passage' && <PassageView units={units} onAddWords={(targetUnitId, words) => {
+            const target = units.find((item) => item.id === targetUnitId)
+            if (target) addImportedWords(target, words)
+          }} />}
+          {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} starredCount={starredCount} errorBookCount={errorBookCount} onView={nav} />}
+        </main>
+      </div>
       <MobileTabBar view={view} reviewCount={reviewCount} onView={nav} />
 
       {importOpen && importUnit && <ImportModal unit={importUnit} onClose={() => setImportOpen(false)} onImported={(words, description) => addImportedWords(importUnit, words, description)} />}
@@ -487,46 +490,31 @@ function AvatarThemeMenu({
   )
 }
 
-function AppHeader({ open, view, settings, starredCount, errorBookCount, reviewCount, onMenu, onView, onSettingsChange }: {
-  open: boolean; view: View; settings: AppSettings; starredCount: number; errorBookCount: number; reviewCount: number
-  onMenu: () => void; onView: (view: View) => void; onSettingsChange: (settings: AppSettings) => void
+function AppHeader({ open, view, starredCount, errorBookCount, reviewCount, onMenu, onView }: {
+  open: boolean; view: View; starredCount: number; errorBookCount: number; reviewCount: number
+  onMenu: () => void; onView: (view: View) => void
 }) {
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
-    { id: 'home', label: '首页', icon: <Home size={17} /> },
-    { id: 'study', label: '单词学习', icon: <BookOpen size={17} /> },
-    { id: 'passage', label: '课文学习', icon: <FileText size={17} /> },
-    { id: 'test', label: '测试', icon: <GraduationCap size={17} /> },
-    { id: 'dictation', label: '听写', icon: <Keyboard size={17} /> },
-    { id: 'wordbook', label: '生词本', icon: <BookMarked size={17} />, count: starredCount },
-    { id: 'errorbook', label: '错题本', icon: <NotebookPen size={17} />, count: errorBookCount },
-    { id: 'review', label: '复习', icon: <Clock3 size={17} />, count: reviewCount },
-    { id: 'settings', label: '设置', icon: <Settings size={17} /> },
+    { id: 'home', label: '首页', icon: <Home size={18} strokeWidth={1.6} /> },
+    { id: 'study', label: '单词学习', icon: <BookOpen size={18} strokeWidth={1.6} /> },
+    { id: 'passage', label: '课文学习', icon: <FileText size={18} strokeWidth={1.6} /> },
+    { id: 'test', label: '测试', icon: <GraduationCap size={18} strokeWidth={1.6} /> },
+    { id: 'dictation', label: '听写', icon: <Keyboard size={18} strokeWidth={1.6} /> },
+    { id: 'wordbook', label: '生词本', icon: <BookMarked size={18} strokeWidth={1.6} />, count: starredCount },
+    { id: 'errorbook', label: '错词本', icon: <NotebookPen size={18} strokeWidth={1.6} />, count: errorBookCount },
+    { id: 'review', label: '复习', icon: <Clock3 size={18} strokeWidth={1.6} />, count: reviewCount },
+    { id: 'settings', label: '设置', icon: <Settings size={18} strokeWidth={1.6} /> },
   ]
   return (
     <aside className={`app-sidebar ${open ? 'open' : ''}`}>
-      <div className="sidebar-brand">
-        <span className="sidebar-leaf" aria-hidden><Sprout size={20} /></span>
-        <div>
-          <b>にほんご学習</b>
-          <small>一词一句，遇见更好的自己</small>
-        </div>
+      <div className="sidebar-mobile-head">
+        <span className="sidebar-leaf" aria-hidden><Sprout size={18} strokeWidth={1.75} /></span>
+        <b>にほんご学習</b>
         <button className="header-menu sidebar-close" onClick={onMenu} aria-label="关闭菜单"><X size={18} /></button>
-      </div>
-      <div className="sidebar-profile">
-        <AvatarThemeMenu
-          settings={settings}
-          onSettingsChange={onSettingsChange}
-          onOpenSettings={() => onView('settings')}
-          ariaLabel="主题与设置"
-        />
-        <div>
-          <b>{settings.displayName || '小林同学'}</b>
-          <small>学习中</small>
-        </div>
       </div>
       <nav className="sidebar-nav">
         {items.map((item) => (
-          <button key={item.id} type="button" className={view === item.id ? 'active' : ''} onClick={() => onView(item.id)}>
+          <button key={item.id} type="button" className={view === item.id ? 'active' : ''} onClick={() => { onView(item.id); if (open) onMenu() }}>
             {item.icon}<span>{item.label}</span>
             {Boolean(item.count) && <em>{item.count}</em>}
           </button>
@@ -534,18 +522,53 @@ function AppHeader({ open, view, settings, starredCount, errorBookCount, reviewC
       </nav>
       <div className="sidebar-art" aria-hidden>
         <p className="jp">日本語を<br />もっと好きに</p>
-        <svg viewBox="0 0 200 90" className="sidebar-mountains">
-          <path d="M0 70 L40 35 L70 55 L110 20 L150 50 L180 30 L200 55 L200 90 L0 90 Z" fill="currentColor" opacity=".35" />
-          <path d="M0 78 L55 48 L90 65 L130 40 L200 70 L200 90 L0 90 Z" fill="currentColor" opacity=".22" />
-          <circle cx="158" cy="22" r="8" fill="#e8a45a" opacity=".85" />
+        <svg viewBox="0 0 220 110" className="sidebar-fuji" fill="none">
+          <ellipse cx="170" cy="28" rx="18" ry="8" fill="#f3d9a8" opacity=".55" />
+          <path d="M10 95 C40 70 55 78 70 62 C90 40 105 48 120 30 C140 8 155 28 175 45 C190 58 205 52 220 62 L220 110 L10 110 Z" fill="currentColor" opacity=".16" />
+          <path d="M30 110 C50 82 70 88 88 70 C108 50 122 58 140 42 C155 30 168 48 185 58 C198 66 210 62 220 70 L220 110 Z" fill="currentColor" opacity=".28" />
+          <path d="M95 38 C102 28 112 24 120 30 C114 36 105 40 95 38 Z" fill="#fff" opacity=".55" />
+          <circle cx="42" cy="72" r="3" fill="#e8b7c4" opacity=".8" />
+          <circle cx="58" cy="78" r="2.2" fill="#e8b7c4" opacity=".65" />
+          <circle cx="48" cy="84" r="2.5" fill="#d9a0b0" opacity=".7" />
         </svg>
       </div>
     </aside>
   )
 }
 
+function DesktopTopBar({ settings, onView, onSettingsChange }: {
+  settings: AppSettings; onView: (view: View) => void; onSettingsChange: (settings: AppSettings) => void
+}) {
+  return (
+    <header className="desktop-topbar">
+      <button type="button" className="topbar-brand" onClick={() => onView('home')}>
+        <span className="topbar-leaf" aria-hidden><Sprout size={18} strokeWidth={1.75} /></span>
+        <span className="topbar-brand-text">
+          <b>日语学习</b>
+          <small>一词一句，遇见更好的自己</small>
+        </span>
+      </button>
+      <div className="topbar-right">
+        <button type="button" className="icon-button" aria-label="通知"><Bell size={18} strokeWidth={1.6} /></button>
+        <div className="topbar-user">
+          <AvatarThemeMenu
+            settings={settings}
+            onSettingsChange={onSettingsChange}
+            onOpenSettings={() => onView('settings')}
+            ariaLabel="主题与设置"
+          />
+          <div>
+            <b>{settings.displayName || '小林同学'}</b>
+            <small>N3 · 学习中</small>
+          </div>
+        </div>
+      </div>
+    </header>
+  )
+}
+
 const VIEW_TITLES: Record<View, string> = {
-  home: '首页', library: '词库', study: '单词学习', passage: '课文学习', test: '测试', dictation: '听写', wordbook: '生词本', errorbook: '错题本', review: '复习', settings: '设置',
+  home: '首页', library: '词库', study: '单词学习', passage: '课文学习', test: '测试', dictation: '听写', wordbook: '生词本', errorbook: '错词本', review: '复习', settings: '设置',
 }
 
 function MobileTopBar({ view, settings, onView, onSettingsChange, onMenu }: {
