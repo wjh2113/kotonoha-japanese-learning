@@ -835,19 +835,22 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                                 <div className="passage-transcript-practice">
                                   <div className="passage-transcript-meta">
                                     <span className="jp reading">{item.reading || '—'}</span>
-                                    <button
-                                      type="button"
-                                      className="volume-button"
-                                      onClick={() => void speakJapanese(item.text, voiceGender, { sentence: true })}
-                                      aria-label="再听一遍"
-                                    >
-                                      <Volume2 size={18} />
-                                    </button>
+                                    <span className="passage-transcript-actions">
+                                      <button
+                                        type="button"
+                                        className="volume-button"
+                                        onClick={() => void speakJapanese(item.text, voiceGender, { sentence: true })}
+                                        aria-label="再听一遍"
+                                      >
+                                        <Volume2 size={18} />
+                                      </button>
+                                      <SentencePronunciation
+                                        compact
+                                        sentence={item}
+                                        onScore={(score) => patchPassage(passage.id, { progress: recordSentenceScore(passage.progress, item.id, score) })}
+                                      />
+                                    </span>
                                   </div>
-                                  <SentencePronunciation
-                                    sentence={item}
-                                    onScore={(score) => patchPassage(passage.id, { progress: recordSentenceScore(passage.progress, item.id, score) })}
-                                  />
                                 </div>
                               )}
                             </li>
@@ -1046,7 +1049,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   )
 }
 
-function SentencePronunciation({ sentence, onScore }: { sentence: PassageSentence; onScore?: (score: number) => void }) {
+function SentencePronunciation({ sentence, onScore, compact }: { sentence: PassageSentence; onScore?: (score: number) => void; compact?: boolean }) {
   const [transcript, setTranscript] = useState('')
   const [score, setScore] = useState<number | null>(null)
   const practice = usePronunciationPractice((text) => {
@@ -1061,19 +1064,40 @@ function SentencePronunciation({ sentence, onScore }: { sentence: PassageSentenc
     setScore(null)
   }, [sentence.id])
 
+  const recordButton = (
+    <button
+      type="button"
+      className={`inline-record ${compact ? 'compact' : ''} ${practice.recording ? 'recording' : ''}`}
+      disabled={practice.evaluating}
+      onClick={() => {
+        if (practice.recording) practice.stop()
+        else { setScore(null); setTranscript(''); practice.start() }
+      }}
+      aria-label={practice.evaluating ? '正在分析' : practice.recording ? '结束跟读' : '开始跟读'}
+    >
+      {practice.evaluating ? <span className="spinner" /> : practice.recording ? <Pause size={compact ? 15 : 18} /> : <Mic size={compact ? 15 : 18} />}
+      {!compact && <span>{practice.evaluating ? '正在分析…' : practice.recording ? '结束跟读' : '开始跟读'}</span>}
+    </button>
+  )
+
+  if (compact) {
+    return (
+      <div className="inline-practice compact">
+        {recordButton}
+        {practice.error && <div className="speech-error">{practice.error}</div>}
+        {score !== null && (
+          <div className={`inline-score ${score >= 80 ? 'great' : score >= 55 ? 'okay' : 'retry'}`}>
+            <b>{score}<small>分</small></b>
+            <span>{score >= 80 ? '跟读很接近课文' : score >= 55 ? '已经听得出大意了' : '请再慢一点、按课文朗读'}<small>识别结果：{transcript}</small></span>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="inline-practice">
-      <button
-        className={`inline-record ${practice.recording ? 'recording' : ''}`}
-        disabled={practice.evaluating}
-        onClick={() => {
-          if (practice.recording) practice.stop()
-          else { setScore(null); setTranscript(''); practice.start() }
-        }}
-      >
-        {practice.evaluating ? <span className="spinner" /> : practice.recording ? <Pause size={18} /> : <Mic size={18} />}
-        <span>{practice.evaluating ? '正在分析…' : practice.recording ? '结束跟读' : '开始跟读'}</span>
-      </button>
+      {recordButton}
       {practice.error && <div className="speech-error">{practice.error}</div>}
       {score !== null && (
         <div className={`inline-score ${score >= 80 ? 'great' : score >= 55 ? 'okay' : 'retry'}`}>
