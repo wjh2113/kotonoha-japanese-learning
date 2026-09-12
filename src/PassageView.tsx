@@ -185,33 +185,42 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       }
       const total = current.sentences.length
       let finished = total - pending.length
+      let chunkErrors = 0
       for (const chunk of chunkItems(pending)) {
         if (!passagesRef.current.some((item) => item.id === passageId)) return
         patchPassage(passageId, { status: 'processing', statusText: `正在生成整句翻译 ${finished}/${total}` })
-        const response = await apiFetch('/api/passage/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sentences: chunk.map((sentence) => ({ text: sentence.text })) }),
-        })
-        const data = await readApiJson<{ title?: string; sentences?: unknown[]; error?: string }>(response)
-        if (!response.ok) throw new Error(publicApiMessage(data.error, '课文解析失败，请稍后重试。'))
-        const latest = passagesRef.current.find((item) => item.id === passageId)
-        if (!latest) return
-        finished = Math.min(total, finished + chunk.length)
-        const analyzedTitle = passageTitle(data.title, '')
-        patchPassage(passageId, {
-          sentences: mergeAnalyzedSentences(latest.sentences, data.sentences || []),
-          status: 'processing',
-          statusText: `正在生成整句翻译 ${finished}/${total}`,
-          ...(latest.title === '课文' && analyzedTitle && !looksLikeErrorDocument(analyzedTitle) ? { title: analyzedTitle } : {}),
-        })
+        try {
+          const response = await apiFetch('/api/passage/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sentences: chunk.map((sentence) => ({ text: sentence.text })) }),
+          })
+          const data = await readApiJson<{ title?: string; sentences?: unknown[]; error?: string }>(response)
+          if (!response.ok) throw new Error(publicApiMessage(data.error, '课文解析失败，请稍后重试。'))
+          const latest = passagesRef.current.find((item) => item.id === passageId)
+          if (!latest) return
+          finished = Math.min(total, finished + chunk.length)
+          const analyzedTitle = passageTitle(data.title, '')
+          patchPassage(passageId, {
+            sentences: mergeAnalyzedSentences(latest.sentences, data.sentences || []),
+            status: 'processing',
+            statusText: `正在生成整句翻译 ${finished}/${total}`,
+            ...(latest.title === '课文' && analyzedTitle && !looksLikeErrorDocument(analyzedTitle) ? { title: analyzedTitle } : {}),
+          })
+        } catch (reason) {
+          chunkErrors += 1
+          console.error('passage analyze chunk failed:', reason)
+          // Keep going so one bad batch does not leave the whole lesson untranslated.
+        }
       }
       const latest = passagesRef.current.find((item) => item.id === passageId)
       if (!latest) return
       const missing = latest.sentences.filter((sentence) => !hasChineseTranslation(sentence.translation)).length
       patchPassage(passageId, {
         status: missing ? 'error' : 'ready',
-        statusText: missing ? `还有 ${missing} 句没有中文翻译，可点重试` : '',
+        statusText: missing
+          ? (chunkErrors ? `还有 ${missing} 句没有中文翻译（${chunkErrors} 批失败），可点重试` : `还有 ${missing} 句没有中文翻译，可点重试`)
+          : '',
       })
     } catch (reason) {
       const latest = passagesRef.current.find((item) => item.id === passageId)
@@ -757,7 +766,13 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                 {(mode === 'read' || mode === 'explain') && (
                   hasChineseTranslation(sentence.translation)
                     ? <p className="translation">{sentence.translation}</p>
-                    : <p className="translation muted">{passage.status === 'processing' ? '整句翻译生成中…' : '暂无整句翻译'}</p>
+                    : <p className="translation muted">
+                        {passage.status === 'processing'
+                          ? '整句翻译生成中…'
+                          : passage.status === 'error'
+                            ? '整句翻译还没生成成功，请点上方红色提示里的「重试」。'
+                            : '暂无整句翻译'}
+                      </p>
                 )}
                 {mode === 'read' && (
                   <SentencePronunciation
