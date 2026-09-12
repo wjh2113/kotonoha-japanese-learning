@@ -70,6 +70,23 @@ describe('mergeAnalyzedSentences', () => {
     expect(merged[0].translation).toBe('在学校遇见了朋友。')
     expect(merged[0].tokens[0].surface).toBe('学校')
   })
+
+  it('does not shift analysis onto unrelated Chinese notes', () => {
+    const current = [
+      { id: '1', text: '会話', reading: '', translation: '', tokens: [], grammar: [] },
+      { id: '2', text: '能够向店员询问商品，并能请店员帮助寻找其他商品。', reading: '', translation: '', tokens: [], grammar: [] },
+      { id: '3', text: 'てんいん', reading: '', translation: '', tokens: [], grammar: [] },
+    ]
+    const merged = mergeAnalyzedSentences(current, [
+      { text: '会話', reading: 'かいわ', translation: '会话。', tokens: [{ surface: '会話', reading: 'かいわ', meaning: '会话' }] },
+      { text: 'てんいん', reading: 'てんいん', translation: '店员。', tokens: [{ surface: 'てんいん', reading: 'てんいん', meaning: '店员' }] },
+    ])
+    expect(merged[0].translation).toBe('会话。')
+    expect(merged[1].translation).toBe('')
+    expect(merged[1].reading).toBe('')
+    expect(merged[2].translation).toBe('店员。')
+    expect(merged[2].reading).toBe('てんいん')
+  })
 })
 
 describe('interrupted passage ingest', () => {

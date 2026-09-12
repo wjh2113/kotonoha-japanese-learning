@@ -89,11 +89,23 @@ export function normalizePassageSentence(item: unknown, fallbackId = ''): Passag
 }
 
 export function mergeAnalyzedSentences(current: PassageSentence[], analyzed: unknown[]) {
-  const unused = (Array.isArray(analyzed) ? analyzed : []).map((item) => normalizePassageSentence(item)).filter((item) => item.text)
+  const unused = (Array.isArray(analyzed) ? analyzed : [])
+    .map((item) => normalizePassageSentence(item))
+    .filter((item) => item.text)
+  const normalizeKey = (text: string) => text.replace(/\s+/g, '').trim()
+  const byExact = new Map<string, PassageSentence>()
+  const byLoose = new Map<string, PassageSentence>()
+  for (const item of unused) {
+    if (!byExact.has(item.text)) byExact.set(item.text, item)
+    const loose = normalizeKey(item.text)
+    if (loose && !byLoose.has(loose)) byLoose.set(loose, item)
+  }
   return current.map((sentence) => {
-    const index = unused.findIndex((item) => item.text === sentence.text)
-    const match = index >= 0 ? unused.splice(index, 1)[0] : unused.shift()
+    // Only match by text — never shift leftovers onto unrelated lines (e.g. Chinese notes).
+    const match = byExact.get(sentence.text) || byLoose.get(normalizeKey(sentence.text))
     if (!match) return sentence
+    byExact.delete(match.text)
+    byLoose.delete(normalizeKey(match.text))
     return {
       ...sentence,
       reading: match.reading || sentence.reading,

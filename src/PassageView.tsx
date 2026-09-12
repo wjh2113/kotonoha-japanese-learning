@@ -182,18 +182,30 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       if (!pending.length) {
         // Mark Chinese notes as self-translated so UI leaves "生成中".
         const normalized = current.sentences.map((sentence) => (
-          isPrimarilyChineseLine(sentence.text) && !hasChineseTranslation(sentence.translation)
-            ? { ...sentence, translation: sentence.text, tokens: sentence.tokens?.length ? sentence.tokens : [{ surface: sentence.text, reading: '', meaning: sentence.text }] }
+          isPrimarilyChineseLine(sentence.text)
+            ? {
+                ...sentence,
+                translation: sentence.text,
+                reading: '',
+                tokens: [{ surface: sentence.text, reading: '', meaning: sentence.text }],
+                grammar: [],
+              }
             : sentence
         ))
         patchPassage(passageId, { sentences: normalized, status: 'ready', statusText: '' })
         return
       }
-      // Prefill Chinese instructional lines so they do not block progress counts.
+      // Prefill Chinese instructional lines (and repair any previously mis-merged results).
       patchPassage(passageId, {
         sentences: current.sentences.map((sentence) => (
-          isPrimarilyChineseLine(sentence.text) && !hasChineseTranslation(sentence.translation)
-            ? { ...sentence, translation: sentence.text, tokens: sentence.tokens?.length ? sentence.tokens : [{ surface: sentence.text, reading: '', meaning: sentence.text }] }
+          isPrimarilyChineseLine(sentence.text)
+            ? {
+                ...sentence,
+                translation: sentence.text,
+                reading: '',
+                tokens: [{ surface: sentence.text, reading: '', meaning: sentence.text }],
+                grammar: [],
+              }
             : sentence
         )),
       })
@@ -782,20 +794,16 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
               </ol>
               <article className="passage-card">
                 <div className="passage-card-head">
-                  <span className="jp reading">{sentence.reading || (passage.status === 'processing' ? '读音生成中…' : '暂无读音')}</span>
+                  <span className="jp reading">{sentence.reading || '—'}</span>
                   <button className="volume-button" onClick={() => void speakJapanese(sentence.text, voiceGender, { sentence: true })} aria-label="朗读这句"><Volume2 size={19} /></button>
                 </div>
                 <h3 className="jp">{sentence.text}</h3>
                 {(mode === 'read' || mode === 'explain') && (
                   hasChineseTranslation(sentence.translation)
                     ? <p className="translation">{sentence.translation}</p>
-                    : <p className="translation muted">
-                        {passage.status === 'processing'
-                          ? '整句翻译生成中…'
-                          : passage.status === 'error'
-                            ? '整句翻译还没生成成功，请点上方红色提示里的「重试」。'
-                            : '暂无整句翻译'}
-                      </p>
+                    : (passage.status === 'processing'
+                      ? null
+                      : <p className="translation muted">{passage.status === 'error' ? '整句翻译还没生成成功，请点上方红色提示里的「重试」。' : '暂无整句翻译'}</p>)
                 )}
                 {mode === 'read' && (
                   <SentencePronunciation
@@ -825,7 +833,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                         {point.pattern && <code className="jp">{point.pattern}</code>}
                         <p>{point.explanation}</p>
                       </article>
-                    )) : <p className="empty-grammar">{passage.status === 'processing' ? '语法标注生成中…' : '这一句没有标出特别的语法点。'}</p>}
+                    )) : <p className="empty-grammar">{passage.status === 'processing' ? '语法标注稍后出现。' : '这一句没有标出特别的语法点。'}</p>}
                   </div>
                 )}
                 <div className="detail-nav">
