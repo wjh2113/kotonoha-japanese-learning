@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   clampDictationGoal, compactKana, dictationGap, isStickyMiss, katakanaDiff, matchesErrorBookFilter,
   matchesKatakanaAnswer, pickDictationWords, pickErrorBookWords, reinsertAfterMiss, removeCurrent,
-  sessionMissStats, toKatakana, unitStudyProgress, wordKatakana,
+  sessionMissStats, suggestedReviewWords, toKatakana, unitStudyProgress, wordKatakana,
 } from './dictation'
 import { makeFallbackWord } from './utils'
 
@@ -61,6 +61,14 @@ describe('today plan picking', () => {
     const mastered = { ...makeFallbackWord({ term: '犬', reading: 'いぬ', meaning: '狗' }), mastered: true }
     const done = makeFallbackWord({ term: '水', reading: 'みず', meaning: '水' })
     expect(pickDictationWords([mastered, done, fresh], 5, [done.id]).map((word) => word.term)).toEqual(['猫', '犬'])
+  })
+
+  it('does not suggest review for words that have never been dictated', () => {
+    const untouched = makeFallbackWord({ term: '猫', reading: 'ねこ', meaning: '猫' })
+    const masteredOnly = { ...makeFallbackWord({ term: '犬', reading: 'いぬ', meaning: '狗' }), mastered: true }
+    const missed = { ...makeFallbackWord({ term: '水', reading: 'みず', meaning: '水' }), listeningWrong: 2, wrongBook: true }
+    expect(suggestedReviewWords([untouched, masteredOnly]).map((word) => word.term)).toEqual([])
+    expect(suggestedReviewWords([untouched, masteredOnly, missed]).map((word) => word.term)).toEqual(['水'])
   })
 })
 

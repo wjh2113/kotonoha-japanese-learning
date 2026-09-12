@@ -1,16 +1,17 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import {
   BookOpen, Check, CheckCircle2, ChevronLeft, ClipboardList, GraduationCap, Headphones,
-  Keyboard, Lightbulb, Pencil, RotateCcw, SkipBack, ThumbsUp, X,
+  Keyboard, Lightbulb, Pencil, RotateCcw, SkipBack, ThumbsUp, Volume2, X,
 } from 'lucide-react'
 import { SettingsContext } from './settings-context'
-import { speakJapanese } from './speech'
+import { speakJapanese, stopSpeaking } from './speech'
 import type { Unit, Word } from './types'
 import {
-  clampDictationGoal, dictationCandidates, dictationGap, katakanaDiff,
-  loadDictationPlan, matchesKatakanaAnswer, pickDictationWords, pickErrorBookWords,
-  reinsertAfterMiss, removeCurrent, saveDictationPlan, sessionMissStats, suggestedReviewWords,
-  unitStudyProgress, wordKatakana, type DictationPlan,
+  clampDictationGoal, clampPlaySpeed, clampPlayTimes, dictationCandidates, dictationGap, katakanaDiff,
+  loadDictationPlan, loadDictationPlay, matchesKatakanaAnswer, pickDictationWords, pickErrorBookWords,
+  PLAY_SPEED_OPTIONS, PLAY_TIMES_OPTIONS, reinsertAfterMiss, removeCurrent, saveDictationPlan,
+  saveDictationPlay, sessionMissStats, suggestedReviewWords, unitStudyProgress, wordKatakana,
+  type DictationPlan, type DictationPlay,
 } from './dictation'
 
 type QueueItem = { word: Word; misses: number }
@@ -37,6 +38,8 @@ export function DictationView({
 }) {
   const { voiceGender } = useContext(SettingsContext)
   const [plan, setPlan] = useState<DictationPlan>(() => loadDictationPlan())
+  const [playSettings, setPlaySettings] = useState<DictationPlay>(() => loadDictationPlay())
+  const [playIndex, setPlayIndex] = useState(0)
   const [goalDraft, setGoalDraft] = useState(String(plan.goal))
   const [editingGoal, setEditingGoal] = useState(false)
   const [started, setStarted] = useState(false)
@@ -58,6 +61,7 @@ export function DictationView({
   const waitTimer = useRef<number>(0)
   const pendingQueue = useRef<QueueItem[] | null>(null)
   const autoStarted = useRef(false)
+  const playToken = useRef(0)
 
   const sourceWords = mode === 'errors' ? (seedWords.length ? seedWords : unit.words) : unit.words
   const candidates = dictationCandidates(sourceWords)
@@ -87,19 +91,39 @@ export function DictationView({
     persistPlan({ ...plan, goal })
   }
 
-  const play = (word?: Word) => {
+  const persistPlay = (next: DictationPlay) => {
+    const saved = { times: clampPlayTimes(next.times), speed: clampPlaySpeed(next.speed) }
+    saveDictationPlay(saved)
+    setPlaySettings(saved)
+  }
+
+  const play = async (word?: Word, times = playSettings.times) => {
     if (!word) return
-    void speakJapanese(word.term, voiceGender)
+    const token = ++playToken.current
+    const total = clampPlayTimes(times)
+    setPlayIndex(1)
+    for (let round = 0; round < total; round += 1) {
+      if (playToken.current !== token) return
+      setPlayIndex(round + 1)
+      await speakJapanese(word.term, voiceGender, { speed: playSettings.speed, restart: round === 0 })
+      if (round < total - 1 && playToken.current === token) {
+        await new Promise((resolve) => window.setTimeout(resolve, 280))
+      }
+    }
   }
 
   useEffect(() => {
     if (!started || !current || reveal) return
-    play(current)
+    void play(current)
     setTyped('')
     inputRef.current?.focus()
-  }, [started, current?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [started, current?.id, playSettings.times, playSettings.speed]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => () => window.clearInterval(waitTimer.current), [])
+  useEffect(() => () => {
+    playToken.current += 1
+    stopSpeaking()
+    window.clearInterval(waitTimer.current)
+  }, [])
 
   const clearWait = () => {
     window.clearInterval(waitTimer.current)
@@ -275,7 +299,7 @@ export function DictationView({
               </label>
             )}
             <h1>{errorReview ? '错词本听写' : '单词听写'}</h1>
-            <p>{errorReview ? '只听写还没掌握的错词。写对后仍留在错词本，点掌握或移出才会清掉。' : '先听发音，再写出片假名。写对变绿，写错会标红，错过的词会按间隔在本轮稍后重出。'}</p>
+            <p>{errorReview ? '只听写还没掌握的错词。写对后仍留在错词本，点掌握或移出才会清掉。' : '先听发音，再写出片假名。每个单词会按设定次数自动连读。写对变绿，写错会标红。'}</p>
           </div>
         </section>
         <section className="dictation-setup">
@@ -288,6 +312,7 @@ export function DictationView({
           <p>{errorReview
             ? `本次将复习 ${candidates.length} 个错词`
             : `本单元可听写 ${candidates.length} 词 · 建议复习 ${dueReview} 词 · 今天已完成 ${learnedToday}/${plan.goal}`}</p>
+          <DictationPlayBar play={playSettings} onChange={persistPlay} />
           <button className="primary-button" onClick={start}>{errorReview ? '开始复习错词' : '开始听写'}</button>
         </section>
         {!errorReview && (
@@ -339,7 +364,8 @@ export function DictationView({
   return (
     <div className="page dictation-page dictation-session">
       <div className="dictation-top">
-        <button className="back-link" onClick={() => { clearWait(); setStarted(false); setFinished(false) }}><ChevronLeft size={17} />{errorReview ? '错词本' : unit.name}</button>
+        <button className="back-link" onClick={() => { playToken.current += 1; stopSpeaking(); clearWait(); setStarted(false); setFinished(false) }}><ChevronLeft size={17} />{errorReview ? '错词本' : unit.name}</button>
+        <DictationPlayBar play={playSettings} onChange={persistPlay} compact current={playIndex} />
         <small>剩余 {remaining} 词{sessionMastered.length ? ` · 本轮掌握 ${sessionMastered.length}` : ''}{sessionReviewed ? ` · 复习 ${sessionReviewed}` : ''}</small>
       </div>
 
@@ -355,7 +381,10 @@ export function DictationView({
           </header>
         )}
         {!reveal && (
-          <p className="dictation-hint">听发音，写出这个单词的片假名</p>
+          <p className="dictation-hint">
+            听发音，写出这个单词的片假名
+            {playSettings.times > 1 && playIndex > 0 && <em>正在播放 {playIndex}/{playSettings.times}</em>}
+          </p>
         )}
         {reveal ? (
           <p className={`dictation-typed jp ${reveal.ok ? 'ok' : 'bad'}`} aria-live="polite">
@@ -392,7 +421,7 @@ export function DictationView({
 
       <div className="dictation-controls">
         <button type="button" disabled={!history.length} onClick={previous}><SkipBack size={18} />上一个单词</button>
-        <button type="button" onClick={() => play(current)}><RotateCcw size={18} />再读一遍</button>
+        <button type="button" onClick={() => void play(current, 1)}><RotateCcw size={18} />再读一遍</button>
         {reveal
           ? <button type="button" className="primary-button" onClick={skipWait}>{reveal.ok ? (waitLeft ? '跳过等待' : '下一个') : '下一个继续'}</button>
           : <button type="button" className="primary-button" disabled={!typed.trim()} onClick={check}><CheckCircle2 size={18} />核对答案</button>}
@@ -508,6 +537,34 @@ function NextStepSheet({
   )
 }
 
+function DictationPlayBar({
+  play, onChange, compact = false, current = 0,
+}: {
+  play: DictationPlay
+  onChange: (play: DictationPlay) => void
+  compact?: boolean
+  current?: number
+}) {
+  return (
+    <div className={`dictation-playbar ${compact ? 'compact' : ''}`}>
+      <Volume2 size={15} />
+      <label>
+        <span className="sr-only">每个单词播放次数</span>
+        <select aria-label="每个单词播放次数" value={play.times} onChange={(event) => onChange({ ...play, times: Number(event.target.value) })}>
+          {PLAY_TIMES_OPTIONS.map((times) => <option key={times} value={times}>重复{times}次</option>)}
+        </select>
+      </label>
+      <label>
+        <span className="sr-only">播放倍速</span>
+        <select aria-label="播放倍速" value={play.speed} onChange={(event) => onChange({ ...play, speed: Number(event.target.value) })}>
+          {PLAY_SPEED_OPTIONS.map((speed) => <option key={speed} value={speed}>倍速{speed}X</option>)}
+        </select>
+      </label>
+      {compact && current > 0 && <small>播放 {current}/{play.times}</small>}
+    </div>
+  )
+}
+
 function DictationStats({
   plan, dueReview, learnedToday, reviewedToday, newPercent, editingGoal, goalDraft,
   onEditGoal, onGoalDraft, onCommitGoal,
@@ -533,7 +590,7 @@ function DictationStats({
         <button type="button" onClick={onEditGoal} aria-label="修改今日计划"><Pencil size={13} /></button>
       </span>
       <span>建议今日复习：<b>{dueReview}</b> 词</span>
-      <span>已复习/今日计划复习：<b>{reviewedToday}/{dueReview}</b>{dueReview ? ` ${Math.round(reviewedToday / Math.max(dueReview, 1) * 100)}%` : ''}</span>
+      <span>已复习/今日计划复习：<b>{reviewedToday}/{dueReview}</b>{dueReview ? ` ${Math.round(reviewedToday / Math.max(dueReview, 1) * 100)}%` : ' 0%'}</span>
       <span>已学习/今日计划新词：<b>{Math.min(learnedToday, plan.goal)}/{plan.goal}</b> {newPercent}%</span>
     </footer>
   )

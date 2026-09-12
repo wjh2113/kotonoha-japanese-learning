@@ -3,9 +3,13 @@ import type { Word } from './types'
 import { getReviewState, toHiragana } from './utils'
 
 export const DICTATION_PLAN_KEY = 'kotonoha-dictation-plan-v1'
+export const DICTATION_PLAY_KEY = 'kotonoha-dictation-play-v1'
 export const DEFAULT_DICTATION_GOAL = 20
 export const MIN_DICTATION_GOAL = 5
 export const MAX_DICTATION_GOAL = 200
+export const DEFAULT_PLAY_TIMES = 3
+export const PLAY_TIMES_OPTIONS = [1, 2, 3, 4, 5] as const
+export const PLAY_SPEED_OPTIONS = [0.75, 1, 1.25, 1.5] as const
 
 export type DictationPlan = {
   date: string
@@ -55,6 +59,44 @@ export function saveDictationPlan(plan: DictationPlan) {
     ...plan,
     date: todayKey(),
     goal: clampDictationGoal(plan.goal),
+  }))
+}
+
+export type DictationPlay = {
+  times: number
+  speed: number
+}
+
+export function clampPlayTimes(value: number) {
+  if (!Number.isFinite(value)) return DEFAULT_PLAY_TIMES
+  return Math.max(1, Math.min(5, Math.round(value)))
+}
+
+export function clampPlaySpeed(value: number) {
+  const speed = Number(value)
+  return (PLAY_SPEED_OPTIONS as readonly number[]).includes(speed) ? speed : 1
+}
+
+export function emptyDictationPlay(): DictationPlay {
+  return { times: DEFAULT_PLAY_TIMES, speed: 1 }
+}
+
+export function loadDictationPlay(): DictationPlay {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DICTATION_PLAY_KEY) || '')
+    return {
+      times: clampPlayTimes(Number(parsed?.times)),
+      speed: clampPlaySpeed(Number(parsed?.speed)),
+    }
+  } catch {
+    return emptyDictationPlay()
+  }
+}
+
+export function saveDictationPlay(play: DictationPlay) {
+  localStorage.setItem(DICTATION_PLAY_KEY, JSON.stringify({
+    times: clampPlayTimes(play.times),
+    speed: clampPlaySpeed(play.speed),
   }))
 }
 
@@ -113,8 +155,16 @@ export function dictationCandidates(words: Word[]) {
   return words.filter((word) => looksLikeVocabularyTerm(word.term) && compactKana(wordKatakana(word)))
 }
 
+export function hasDictationHistory(word: Word) {
+  return Boolean(word.wrongBook) || (word.listeningCorrect || 0) + (word.listeningWrong || 0) > 0
+}
+
 export function suggestedReviewWords(words: Word[], now = Date.now()) {
-  return dictationCandidates(words).filter((word) => getReviewState(word, now).due)
+  return dictationCandidates(words).filter((word) => {
+    if (!hasDictationHistory(word)) return false
+    if (word.wrongBook && !word.mastered) return true
+    return getReviewState(word, now).due
+  })
 }
 
 export function pickDictationWords(words: Word[], goal: number, alreadyLearned: string[] = []) {

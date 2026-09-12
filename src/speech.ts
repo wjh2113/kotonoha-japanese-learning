@@ -23,18 +23,40 @@ export function selectJapaneseVoice(voices: SpeechSynthesisVoice[], voiceGender:
   return { voice: matched || japanese.find((voice) => !unwanted.test(`${voice.name} ${voice.voiceURI}`)) || japanese[0] || null, nativeMatch: Boolean(matched) }
 }
 
-export async function speakJapanese(text: string, voiceGender: VoiceGender, options: { sentence?: boolean; onStart?: () => void; onEnd?: () => void } = {}) {
-  if (!text.trim() || typeof speechSynthesis === 'undefined') return
-  speechSynthesis.cancel()
+export async function speakJapanese(text: string, voiceGender: VoiceGender, options: {
+  sentence?: boolean
+  speed?: number
+  restart?: boolean
+  onStart?: () => void
+  onEnd?: () => void
+} = {}) {
+  if (!text.trim() || typeof speechSynthesis === 'undefined') {
+    options.onEnd?.()
+    return
+  }
+  if (options.restart !== false) speechSynthesis.cancel()
   const utterance = new SpeechSynthesisUtterance(text)
   utterance.lang = 'ja-JP'
-  utterance.rate = options.sentence ? 0.82 : 0.72
+  const base = options.sentence ? 0.82 : 0.72
+  const speed = Number.isFinite(options.speed) ? Number(options.speed) : 1
+  utterance.rate = Math.max(0.3, Math.min(2, base * speed))
   utterance.pitch = voiceGender === 'male' ? 0.72 : 1.06
   utterance.voice = selectJapaneseVoice(await loadSpeechVoices(), voiceGender).voice
-  utterance.onstart = () => options.onStart?.()
-  utterance.onend = () => options.onEnd?.()
-  utterance.onerror = () => options.onEnd?.()
-  speechSynthesis.speak(utterance)
+  await new Promise<void>((resolve) => {
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      window.clearTimeout(timer)
+      options.onEnd?.()
+      resolve()
+    }
+    const timer = window.setTimeout(finish, 8000)
+    utterance.onstart = () => options.onStart?.()
+    utterance.onend = finish
+    utterance.onerror = finish
+    speechSynthesis.speak(utterance)
+  })
 }
 
 export function stopSpeaking() {
