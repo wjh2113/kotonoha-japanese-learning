@@ -175,8 +175,7 @@ function parseJsonContent(content) {
   }
   const candidates = []
   for (let i = 0; i < cleaned.length; i += 1) {
-    const ch = cleaned[i]
-    if (ch !== '{' && ch !== '[') continue
+    if (cleaned[i] !== '{') continue
     let depth = 0
     for (let j = i; j < cleaned.length; j += 1) {
       const cur = cleaned[j]
@@ -185,7 +184,8 @@ function parseJsonContent(content) {
         depth -= 1
         if (depth === 0) {
           const slice = cleaned.slice(i, j + 1)
-          if (/\"sentences\"\s*:/.test(slice) || /\"words\"\s*:/.test(slice) || ch === '[') candidates.push(slice)
+          // Only keep schema objects — ignore nested grammar/token arrays.
+          if (/\"sentences\"\s*:/.test(slice) || /\"words\"\s*:/.test(slice)) candidates.push(slice)
           break
         }
       }
@@ -193,19 +193,19 @@ function parseJsonContent(content) {
   }
   for (const slice of candidates.reverse()) {
     try {
-      return tryParse(slice)
+      const parsed = tryParse(slice)
+      if (Array.isArray(parsed?.sentences) || Array.isArray(parsed?.words)) return parsed
     } catch {
       // keep trying earlier candidates
     }
   }
-  const firstObj = cleaned.indexOf('{')
-  const firstArr = cleaned.indexOf('[')
-  const useArray = firstArr >= 0 && (firstObj < 0 || firstArr < firstObj)
-  const first = useArray ? firstArr : firstObj
-  const last = useArray ? cleaned.lastIndexOf(']') : cleaned.lastIndexOf('}')
+  const first = cleaned.indexOf('{')
+  const last = cleaned.lastIndexOf('}')
   if (first < 0 || last < first) throw new Error('模型没有返回有效 JSON。')
   try {
-    return tryParse(cleaned.slice(first, last + 1))
+    const parsed = tryParse(cleaned.slice(first, last + 1))
+    if (Array.isArray(parsed?.sentences) || Array.isArray(parsed?.words)) return parsed
+    throw new Error('模型没有返回有效 JSON。')
   } catch {
     throw new Error('模型没有返回有效 JSON。')
   }
