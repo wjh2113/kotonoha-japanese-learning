@@ -91,7 +91,10 @@ async function fileToBase64(blob: Blob) {
 
 async function fileToCompressedJpeg(file: File) {
   try {
-    const bitmap = await createImageBitmap(file)
+    const bitmap = await Promise.race([
+      createImageBitmap(file),
+      new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error('图片处理超时，请换一张更小的照片或直接粘贴正文。')), 15_000)),
+    ])
     const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height))
     const canvas = document.createElement('canvas')
     canvas.width = Math.max(1, Math.round(bitmap.width * scale))
@@ -104,7 +107,8 @@ async function fileToCompressedJpeg(file: File) {
       canvas.toBlob((result) => result ? resolve(result) : reject(new Error('图片压缩失败。')), 'image/jpeg', 0.82)
     })
     return fileToBase64(blob)
-  } catch {
+  } catch (reason) {
+    if (reason instanceof Error && /超时/.test(reason.message)) throw reason
     if (file.size > 2 * 1024 * 1024) throw new Error('图片无法压缩，请换一张更小的照片。')
     return fileToBase64(file)
   }
@@ -311,8 +315,11 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     try {
       const parts: string[] = []
       if (text.trim() && !isPassagePlaceholder(text) && !looksLikeErrorDocument(text)) parts.push(text.trim())
+      if (!images.length && !parts.length) throw new Error('没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
       for (const [index, image] of images.slice(0, 4).entries()) {
-        if (!passagesRef.current.some((item) => item.id === passageId)) return
+        if (!passagesRef.current.some((item) => item.id === passageId)) {
+          throw new Error('课文已取消，识别已停止。')
+        }
         patchPassage(passageId, { status: 'processing', statusText: `正在识别课文图片 ${index + 1}/${Math.min(images.length, 4)}…` })
         const recognized = await ocrImage(image)
         if (recognized) parts.push(recognized)
@@ -359,14 +366,30 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   const ocrImage = async (blob: Blob) => {
     const file = blob instanceof File ? blob : new File([blob], 'paste.jpg', { type: blob.type || 'image/jpeg' })
     const imageBase64 = await fileToCompressedJpeg(file)
-    const response = await apiFetch('/api/passage/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageBase64, mimeType: 'image/jpeg' }) })
-    const data = await readApiJson<{ text?: string; error?: string }>(response)
-    if (!response.ok) throw new Error(publicApiMessage(data.error, '图片识别失败，请稍后重试。'))
-    const text = String(data.text || '').trim()
-    if (!text || looksLikeErrorDocument(text) || text === PASSAGE_OCR_PLACEHOLDER) {
-      throw new Error('没有识别到日语课文，请换更清晰的照片或直接粘贴文本。')
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 90_000)
+    try {
+      const response = await apiFetch('/api/passage/ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64, mimeType: 'image/jpeg' }),
+        signal: controller.signal,
+      })
+      const data = await readApiJson<{ text?: string; error?: string }>(response)
+      if (!response.ok) throw new Error(publicApiMessage(data.error, '图片识别失败，请稍后重试。'))
+      const text = String(data.text || '').trim()
+      if (!text || looksLikeErrorDocument(text) || text === PASSAGE_OCR_PLACEHOLDER) {
+        throw new Error('没有识别到日语课文，请换更清晰的照片或直接粘贴文本。')
+      }
+      return text
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') {
+        throw new Error('图片识别超时（约 90 秒）。请换更清晰的照片，或直接粘贴正文。')
+      }
+      throw reason
+    } finally {
+      window.clearTimeout(timeout)
     }
-    return text
   }
 
   const readUpload = async (file?: File) => {
