@@ -4,6 +4,7 @@ import {
   ScrollText, Sparkles, SquarePen, Trash2, UploadCloud, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, readApiJson } from './api'
+import { clipboardImageFiles, normalizeOcrText } from './clipboard-images'
 import { extractDocxPassage, htmlToPassageText, readPassageSource } from './docx'
 import { PASSAGE_OCR_PLACEHOLDER, isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import {
@@ -377,7 +378,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       })
       const data = await readApiJson<{ text?: string; error?: string }>(response)
       if (!response.ok) throw new Error(publicApiMessage(data.error, '图片识别失败，请稍后重试。'))
-      const text = String(data.text || '').trim()
+      const text = normalizeOcrText(data.text)
       if (!text || looksLikeErrorDocument(text) || text === PASSAGE_OCR_PLACEHOLDER) {
         throw new Error('没有识别到日语课文，请换更清晰的照片或直接粘贴文本。')
       }
@@ -413,14 +414,18 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     if (ingesting.current) return
     const clipboard = event.clipboardData
     if (!clipboard) return
+    const imageFiles = clipboardImageFiles(clipboard)
     const files = Array.from(clipboard.files || [])
-    const imageFiles = files.filter((file) => file.type.startsWith('image/'))
     const wordFile = files.find((file) => file.name.toLowerCase().endsWith('.docx') || file.type.includes('wordprocessingml'))
+      || Array.from(clipboard.items || []).map((item) => item.getAsFile()).find((file) => file && (file.name.toLowerCase().endsWith('.docx') || file.type.includes('wordprocessingml'))) || undefined
     const html = clipboard.getData('text/html')
     const plain = clipboard.getData('text/plain')
     const htmlText = html ? htmlToPassageText(html) : ''
     const text = (htmlText.length > plain.trim().length ? htmlText : plain).trim()
-    if (!imageFiles.length && !wordFile && !(immediate && text)) return
+    if (!imageFiles.length && !wordFile && !(immediate && text)) {
+      if (!immediate && !text) setNotice('没有检测到图片或课文文字。请用 Ctrl+V 贴到上方虚线框，或点选上传图片/Word。')
+      return
+    }
     ingesting.current = true
     event.preventDefault()
     setNotice('')
@@ -430,7 +435,13 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
         queueIngest(source.text, source.images, draftTitle)
         return
       }
-      queueIngest(text, imageFiles, draftTitle)
+      // Prefer images when present: screenshot pastes often also carry useless HTML/plain fragments.
+      if (imageFiles.length) {
+        setNotice(`已收到 ${imageFiles.length} 张图片，正在识别…`)
+        queueIngest('', imageFiles, draftTitle)
+        return
+      }
+      queueIngest(text, [], draftTitle)
     } catch (reason) {
       if (plain.trim()) setRaw(plain)
       setNotice(reason instanceof Error ? reason.message : '粘贴内容无法识别。')
@@ -793,7 +804,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
               <input type="file" accept="image/jpeg,image/png,image/webp,image/*,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.txt,text/plain" hidden disabled={Boolean(busy)} onChange={(event) => { void readUpload(event.target.files?.[0]); event.target.value = '' }} />
               {busy ? <span className="spinner dark" /> : <UploadCloud />}
               <b>{busy || '拖入、点击或直接粘贴'}</b>
-              <span>Word / JPG / PNG / WEBP，Word 内嵌图片也会识别</span>
+              <span>支持截图 Ctrl+V、Word / JPG / PNG；Word 内嵌图片也会识别</span>
             </label>
             <div className="or"><span />或粘贴课文<span /></div>
             <textarea

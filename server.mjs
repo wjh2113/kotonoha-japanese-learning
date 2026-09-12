@@ -451,7 +451,7 @@ app.post('/api/passage/ocr', rateLimit(60_000, 8), async (req, res) => {
       messages: [{
         role: 'user',
         content: [
-          { type: 'text', text: '你是日语教师。请识别这张课文/教材照片中的全部日语正文。只输出识别到的原文，保留换行，不要翻译，不要解释，不要Markdown。若几乎没有日语，请输出空字符串。' },
+          { type: 'text', text: '你是日语教师。请识别这张课文/教材照片中的全部日语正文。只输出识别到的原文，保留换行，不要翻译，不要解释，不要Markdown。若几乎没有日语，只输出 EMPTY。' },
           { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
         ],
       }],
@@ -462,7 +462,12 @@ app.post('/api/passage/ocr', rateLimit(60_000, 8), async (req, res) => {
       max_tokens: 2048,
     }, 120000)
     const text = String(data?.choices?.[0]?.message?.content || '').trim()
-    if (!text || looksLikeErrorDocument(text)) return res.status(422).json({ error: '没有识别到日语课文，请换更清晰的照片或直接粘贴文本。' })
+      .replace(/^```(?:\w+)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim()
+    if (!text || looksLikeErrorDocument(text) || /^(EMPTY|（?空字符串）?|empty|none|n\/a)$/i.test(text)) {
+      return res.status(422).json({ error: '没有识别到日语课文，请换更清晰的照片或直接粘贴文本。' })
+    }
     res.json({ text })
   } catch (error) {
     console.error(error)
