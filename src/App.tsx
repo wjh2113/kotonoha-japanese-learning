@@ -14,7 +14,7 @@ import { ErrorBookView } from './ErrorBookView'
 import { SettingsContext, DEFAULT_SETTINGS } from './settings-context'
 import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
-import { DEFAULT_UNIT_THEME, fallbackUnitTheme, fetchUnitTheme, isPlaceholderTheme } from './theme'
+import { DEFAULT_UNIT_THEME, fallbackUnitTheme, isPlaceholderTheme } from './theme'
 import { buildQuizOptions, ENRICH_BATCH_SIZE, isPlaceholderMeaning, mergeEnrichedWord, optionLabel, orderQuizByWeakness, recordQuizAnswer, sharedDistractors, usableQuizWords } from './quiz'
 import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, parseVocabulary, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, uid } from './utils'
 
@@ -43,8 +43,6 @@ function App() {
   const databaseErrorShown = useRef(false)
   const persistPaused = useRef(true)
   const themeRequested = useRef(new Set<string>())
-  const themeAttempts = useRef(new Map<string, number>())
-  const THEME_MAX_ATTEMPTS = 3
   const [settings, setSettings] = useState<AppSettings>(() => {
     try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '') } } catch { return DEFAULT_SETTINGS }
   })
@@ -94,15 +92,19 @@ function App() {
         persistPaused.current = true
         setDatabaseReady(true)
         try {
-          for (let step = 0; step < 80; step += 1) {
-            const response = await apiFetch('/api/enrich-missing', { method: 'POST' })
-            const data = await response.json()
-            if (cancelled) return
-            if (Array.isArray(data.units) && data.units.length) setUnits(data.units)
-            if (data.settings) setSettings({ ...DEFAULT_SETTINGS, ...data.settings })
-            if (!response.ok) break
-            if (!data.remaining) break
-            if (!data.filled && data.remaining > 0) break
+          const hasPlaceholders = (Array.isArray(stored.units) ? stored.units : units)
+            .some((item: { words?: { meaning?: string }[] }) => (item.words || []).some((word) => isPlaceholderMeaning(word.meaning)))
+          if (hasPlaceholders) {
+            for (let step = 0; step < 6; step += 1) {
+              const response = await apiFetch('/api/enrich-missing', { method: 'POST' })
+              const data = await response.json()
+              if (cancelled) return
+              if (Array.isArray(data.units) && data.units.length) setUnits(data.units)
+              if (data.settings) setSettings({ ...DEFAULT_SETTINGS, ...data.settings })
+              if (!response.ok) break
+              if (!data.remaining) break
+              if (!data.filled && data.remaining > 0) break
+            }
           }
         } catch { /* keep whatever the database already has */ }
         if (!cancelled) {
@@ -150,36 +152,13 @@ function App() {
       item.words.length > 0
       && isPlaceholderTheme(item.description)
       && !themeRequested.current.has(item.id)
-      && (themeAttempts.current.get(item.id) || 0) < THEME_MAX_ATTEMPTS
     ))
     if (!pending.length) return
     pending.forEach((item) => themeRequested.current.add(item.id))
-    void (async () => {
-      for (const item of pending) {
-        try {
-          const description = await fetchUnitTheme(item.name, item.words)
-          themeAttempts.current.delete(item.id)
-          setUnits((current) => current.map((unit) => (
-            unit.id === item.id && isPlaceholderTheme(unit.description)
-              ? { ...unit, description }
-              : unit
-          )))
-        } catch {
-          const attempts = (themeAttempts.current.get(item.id) || 0) + 1
-          themeAttempts.current.set(item.id, attempts)
-          if (attempts >= THEME_MAX_ATTEMPTS) {
-            const description = fallbackUnitTheme(item.name, item.words)
-            setUnits((current) => current.map((unit) => (
-              unit.id === item.id && isPlaceholderTheme(unit.description)
-                ? { ...unit, description }
-                : unit
-            )))
-          }
-        } finally {
-          themeRequested.current.delete(item.id)
-        }
-      }
-    })()
+    setUnits((current) => current.map((unit) => {
+      if (!pending.some((item) => item.id === unit.id) || !isPlaceholderTheme(unit.description)) return unit
+      return { ...unit, description: fallbackUnitTheme(unit.name, unit.words) }
+    }))
   }, [auth, databaseReady, units])
 
   const unit = units.find((item) => item.id === unitId) || units[0]
@@ -502,7 +481,7 @@ function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onRenameUnit,
               )}
             </div>
             <p className={isPlaceholderTheme(item.description) ? 'unit-theme pending' : 'unit-theme'}>
-              {item.words.length && isPlaceholderTheme(item.description) ? 'AI 正在根据词汇归纳主题…' : item.description}
+              {item.words.length && isPlaceholderTheme(item.description) ? '主题归纳中…' : item.description}
             </p>
             <div className="unit-card-meta"><span>{item.words.length} 个单词</span><span>{learned} 个已掌握</span></div>
             <div className="unit-progress"><i style={{ width: `${percent}%`, background: item.color }} /></div>
@@ -1020,13 +999,9 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
   const enrich = async () => {
     if (!drafts.length) return
     setLoading(true); setNotice('')
-    const finish = async (words: Word[]) => {
-      let theme = ''
-      try { theme = await fetchUnitTheme(unit.name, [...unit.words, ...words]) } catch { /* App will retry placeholder units */ }
-      onImported(words, theme)
-    }
     try {
       const enriched: Partial<Word>[] = Array.from({ length: drafts.length }, () => ({}))
+      let themeFromModel = ''
       const chunkSize = ENRICH_BATCH_SIZE
       for (let start = 0; start < drafts.length; start += chunkSize) {
         const chunk = drafts.slice(start, start + chunkSize)
@@ -1036,13 +1011,20 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
           const data = await response.json()
           if (!response.ok || !Array.isArray(data.words)) throw new Error(data.error || 'AI 解析失败')
           data.words.forEach((item: Partial<Word>, offset: number) => { enriched[start + offset] = item })
+          if (!themeFromModel && typeof data.unitDescription === 'string' && data.unitDescription.trim()) {
+            themeFromModel = data.unitDescription.trim().slice(0, 16)
+          }
         } catch { /* this batch stays on local fallback and can be filled later */ }
       }
       const words: Word[] = drafts.map((draft, index) => mergeEnrichedWord(makeFallbackWord(draft), enriched[index] || {}))
-      await finish(words)
+      const theme = themeFromModel && !isPlaceholderTheme(themeFromModel)
+        ? themeFromModel
+        : fallbackUnitTheme(unit.name, [...unit.words, ...words])
+      onImported(words, theme)
     } catch {
-      setNotice('词卡已用本地模板生成，正在尝试单独归纳单元主题…')
-      await finish(drafts.map(makeFallbackWord))
+      const words = drafts.map(makeFallbackWord)
+      onImported(words, fallbackUnitTheme(unit.name, [...unit.words, ...words]))
+      setNotice('词卡已用本地模板生成。')
     } finally { setLoading(false) }
   }
 

@@ -4,7 +4,7 @@ import type { ImportDraft, Passage, PassageSentence, SentenceProgress } from './
 
 const PARTICLES = /^(は|が|を|に|の|と|も|で|へ|や|か|ね|よ|な|だ|です|ます|した|して)$/
 
-export const PASSAGE_ANALYZE_CHUNK = 4
+export const PASSAGE_ANALYZE_CHUNK = 3
 
 export function hasChineseTranslation(text?: string) {
   return /[\u4e00-\u9fff]/.test(String(text || '').trim())

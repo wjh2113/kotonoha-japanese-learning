@@ -3,7 +3,7 @@ import { isChineseGloss, looksLikeVocabularyTerm, quizGloss } from './lexeme'
 import type { Word } from './types'
 import { scheduleReview, shuffle } from './utils'
 
-export const ENRICH_BATCH_SIZE = 20
+export const ENRICH_BATCH_SIZE = 12
 
 export function isPlaceholderMeaning(meaning?: string) {
   return !isChineseGloss(meaning)
