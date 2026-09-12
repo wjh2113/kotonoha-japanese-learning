@@ -22,7 +22,6 @@ import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer
 
 const STORAGE_KEY = 'kotonoha-units-v1'
 const SETTINGS_KEY = 'kotonoha-settings-v1'
-const THEME_USER_PICKED_KEY = 'kotonoha-theme-user-picked'
 const SIDEBAR_COLLAPSED_KEY = 'kotonoha-sidebar-collapsed'
 const COLORS = ['#dd5b43', '#668b87', '#d39a43', '#786f95', '#6d8d55']
 
@@ -34,16 +33,11 @@ function writeSidebarCollapsed(collapsed: boolean) {
   try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0') } catch { /* ignore */ }
 }
 
-/** Until the user explicitly picks a theme, force design default matcha (overrides legacy aka in DB). */
-function withPromotedMatchaTheme(settings: AppSettings): AppSettings {
-  try {
-    if (localStorage.getItem(THEME_USER_PICKED_KEY)) return settings
-  } catch { /* ignore */ }
-  return { ...settings, theme: 'matcha' }
-}
-
-function markThemeUserPicked() {
-  try { localStorage.setItem(THEME_USER_PICKED_KEY, '1') } catch { /* ignore */ }
+function normalizeSettings(raw?: Partial<AppSettings> | null): AppSettings {
+  const next = { ...DEFAULT_SETTINGS, ...raw }
+  const theme = next.theme
+  if (theme !== 'aka' && theme !== 'ai' && theme !== 'matcha') next.theme = 'matcha'
+  return next
 }
 
 function App() {
@@ -72,7 +66,7 @@ function App() {
   const themeRequested = useRef(new Set<string>())
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
-      return withPromotedMatchaTheme({ ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '') })
+      return normalizeSettings(JSON.parse(localStorage.getItem(SETTINGS_KEY) || ''))
     } catch {
       return DEFAULT_SETTINGS
     }
@@ -120,7 +114,7 @@ function App() {
         if (cancelled) return
         if (Array.isArray(stored.units) && stored.units.length) {
           setUnits(stored.units)
-          setSettings(withPromotedMatchaTheme({ ...DEFAULT_SETTINGS, ...stored.settings }))
+          setSettings(normalizeSettings(stored.settings))
         } else {
           const seed = await apiFetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ units, settings }) })
           if (!seed.ok) throw new Error('DATABASE_SEED_FAILED')
@@ -138,7 +132,9 @@ function App() {
               const data = await response.json()
               if (cancelled) return
               if (Array.isArray(data.units) && data.units.length) setUnits(data.units)
-              if (data.settings) setSettings(withPromotedMatchaTheme({ ...DEFAULT_SETTINGS, ...data.settings }))
+              if (data.settings) {
+                setSettings((current) => normalizeSettings({ ...data.settings, theme: current.theme || data.settings.theme }))
+              }
               if (!response.ok) break
               if (!data.remaining) break
               if (!data.filled && data.remaining > 0) break
@@ -184,7 +180,7 @@ function App() {
           if (!pendingPersist.current && Array.isArray(stored.units)) {
             persistPaused.current = true
             setUnits(stored.units)
-            if (stored.settings) setSettings(withPromotedMatchaTheme({ ...DEFAULT_SETTINGS, ...stored.settings }))
+            // Keep client settings (esp. theme) — PUT echo can race with a just-changed theme.
             window.setTimeout(() => { persistPaused.current = false }, 0)
           }
         } catch {
@@ -499,7 +495,6 @@ function AvatarThemeMenu({
                 aria-checked={current === option.id}
                 className={current === option.id ? 'active' : ''}
                 onClick={() => {
-                  markThemeUserPicked()
                   onSettingsChange({ ...settings, theme: option.id })
                   setOpen(false)
                 }}
@@ -1346,7 +1341,7 @@ function SettingsView({ settings, onChange, starredCount = 0, errorBookCount = 0
       )}
       <div className="settings-layout">
         <section className="settings-card"><div className="settings-title"><UserRound /><div><h2>头像</h2><p>选择一个代表你的文字头像。</p></div></div><div className="avatar-options">{avatars.map((avatar) => <button key={avatar} className={settings.avatar === avatar ? 'active' : ''} onClick={() => onChange({ ...settings, avatar })}>{avatar}{settings.avatar === avatar && <CheckCircle2 />}</button>)}</div><label className="custom-avatar">自定义<input maxLength={2} value={settings.avatar} onChange={(event) => onChange({ ...settings, avatar: event.target.value || 'ゆ' })} /></label></section>
-        <section className="settings-card"><div className="settings-title"><Palette /><div><h2>主题颜色</h2><p>选择整套界面的主色调，随时可换。</p></div></div><div className="voice-options theme-options">{([['matcha', '抹茶', '清新日式绿，默认'], ['aka', '绯红', '暖橘红'], ['ai', '黛蓝', '沉静书卷气']] as const).map(([id, name, desc]) => <button key={id} className={(settings.theme || 'matcha') === id ? 'active' : ''} onClick={() => { markThemeUserPicked(); onChange({ ...settings, theme: id }) }}><span className={`theme-swatch theme-swatch-${id}`} /><div><b>{name}</b><small>{desc}</small></div>{(settings.theme || 'matcha') === id && <CheckCircle2 />}</button>)}</div></section>
+        <section className="settings-card"><div className="settings-title"><Palette /><div><h2>主题颜色</h2><p>选择整套界面的主色调，随时可换。</p></div></div><div className="voice-options theme-options">{([['matcha', '抹茶', '清新日式绿，默认'], ['aka', '绯红', '暖橘红'], ['ai', '黛蓝', '沉静书卷气']] as const).map(([id, name, desc]) => <button key={id} className={(settings.theme || 'matcha') === id ? 'active' : ''} onClick={() => onChange({ ...settings, theme: id })}><span className={`theme-swatch theme-swatch-${id}`} /><div><b>{name}</b><small>{desc}</small></div>{(settings.theme || 'matcha') === id && <CheckCircle2 />}</button>)}</div></section>
         <section className="settings-card"><div className="settings-title"><AudioLines /><div><h2>日语朗读音色</h2><p>系统会优先匹配设备中对应性别的日语语音。</p></div></div><div className="voice-options"><button className={settings.voiceGender === 'female' ? 'active' : ''} onClick={() => onChange({ ...settings, voiceGender: 'female' })}><span>女</span><div><b>女声</b><small>清晰、柔和</small></div>{settings.voiceGender === 'female' && <CheckCircle2 />}</button><button className={settings.voiceGender === 'male' ? 'active' : ''} onClick={() => onChange({ ...settings, voiceGender: 'male' })}><span>男</span><div><b>男声</b><small>沉稳、自然</small></div>{settings.voiceGender === 'male' && <CheckCircle2 />}</button></div><div className="voice-preview"><span><b>试听当前音色</b><small className="jp">こんにちは</small><em>{voiceStatus}</em></span><VolumeButton word={sample} /></div></section>
       </div>
     </div>
