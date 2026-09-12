@@ -570,7 +570,7 @@ body { background: var(--cream); color: var(--ink); }
 .passage-toggle { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; color: #6e7278; cursor: pointer; user-select: none; }
 .passage-toggle input { width: 36px; height: 20px; accent-color: var(--red); }
 .passage-transcript-card { display: grid; gap: 14px; padding-bottom: 88px; }
-.passage-transcript { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: min(62vh, 720px); overflow: auto; }
+.passage-transcript { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: none; overflow: visible; }
 .passage-transcript > li { border-radius: 10px; }
 .passage-transcript > li.active { background: var(--accent-wash); box-shadow: inset 3px 0 var(--red); }
 .passage-transcript > li.speaking .passage-transcript-line .jp { color: var(--red); }
@@ -619,7 +619,7 @@ body { background: var(--cream); color: var(--ink); }
 .intensive-cols-head > div + div { border-left: 1px solid var(--line); }
 .intensive-cols-head b { font-size: 14px; }
 .intensive-cols-head small { color: #8d8e89; font-size: 11px; line-height: 1.4; }
-.intensive-rows { max-height: min(68vh, 760px); overflow: auto; }
+.intensive-rows { max-height: none; overflow: visible; }
 .intensive-row { display: grid; grid-template-columns: 1.1fr 0.9fr; border-bottom: 1px solid #f0ebe4; }
 .intensive-row.active { background: #fff7f4; }
 .intensive-row.speaking .intensive-source-text .jp { color: var(--red); }
@@ -656,7 +656,7 @@ body { background: var(--cream); color: var(--ink); }
 .passage-modes { display: flex; gap: 8px; margin-bottom: 12px; }
 .passage-modes button { height: 36px; padding: 0 14px; border: 1px solid #e5e0d8; border-radius: 8px; background: white; cursor: pointer; font-size: 12px; font-weight: 700; }
 .passage-modes button.active { background: var(--red); border-color: var(--red); color: white; }
-.passage-sentences { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; max-height: 180px; overflow: auto; }
+.passage-sentences { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; max-height: none; overflow: visible; }
 .passage-sentences button { width: 100%; border: 1px solid var(--line); background: white; border-radius: 8px; padding: 9px 11px; display: flex; gap: 10px; align-items: center; text-align: left; cursor: pointer; }
 .passage-sentences button.active { border-color: #f08f7f; background: #fff8f5; }
 .passage-sentences button.speaking { box-shadow: inset 3px 0 var(--red); }
@@ -1085,6 +1085,7 @@ body { background: var(--cream); color: var(--ink); }
 .workspace {
   margin-left: 220px; min-height: 100vh; display: flex; flex-direction: column;
   transition: margin-left .28s ease;
+  overflow: visible;
 }
 .app-shell.sidebar-collapsed .app-sidebar {
   transform: translateX(-105%);
@@ -1499,7 +1500,7 @@ body { background: var(--cream); color: var(--ink); }
 }
 .intensive-col {
   background: var(--paper); border: 1px solid var(--line); border-radius: 18px;
-  display: flex; flex-direction: column; min-height: 420px; overflow: hidden;
+  display: flex; flex-direction: column; min-height: 420px; overflow: visible;
   box-shadow: 0 8px 22px rgba(45,50,43,.03);
 }
 .intensive-col > header {
@@ -1508,7 +1509,8 @@ body { background: var(--cream); color: var(--ink); }
 }
 .intensive-col > header b { display: inline-flex; align-items: center; gap: 7px; color: var(--red-dark); }
 .intensive-col > header small { color: var(--muted); font-size: 12px; }
-.intensive-col-body { flex: 1; overflow: auto; max-height: min(62vh, 680px); }
+/* Grow with the page; avoid a second scroll trap beside the document. */
+.intensive-col-body { flex: 1 1 auto; overflow: visible; max-height: none; }
 .intensive-line, .intensive-input-row {
   display: flex; align-items: flex-start; gap: 8px; width: 100%; padding: 12px 14px;
   border-bottom: 1px solid #eef0e8; background: transparent;
@@ -1562,6 +1564,10 @@ body { background: var(--cream); color: var(--ink); }
 }
 .shadow-list-card header b, .shadow-panel > header b { display: inline-flex; align-items: center; gap: 6px; }
 .shadow-list { max-height: none; overflow: visible; }
+.shadow-list button {
+  width: 100%; border: 0; background: transparent; display: flex; gap: 10px; align-items: center;
+  padding: 11px 12px; border-radius: 12px; cursor: pointer; text-align: left;
+}
 .shadow-list button.active { background: var(--accent-wash); box-shadow: none; }
 .shadow-list button em {
   min-width: 22px; height: 22px; border-radius: 50%; background: #eef1e8; color: #8a9080;
@@ -1631,6 +1637,7 @@ body { background: var(--cream); color: var(--ink); }
   background: var(--paper); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px 0;
   min-width: 0; display: flex; flex-direction: column; min-height: 0;
   box-shadow: 0 8px 22px rgba(45,50,43,.03);
+  overflow: visible;
 }
 .passage-stage-head {
   display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap;
@@ -1647,7 +1654,8 @@ body { background: var(--cream); color: var(--ink); }
 .passage-design .passage-modes button.active {
   background: var(--red); border-color: var(--red); color: #fff;
 }
-.passage-stage-body { flex: 0 1 auto; min-height: auto; }
+.passage-stage-body { flex: 0 1 auto; min-height: auto; overflow: visible; }
+.passage-page.passage-design { overflow: visible; }
 .passage-reader { display: grid; gap: 12px; padding-bottom: 12px; }
 .passage-audio-bar {
   display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line);

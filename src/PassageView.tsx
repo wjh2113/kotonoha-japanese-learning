@@ -150,8 +150,15 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   const resumed = useRef(false)
   const passagesRef = useRef<Passage[]>([])
   const fillPassageRef = useRef<(id: string) => Promise<void>>(async () => undefined)
+  const activeSentenceRef = useRef<HTMLLIElement | null>(null)
 
   useEffect(() => () => stopSpeaking(), [])
+
+  // Only follow the active line when the index changes — not on every render.
+  // An inline callback ref would re-fire scrollIntoView after any state update and fight the wheel.
+  useEffect(() => {
+    activeSentenceRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [sentenceIndex, mode, selectedId])
 
   const commitPassages = (next: Passage[]) => {
     passagesRef.current = next
@@ -966,7 +973,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                             <li
                               key={item.id}
                               className={`${active ? 'active' : ''} ${playingFull && active ? 'speaking' : ''}`}
-                              ref={active ? (node) => { node?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) } : undefined}
+                              ref={active ? activeSentenceRef : undefined}
                             >
                               <button type="button" className="passage-bilingual-row" onClick={() => goSentence(index, true)}>
                                 <em>{index + 1}</em>
