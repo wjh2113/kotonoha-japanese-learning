@@ -399,7 +399,7 @@ export function DictationView({
   return (
     <div className="page dictation-page dictation-session">
       <div className="dictation-top">
-        <button className="back-link" onClick={() => { playToken.current += 1; stopSpeaking(); clearWait(); setStarted(false); setFinished(false) }}><ChevronLeft size={17} />{errorReview ? '错词本' : unit.name}</button>
+        <button className="back-link" onClick={() => { playToken.current += 1; stopSpeaking(); clearWait(); setStarted(false); setFinished(false) }}><ChevronLeft size={20} />{errorReview ? '错词本' : unit.name}</button>
         <DictationPlayBar play={playSettings} onChange={persistPlay} compact current={playIndex} />
         <small>剩余 {remaining} 词{sessionMastered.length ? ` · 本轮掌握 ${sessionMastered.length}` : ''}{sessionReviewed ? ` · 复习 ${sessionReviewed}` : ''}</small>
       </div>
@@ -446,17 +446,17 @@ export function DictationView({
           onKeyUp={onAnswerKeyUp}
         />
         {reveal?.ok && (
-          <button type="button" className="dictation-master" onClick={masterCurrent}><Check size={16} />标记掌握</button>
+          <button type="button" className="dictation-master" onClick={masterCurrent}><Check size={18} />标记掌握</button>
         )}
         {reveal && !reveal.ok && <p className="dictation-answer">正确答案：<b className="jp">{expected}</b></p>}
       </article>
 
       <div className="dictation-controls">
-        <button type="button" disabled={!history.length} onClick={previous}><SkipBack size={18} />上一个单词</button>
-        <button type="button" onClick={() => void play(current, 1)}><RotateCcw size={18} />再读一遍</button>
+        <button type="button" disabled={!history.length} onClick={previous}><SkipBack size={22} />上一个单词</button>
+        <button type="button" onClick={() => void play(current, 1)}><RotateCcw size={22} />再读一遍</button>
         {reveal
           ? <button type="button" className="primary-button" tabIndex={-1} onClick={() => skipWait()}>{waitLeft ? '跳过等待' : '下一个继续'}</button>
-          : <button type="button" className="primary-button" tabIndex={-1} disabled={!typed.trim()} onClick={check}><CheckCircle2 size={18} />核对答案</button>}
+          : <button type="button" className="primary-button" tabIndex={-1} disabled={!typed.trim()} onClick={check}><CheckCircle2 size={22} />核对答案</button>}
       </div>
       <DictationStats
         plan={plan} dueReview={dueReview} learnedToday={learnedToday} reviewedToday={reviewedToday}
@@ -579,7 +579,7 @@ function DictationPlayBar({
 }) {
   return (
     <div className={`dictation-playbar ${compact ? 'compact' : ''}`}>
-      <Volume2 size={15} />
+      <Volume2 size={20} />
       <label>
         <span className="sr-only">每个单词播放次数</span>
         <select aria-label="每个单词播放次数" value={play.times} onChange={(event) => onChange({ ...play, times: Number(event.target.value) })}>
