@@ -11,6 +11,7 @@ import {
   normalizePassageSentence, passageProgressSummary, recordSentenceScore,
   recoverInterruptedIngest, sentenceNeedsAnalysis, unusedPassageVocab,
 } from './passage'
+import { usePronunciationPractice } from './pronunciation-practice'
 import { SettingsContext } from './settings-context'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
 import type { ImportDraft, Passage, PassageBook, PassageSentence, Unit, Word } from './types'
@@ -821,88 +822,35 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
 }
 
 function SentencePronunciation({ sentence, onScore }: { sentence: PassageSentence; onScore?: (score: number) => void }) {
-  const [recording, setRecording] = useState(false)
-  const [evaluating, setEvaluating] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [score, setScore] = useState<number | null>(null)
-  const [error, setError] = useState('')
-  const recognition = useRef<SpeechRecognition | null>(null)
-  const recorder = useRef<MediaRecorder | null>(null)
-  const stream = useRef<MediaStream | null>(null)
-  const chunks = useRef<Blob[]>([])
-  const browserFallback = useRef(false)
-
-  useEffect(() => {
-    setTranscript(''); setScore(null); setError(''); setRecording(false); setEvaluating(false)
-    recognition.current?.stop()
-    if (recorder.current?.state === 'recording') recorder.current.stop()
-    stream.current?.getTracks().forEach((track) => track.stop())
-  }, [sentence.id])
-
-  const finish = (text: string) => {
+  const practice = usePronunciationPractice((text) => {
     const next = pronunciationScoreFor(text, sentence.text, sentence.reading)
     setTranscript(text)
     setScore(next)
     onScore?.(next)
-    setRecording(false)
-    setEvaluating(false)
-  }
-  const recordInBrowser = () => {
-    const Constructor = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!Constructor) { setError('当前浏览器不支持语音识别，请使用最新版 Chrome 或 Edge。'); return }
-    const instance = new Constructor()
-    recognition.current = instance
-    instance.lang = 'ja-JP'; instance.interimResults = false; instance.continuous = false
-    instance.onresult = (event) => finish(event.results[0][0].transcript)
-    instance.onerror = (event) => { setError(event.error === 'not-allowed' ? '请允许浏览器使用麦克风。' : '没有听清，请再读一次。'); setRecording(false) }
-    instance.onend = () => setRecording(false)
-    setError(''); setScore(null); setTranscript(''); setRecording(true); instance.start()
-  }
-  const send = async (blob: Blob) => {
-    setEvaluating(true)
-    try {
-      const audioBase64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(String(reader.result).split(',', 2)[1] || '')
-        reader.onerror = reject
-        reader.readAsDataURL(blob)
-      })
-      const response = await apiFetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audioBase64, mimeType: blob.type || 'audio/webm', filename: 'passage.webm' }) })
-      const data = await response.json()
-      if (!response.ok || !data.text) throw new Error(data.error || '网关没有返回转写文本。')
-      finish(data.text)
-    } catch (reason) {
-      setEvaluating(false); browserFallback.current = true
-      setError(`${reason instanceof Error ? reason.message : '语音转写失败。'} 已切换到浏览器识别，请再试一次。`)
-    }
-  }
-  const start = async () => {
-    if (browserFallback.current || !window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) { recordInBrowser(); return }
-    try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      stream.current = mediaStream
-      const supported = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find((type) => MediaRecorder.isTypeSupported(type))
-      const mediaRecorder = new MediaRecorder(mediaStream, supported ? { mimeType: supported } : undefined)
-      recorder.current = mediaRecorder; chunks.current = []
-      mediaRecorder.ondataavailable = (event) => { if (event.data.size) chunks.current.push(event.data) }
-      mediaRecorder.onstop = () => {
-        mediaStream.getTracks().forEach((track) => track.stop())
-        const blob = new Blob(chunks.current, { type: mediaRecorder.mimeType || 'audio/webm' })
-        setRecording(false); if (blob.size) send(blob)
-      }
-      setError(''); setScore(null); setTranscript(''); setRecording(true); mediaRecorder.start()
-    } catch { browserFallback.current = true; setError('无法开始录音，已切换到浏览器识别。'); recordInBrowser() }
-  }
-  const stop = () => recorder.current?.state === 'recording' ? recorder.current.stop() : recognition.current?.stop()
+  }, sentence.id)
+
+  useEffect(() => {
+    setTranscript('')
+    setScore(null)
+  }, [sentence.id])
 
   return (
     <div className="inline-practice">
-      <p>先听标准朗读，再跟读这一句。系统会把转写结果和课文对比，提示发音差距。</p>
-      <button className={`inline-record ${recording ? 'recording' : ''}`} disabled={evaluating} onClick={() => recording ? stop() : start()}>
-        {evaluating ? <span className="spinner" /> : recording ? <Pause size={18} /> : <Mic size={18} />}
-        <span>{evaluating ? '正在分析…' : recording ? '结束跟读' : '开始跟读'}</span>
+      <p>先听标准朗读，再跟读这一句。默认用浏览器识别（不耗积分）；不可用时再走云端转写。</p>
+      <button
+        className={`inline-record ${practice.recording ? 'recording' : ''}`}
+        disabled={practice.evaluating}
+        onClick={() => {
+          if (practice.recording) practice.stop()
+          else { setScore(null); setTranscript(''); practice.start() }
+        }}
+      >
+        {practice.evaluating ? <span className="spinner" /> : practice.recording ? <Pause size={18} /> : <Mic size={18} />}
+        <span>{practice.evaluating ? '正在分析…' : practice.recording ? '结束跟读' : '开始跟读'}</span>
       </button>
-      {error && <div className="speech-error">{error}</div>}
+      {practice.error && <div className="speech-error">{practice.error}</div>}
       {score !== null && (
         <div className={`inline-score ${score >= 80 ? 'great' : score >= 55 ? 'okay' : 'retry'}`}>
           <b>{score}<small>分</small></b>
