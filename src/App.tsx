@@ -2,7 +2,7 @@ import { useContext, useEffect, useRef, useState } from 'react'
 import {
   AudioLines, BookMarked, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronLeft, ChevronRight,
   Clock3, FileText, GraduationCap, Headphones, Import, Keyboard, LayoutGrid, LibraryBig, List, Menu,
-  Mic, NotebookPen, Pause, Plus, Search, Settings, Sparkles, SquarePen,
+  Mic, NotebookPen, Palette, Pause, Plus, Search, Settings, Sparkles, SquarePen,
   Trash2, Trophy, UploadCloud, UserRound, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, AUTH_REQUIRED_EVENT, getAccessToken, setAccessToken } from './api'
@@ -49,6 +49,13 @@ function App() {
   const [settings, setSettings] = useState<AppSettings>(() => {
     try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '') } } catch { return DEFAULT_SETTINGS }
   })
+
+  useEffect(() => {
+    const theme = settings.theme || 'aka'
+    document.documentElement.dataset.theme = theme
+    const colors: Record<string, string> = { aka: '#d85b45', ai: '#4b6a9e', matcha: '#7d9159' }
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', colors[theme] || colors.aka)
+  }, [settings.theme])
 
   useEffect(() => {
     let cancelled = false
@@ -975,6 +982,7 @@ function SettingsView({ settings, onChange, starredCount = 0, errorBookCount = 0
       )}
       <div className="settings-layout">
         <section className="settings-card"><div className="settings-title"><UserRound /><div><h2>头像</h2><p>选择一个代表你的文字头像。</p></div></div><div className="avatar-options">{avatars.map((avatar) => <button key={avatar} className={settings.avatar === avatar ? 'active' : ''} onClick={() => onChange({ ...settings, avatar })}>{avatar}{settings.avatar === avatar && <CheckCircle2 />}</button>)}</div><label className="custom-avatar">自定义<input maxLength={2} value={settings.avatar} onChange={(event) => onChange({ ...settings, avatar: event.target.value || 'ゆ' })} /></label></section>
+        <section className="settings-card"><div className="settings-title"><Palette /><div><h2>主题颜色</h2><p>选择整套界面的主色调，随时可换。</p></div></div><div className="voice-options theme-options">{([['aka', '绯红', '暖橘红，默认'], ['ai', '黛蓝', '沉静书卷气'], ['matcha', '抹茶', '清新日式绿']] as const).map(([id, name, desc]) => <button key={id} className={(settings.theme || 'aka') === id ? 'active' : ''} onClick={() => onChange({ ...settings, theme: id })}><span className={`theme-swatch theme-swatch-${id}`} /><div><b>{name}</b><small>{desc}</small></div>{(settings.theme || 'aka') === id && <CheckCircle2 />}</button>)}</div></section>
         <section className="settings-card"><div className="settings-title"><AudioLines /><div><h2>日语朗读音色</h2><p>系统会优先匹配设备中对应性别的日语语音。</p></div></div><div className="voice-options"><button className={settings.voiceGender === 'female' ? 'active' : ''} onClick={() => onChange({ ...settings, voiceGender: 'female' })}><span>女</span><div><b>女声</b><small>清晰、柔和</small></div>{settings.voiceGender === 'female' && <CheckCircle2 />}</button><button className={settings.voiceGender === 'male' ? 'active' : ''} onClick={() => onChange({ ...settings, voiceGender: 'male' })}><span>男</span><div><b>男声</b><small>沉稳、自然</small></div>{settings.voiceGender === 'male' && <CheckCircle2 />}</button></div><div className="voice-preview"><span><b>试听当前音色</b><small className="jp">こんにちは</small><em>{voiceStatus}</em></span><VolumeButton word={sample} /></div></section>
       </div>
     </div>

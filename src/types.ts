@@ -44,9 +44,12 @@ export type View = 'library' | 'study' | 'passage' | 'test' | 'dictation' | 'wor
 
 export type VoiceGender = 'female' | 'male'
 
+export type ThemeName = 'aka' | 'ai' | 'matcha'
+
 export type AppSettings = {
   avatar: string
   voiceGender: VoiceGender
+  theme?: ThemeName
 }
 
 export type ImportDraft = {

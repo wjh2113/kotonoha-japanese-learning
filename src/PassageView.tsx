@@ -9,7 +9,7 @@ import { extractDocxPassage, htmlToPassageText, readPassageSource } from './docx
 import { PASSAGE_OCR_PLACEHOLDER, isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import {
   chunkItems, extractPassageVocab, hasChineseTranslation, isPrimarilyChineseLine, isTransientPassage, mergeAnalyzedSentences, mergePassageBooks,
-  normalizePassageSentence, passageProgressSummary, recordSentenceDictation, recordSentenceScore,
+  normalizePassageSentence, passageProgressSummary, parsePassageTable, recordSentenceDictation, recordSentenceScore,
   recoverInterruptedIngest, sentenceNeedsAnalysis, unusedPassageVocab,
 } from './passage'
 import { PassageIntensive } from './PassageIntensive'
@@ -215,11 +215,14 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       const latestForPending = passagesRef.current.find((item) => item.id === passageId) || current
       const work = latestForPending.sentences.filter(sentenceNeedsAnalysis)
       const total = latestForPending.sentences.length
+      // 表格导入的课文已有翻译，只需补读音/逐词，提示语区分开。
+      const fillingGapsOnly = work.length > 0 && work.every((sentence) => hasChineseTranslation(sentence.translation))
+      const progressLabel = (done: number) => fillingGapsOnly ? `正在补全读音与逐词注释 ${done}/${total}` : `正在生成整句翻译 ${done}/${total}`
       let finished = total - work.length
       let chunkErrors = 0
       for (const chunk of chunkItems(work)) {
         if (!passagesRef.current.some((item) => item.id === passageId)) return
-        patchPassage(passageId, { status: 'processing', statusText: `正在生成整句翻译 ${finished}/${total}` })
+        patchPassage(passageId, { status: 'processing', statusText: progressLabel(finished) })
         try {
           const controller = new AbortController()
           const timeout = window.setTimeout(() => controller.abort(), 100_000)
@@ -243,7 +246,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
           patchPassage(passageId, {
             sentences: mergeAnalyzedSentences(latest.sentences, data.sentences || []),
             status: 'processing',
-            statusText: `正在生成整句翻译 ${finished}/${total}`,
+            statusText: progressLabel(finished),
             ...(latest.title === '课文' && analyzedTitle && !looksLikeErrorDocument(analyzedTitle) ? { title: analyzedTitle } : {}),
           })
         } catch (reason) {
@@ -390,14 +393,16 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       if (!sourceText || looksLikeErrorDocument(sourceText)) {
         throw new Error(ocrFailures[0] || '没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
       }
-      const sentences = fallbackPassage(sourceText).sentences
+      // 用户整理的表格（原文/中文解释/语法考点）直接用，翻译不再调用大模型。
+      const table = parsePassageTable(sourceText)
+      const sentences = table ? table.sentences : fallbackPassage(sourceText).sentences
       if (!sentences.length) throw new Error('没有识别到可拆分的日语句子，请检查图片是否清晰。')
       // Sync ref before analyze so fillPassage never sees a stale empty stub.
       patchPassage(passageId, {
-        sourceText,
+        sourceText: table ? table.sourceText : sourceText,
         sentences,
         status: 'processing',
-        statusText: `正在生成整句翻译 0/${sentences.length}`,
+        statusText: table ? '表格内容已导入，正在补全读音…' : `正在生成整句翻译 0/${sentences.length}`,
       })
       if (ocrFailures.length) setNotice(`有 ${ocrFailures.length} 张图片识别失败，已用其余内容继续。`)
       await fillPassage(passageId)

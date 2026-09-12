@@ -1,6 +1,7 @@
 import { isPassagePlaceholder, looksLikeErrorDocument, PASSAGE_OCR_PLACEHOLDER } from './error-text'
 import { looksLikeVocabularyTerm } from './lexeme'
 import type { ImportDraft, Passage, PassageSentence, SentenceProgress } from './types'
+import { uid } from './utils'
 
 const PARTICLES = /^(は|が|を|に|の|と|も|で|へ|や|か|ね|よ|な|だ|です|ます|した|して)$/
 
@@ -108,12 +109,89 @@ export function mergeAnalyzedSentences(current: PassageSentence[], analyzed: unk
     byLoose.delete(normalizeKey(match.text))
     return {
       ...sentence,
-      reading: match.reading || sentence.reading,
-      translation: hasChineseTranslation(match.translation) ? match.translation : sentence.translation,
+      reading: sentence.reading || match.reading,
+      // 用户表格里提供的翻译/语法优先，模型只补空缺。
+      translation: hasChineseTranslation(sentence.translation) ? sentence.translation : match.translation,
       tokens: match.tokens.length ? match.tokens : sentence.tokens,
-      grammar: match.grammar.length ? match.grammar : sentence.grammar,
+      grammar: sentence.grammar.length ? sentence.grammar : match.grammar,
     }
   })
+}
+
+const PASSAGE_TABLE_HEADER = {
+  text: /^(原文|日文|日语|句子|课文|text|sentence|japanese)$/i,
+  translation: /^(中文解释|中文释义|中文|解释|释义|翻译|译文|translation|chinese|meaning)$/i,
+  grammar: /^(语法考点|语法|考点|grammar)/i,
+}
+
+function parseGrammarCell(cell: string): PassageSentence['grammar'] {
+  return String(cell || '')
+    .split(/[；;\n]+/)
+    .map((item) => item.trim().replace(/^【|】$/g, ''))
+    .filter(Boolean)
+    .slice(0, 8)
+    .map((item) => {
+      const match = item.match(/^(.{1,24}?)[：:]\s*(.+)$/s) || item.match(/^(.{1,24}?)\s*[（(]\s*(.+?)\s*[）)]$/)
+      if (match) return { name: match[1].trim(), pattern: '', explanation: match[2].trim() }
+      return { name: item.slice(0, 24), pattern: '', explanation: item }
+    })
+    .filter((point) => point.name)
+}
+
+/**
+ * 解析用户整理的课文表格：每行「原文 [TAB/逗号] 中文解释 [语法考点]」，
+ * 语法考点也可以单独成行（原文列为空，或以「【语法】」「语法：」开头），跟在每段课文后面。
+ * 不是表格（没有任何多列行）时返回 null，走原来的纯文本流程。
+ */
+export function parsePassageTable(raw: string): { sourceText: string; sentences: PassageSentence[] } | null {
+  const lines = String(raw || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (!lines.length) return null
+  const rows = lines.map((line) => line.split(/\t|,|，/).map((col) => col.trim()))
+  let header: { text: number; translation: number; grammar: number } | null = null
+  const first = rows[0]
+  if (first.length >= 2) {
+    const find = (pattern: RegExp) => first.findIndex((col) => pattern.test(col))
+    const text = find(PASSAGE_TABLE_HEADER.text)
+    const translation = find(PASSAGE_TABLE_HEADER.translation)
+    const grammar = find(PASSAGE_TABLE_HEADER.grammar)
+    if (text >= 0 && translation >= 0) header = { text, translation, grammar: grammar >= 0 ? grammar : 2 }
+  }
+  const body = header ? rows.slice(1) : rows
+  const col = (row: string[], key: 'text' | 'translation' | 'grammar') => {
+    if (header) return row[header[key]] || ''
+    return row[key === 'text' ? 0 : key === 'translation' ? 1 : 2] || ''
+  }
+  const sentences: PassageSentence[] = []
+  let sawMultiColumn = false
+  const attachGrammar = (cell: string) => {
+    const points = parseGrammarCell(cell)
+    if (!points.length || !sentences.length) return
+    const last = sentences[sentences.length - 1]
+    const seen = new Set(last.grammar.map((point) => point.name))
+    last.grammar = [...last.grammar, ...points.filter((point) => !seen.has(point.name))].slice(0, 12)
+  }
+  for (const row of body) {
+    let text = col(row, 'text')
+    let grammarCell = col(row, 'grammar')
+    const marker = text.match(/^【语法(考点)?】\s*[：:]?\s*(.+)$/s) || text.match(/^语法(考点)?\s*[：:]\s*(.+)$/s)
+    if (marker) { text = ''; grammarCell = [marker[2], grammarCell].filter(Boolean).join('；') }
+    if (row.length >= 2) sawMultiColumn = true
+    if (!text) { attachGrammar(grammarCell); continue }
+    if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(text)) { attachGrammar(grammarCell || text); continue }
+    sentences.push({
+      id: uid(),
+      text,
+      reading: '',
+      translation: col(row, 'translation'),
+      tokens: [],
+      grammar: [],
+    })
+    if (grammarCell) attachGrammar(grammarCell)
+  }
+  if (!sawMultiColumn || !sentences.length) return null
+  // 至少一句带中文翻译才认可是用户整理的表格，否则回退到纯文本流程。
+  if (!sentences.some((sentence) => hasChineseTranslation(sentence.translation))) return null
+  return { sourceText: sentences.map((sentence) => sentence.text).join('\n'), sentences }
 }
 
 export function unusedPassageVocab(passage: Passage, existingTerms: string[]) {

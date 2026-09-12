@@ -1,6 +1,40 @@
 import { describe, expect, it } from 'vitest'
-import { extractPassageVocab, unusedPassageVocab, isTransientPassage, listPassageBooks, mergeAnalyzedSentences, passageNeedsAnalysis, passageProgressSummary, recordSentenceScore, recoverInterruptedIngest } from './passage'
+import { extractPassageVocab, unusedPassageVocab, isTransientPassage, listPassageBooks, mergeAnalyzedSentences, passageNeedsAnalysis, passageProgressSummary, parsePassageTable, recordSentenceScore, recoverInterruptedIngest } from './passage'
 import type { Passage } from './types'
+
+describe('parsePassageTable', () => {
+  it('parses 原文/中文解释/语法考点 rows with a header', () => {
+    const table = [
+      '原文\t中文解释\t语法考点',
+      '学校で友達に会いました。\t在学校遇见了朋友。\t',
+      'とても嬉しかったです。\t非常开心。\t',
+      '【语法】〜たい：表示愿望',
+      '駅へ行きます。\t去车站。\t〜へ：表示移动方向',
+    ].join('\n')
+    const parsed = parsePassageTable(table)
+    expect(parsed).not.toBeNull()
+    expect(parsed!.sentences.map((s) => s.text)).toEqual(['学校で友達に会いました。', 'とても嬉しかったです。', '駅へ行きます。'])
+    expect(parsed!.sentences[0].translation).toBe('在学校遇见了朋友。')
+    // 段落后的语法行挂到该段最后一句
+    expect(parsed!.sentences[1].grammar[0]).toMatchObject({ name: '〜たい', explanation: '表示愿望' })
+    // 行内语法列挂到当前句
+    expect(parsed!.sentences[2].grammar[0]).toMatchObject({ name: '〜へ', explanation: '表示移动方向' })
+    expect(parsed!.sourceText).toBe('学校で友達に会いました。\nとても嬉しかったです。\n駅へ行きます。')
+  })
+
+  it('parses without a header positionally', () => {
+    const parsed = parsePassageTable('桜が咲きました。\t樱花开了。')
+    expect(parsed!.sentences[0]).toMatchObject({ text: '桜が咲きました。', translation: '樱花开了。' })
+  })
+
+  it('returns null for plain prose (no table)', () => {
+    expect(parsePassageTable('昨日、学校で日本語を勉強しました。\nとても楽しかったです。')).toBeNull()
+  })
+
+  it('returns null when no translation column has Chinese', () => {
+    expect(parsePassageTable('桜が咲きました。\tsakura ga sakimashita')).toBeNull()
+  })
+})
 
 const passage: Passage = {
   id: 'p1',
