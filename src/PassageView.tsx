@@ -663,7 +663,9 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                   <button type="button" onClick={() => { setMode('source'); setSourceDraft(passage.sourceText); setSourceEditing(false) }}>原文</button>
                   <button className="remove-word" onClick={() => {
                     if (!window.confirm(`删除课文「${passage.title}」？此操作不可恢复。`)) return
-                    const remaining = passages.filter((item) => item.id !== passage.id)
+                    ingestingIds.current.delete(passage.id)
+                    const remaining = passagesRef.current.filter((item) => item.id !== passage.id)
+                    passagesRef.current = remaining
                     setPassages(remaining)
                     setSelectedId(remaining[0]?.id || '')
                   }}><Trash2 size={15} />删除</button>
