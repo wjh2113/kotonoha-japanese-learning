@@ -1116,7 +1116,7 @@ body { background: var(--cream); color: var(--ink); }
 .topbar-user { display: flex; align-items: center; gap: 10px; }
 .topbar-user b { display: block; font-size: 13px; line-height: 1.2; }
 .topbar-user small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
-.main { margin-left: 0; min-height: 0; flex: 1; }
+.main { margin-left: 0; min-height: auto; flex: 1 1 auto; }
 .primary-button, .master-button { border-radius: 12px; }
 .overview-bar i { background: var(--red); }
 
@@ -1561,10 +1561,7 @@ body { background: var(--cream); color: var(--ink); }
   display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: var(--red-dark);
 }
 .shadow-list-card header b, .shadow-panel > header b { display: inline-flex; align-items: center; gap: 6px; }
-.shadow-list button {
-  width: 100%; border: 0; background: transparent; display: flex; gap: 10px; align-items: center;
-  padding: 11px 12px; border-radius: 12px; cursor: pointer; text-align: left;
-}
+.shadow-list { max-height: none; overflow: visible; }
 .shadow-list button.active { background: var(--accent-wash); box-shadow: none; }
 .shadow-list button em {
   min-width: 22px; height: 22px; border-radius: 50%; background: #eef1e8; color: #8a9080;
@@ -1594,7 +1591,7 @@ body { background: var(--cream); color: var(--ink); }
 .passage-workspace {
   display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 14px; align-items: start;
 }
-.passage-nav-col { display: grid; gap: 12px; position: sticky; top: 76px; }
+.passage-nav-col { display: grid; gap: 12px; align-content: start; }
 .passage-catalog, .passage-outline {
   background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 12px;
   box-shadow: 0 8px 22px rgba(45,50,43,.03);
@@ -1602,8 +1599,10 @@ body { background: var(--cream); color: var(--ink); }
 .passage-catalog > header, .passage-outline > header {
   display: flex; align-items: center; gap: 7px; color: var(--red-dark); margin-bottom: 10px;
 }
-.passage-catalog-scroll, .passage-outline-scroll { max-height: 42vh; overflow: auto; display: grid; gap: 4px; }
-.passage-outline-scroll { max-height: 28vh; }
+/* Avoid nested overflow:auto traps that swallow wheel when content fits / sticky left column. */
+.passage-catalog-scroll, .passage-outline-scroll {
+  display: grid; gap: 4px; max-height: none; overflow: visible;
+}
 .passage-design .passage-item {
   display: grid; grid-template-columns: 18px 1fr 14px; gap: 8px; align-items: center;
   background: transparent; border-radius: 12px; padding: 10px 8px; text-align: left;
@@ -1630,7 +1629,7 @@ body { background: var(--cream); color: var(--ink); }
 .passage-outline-item.active { background: var(--accent-wash); color: var(--red-dark); }
 .passage-stage {
   background: var(--paper); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px 0;
-  min-width: 0; display: flex; flex-direction: column; min-height: 70vh;
+  min-width: 0; display: flex; flex-direction: column; min-height: 0;
   box-shadow: 0 8px 22px rgba(45,50,43,.03);
 }
 .passage-stage-head {
@@ -1648,7 +1647,7 @@ body { background: var(--cream); color: var(--ink); }
 .passage-design .passage-modes button.active {
   background: var(--red); border-color: var(--red); color: #fff;
 }
-.passage-stage-body { flex: 1; min-height: 0; }
+.passage-stage-body { flex: 0 1 auto; min-height: auto; }
 .passage-reader { display: grid; gap: 12px; padding-bottom: 12px; }
 .passage-audio-bar {
   display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line);
