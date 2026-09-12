@@ -19,7 +19,7 @@ import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
 import type { ImportDraft, Passage, PassageBook, PassageSentence, Unit, Word } from './types'
 import { makeFallbackWord, pronunciationScoreFor, splitJapaneseSentences, uid } from './utils'
 
-type Mode = 'read' | 'explain' | 'grammar' | 'source' | 'intensive'
+type Mode = 'source' | 'intensive'
 
 function passageTitle(value?: string, fallback = '课文') {
   return String(value || '').trim().slice(0, 80) || fallback
@@ -709,19 +709,6 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
           </aside>
           {passage && (
             <section className="passage-stage">
-              {passage.status === 'processing' && (
-                <div className="passage-status processing"><LoaderCircle size={16} className="spin" />{passage.statusText || '正在后台处理课文…'}</div>
-              )}
-              {passage.status === 'error' && (
-                <div className="passage-status error">
-                  {passage.statusText || '处理失败'}
-                  {passage.sentences.some((item) => item.text && !isPassagePlaceholder(item.text)) ? (
-                    <button type="button" onClick={() => void fillPassage(passage.id)}>重试</button>
-                  ) : (
-                    <button type="button" onClick={() => setUploadOpen(true)}>重新添加</button>
-                  )}
-                </div>
-              )}
               {passage.status === 'processing' && Date.now() - (passage.createdAt || 0) > 120_000 && (
                 <div className="passage-status error">
                   识别时间过长，可删除后重试，或改粘贴正文。
@@ -764,8 +751,8 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                   }}><Trash2 size={15} />删除</button>
                 </div>
               </div>
-              <div className="passage-modes">
-                {([['source', '原文全文'], ['intensive', '精听'], ['read', '逐句跟读'], ['explain', '逐词解释'], ['grammar', '语法标识']] as const).map(([id, label]) => (
+                <div className="passage-modes">
+                {([['source', '原文全文'], ['intensive', '精听']] as const).map(([id, label]) => (
                   <button key={id} className={mode === id ? 'active' : ''} onClick={() => {
                     setMode(id)
                     if (id === 'source') { setSourceDraft(passage.sourceText); setSourceEditing(false) }
@@ -914,76 +901,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                     <pre className="jp passage-source">{passage.sourceText || '这篇课文还没有可点选的句子。可以点「编辑原文」补上后重新解析。'}</pre>
                   )}
                 </article>
-              ) : sentence ? (
-              <>
-              <ol className="passage-sentences">
-                {passage.sentences.map((item, index) => {
-                  const practice = passage.progress?.[item.id]
-                  return (
-                    <li key={item.id}>
-                      <button className={`${index === sentenceIndex ? 'active' : ''} ${playingFull && index === sentenceIndex ? 'speaking' : ''}`} onClick={() => goSentence(index, mode === 'read')}>
-                        <em>{index + 1}</em>
-                        <span className="jp">{item.text}</span>
-                        <small className={`sentence-progress ${practice?.attempts ? 'done' : ''}`}>
-                          {practice?.attempts ? `${practice.bestScore}分` : '未跟读'}
-                        </small>
-                      </button>
-                    </li>
-                  )
-                })}
-              </ol>
-              <article className="passage-card">
-                <div className="passage-card-head">
-                  <span className="jp reading">{sentence.reading || '—'}</span>
-                  <button className="volume-button" onClick={() => void speakJapanese(sentence.text, voiceGender, { sentence: true })} aria-label="朗读这句"><Volume2 size={19} /></button>
-                </div>
-                <h3 className="jp">{sentence.text}</h3>
-                {(mode === 'read' || mode === 'explain') && (
-                  hasChineseTranslation(sentence.translation)
-                    ? <p className="translation">{sentence.translation}</p>
-                    : (passage.status === 'processing'
-                      ? null
-                      : <p className="translation muted">{passage.status === 'error' ? '整句翻译还没生成成功，请点上方红色提示里的「重试」。' : '暂无整句翻译'}</p>)
-                )}
-                {mode === 'read' && (
-                  <SentencePronunciation
-                    sentence={sentence}
-                    onScore={(score) => patchPassage(passage.id, { progress: recordSentenceScore(passage.progress, sentence.id, score) })}
-                  />
-                )}
-                {mode === 'explain' && (
-                  <div className="passage-explain">
-                    <div className="token-grid">
-                      {(sentence.tokens.length ? sentence.tokens : [{ surface: sentence.text, reading: sentence.reading, meaning: sentence.translation || '待补充' }]).map((token, index) => (
-                        <div key={`${token.surface}-${index}`}>
-                          <b className="jp">{token.surface}</b>
-                          <small className="jp">{token.reading}</small>
-                          <span>{token.meaning}</span>
-                          <button type="button" className="token-add" onClick={() => addDrafts([{ term: token.surface, reading: token.reading, meaning: token.meaning }])}>做成词卡</button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {mode === 'grammar' && (
-                  <div className="grammar-list">
-                    {sentence.grammar.length ? sentence.grammar.map((point, index) => (
-                      <article key={`${point.name}-${index}`}>
-                        <b>{point.name}</b>
-                        {point.pattern && <code className="jp">{point.pattern}</code>}
-                        <p>{point.explanation}</p>
-                      </article>
-                    )) : <p className="empty-grammar">{passage.status === 'processing' ? '语法标注稍后出现。' : '这一句没有标出特别的语法点。'}</p>}
-                  </div>
-                )}
-                <div className="detail-nav">
-                  <button disabled={sentenceIndex <= 0} onClick={() => goSentence(sentenceIndex - 1, mode === 'read')}><ChevronLeft size={16} />上一句</button>
-                  <span>{sentenceIndex + 1} / {passage.sentences.length}</span>
-                  <button disabled={sentenceIndex >= passage.sentences.length - 1} onClick={() => goSentence(sentenceIndex + 1, mode === 'read')}>下一句<ChevronRight size={16} /></button>
-                </div>
-              </article>
-              </>
-              ) : <p className="empty-grammar">这篇课文还没有可学习的句子，请打开「原文全文」检查或重新解析。</p>}
+              ) : null}
             </section>
           )}
         </div>
