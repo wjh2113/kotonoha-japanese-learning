@@ -494,7 +494,7 @@ async function analyzePassageWithModel(sourceText, exactSentences) {
   }
   const payload = {
     tenantId,
-    capability: process.env.LLM_GATEWAY_CHAT_CAPABILITY || 'quality-chat',
+    capability: process.env.LLM_GATEWAY_PASSAGE_CAPABILITY || process.env.LLM_GATEWAY_ENRICH_CAPABILITY || 'fast-chat',
     messages: [
       { role: 'system', content: system.join('') },
       { role: 'user', content: lines.length
