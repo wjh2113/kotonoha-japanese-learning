@@ -193,7 +193,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
         finished = Math.min(total, finished + chunk.length)
         const analyzedTitle = passageTitle(data.title, '')
         patchPassage(passageId, {
-          sentences: mergeAnalyzedSentences(latest.sentences, data.sentences),
+          sentences: mergeAnalyzedSentences(latest.sentences, data.sentences || []),
           status: 'processing',
           statusText: `正在生成整句翻译 ${finished}/${total}`,
           ...(latest.title === '课文' && analyzedTitle && !looksLikeErrorDocument(analyzedTitle) ? { title: analyzedTitle } : {}),
@@ -228,7 +228,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       const next = (Array.isArray(data.passages) ? data.passages as unknown[] : []).map(hydratePassage).filter((item): item is Passage => Boolean(item))
       persistEnabled.current = true
       setPassages(next)
-      setBooks(mergePassageBooks(Array.isArray(data.books) ? data.books : [], next))
+      setBooks(mergePassageBooks(Array.isArray(data.books) ? data.books as { id: string; name: string }[] : [], next))
       setSelectedId(next[0]?.id || '')
       setReady(true)
     }).catch(() => {
