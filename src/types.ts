@@ -32,7 +32,7 @@ export type PassageBook = {
   name: string
 }
 
-export type View = 'library' | 'study' | 'passage' | 'test' | 'wordbook' | 'review' | 'settings'
+export type View = 'library' | 'study' | 'passage' | 'test' | 'dictation' | 'wordbook' | 'review' | 'settings'
 
 export type VoiceGender = 'female' | 'male'
 

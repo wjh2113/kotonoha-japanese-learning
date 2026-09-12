@@ -634,3 +634,66 @@ body { background: var(--cream); color: var(--ink); }
   .test-mode-grid { grid-template-columns: 1fr; }
   .test-mode-card { min-height: 0; }
 }
+
+.dictation-page { max-width: 860px; }
+.dictation-setup {
+  background: white; border: 1px solid var(--line); border-radius: 14px; padding: 22px 22px 18px; margin-bottom: 18px;
+}
+.dictation-setup label { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; }
+.dictation-setup input { width: 88px; height: 42px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; font-size: 18px; font-weight: 700; }
+.dictation-setup p { margin: 10px 0 16px; color: #8d8e89; font-size: 13px; }
+.dictation-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.dictation-top small { color: #8d8e89; font-size: 12px; }
+.dictation-board {
+  min-height: 280px; border-radius: 14px; background: #f3f5f7; padding: 28px 24px 22px; text-align: center;
+  display: grid; align-content: center; gap: 12px; overflow: hidden;
+}
+.dictation-board.wrong { background: #fdecee; }
+.dictation-board.correct { background: #eaf6ef; }
+.dictation-board header {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  margin: -28px -24px 8px; padding: 14px 18px; text-align: left; color: white;
+}
+.dictation-board.wrong header { background: #e6533f; }
+.dictation-board.correct header { background: #2e9360; }
+.dictation-board header b { display: block; font-size: 18px; }
+.dictation-board header span, .dictation-board header em { display: block; font-size: 12px; font-style: normal; opacity: .92; }
+.dictation-board header small { font-size: 11px; white-space: nowrap; }
+.dictation-hint { margin: 0; color: #8d8e89; font-size: 14px; }
+.dictation-input {
+  width: min(100%, 420px); margin: 0 auto; height: 64px; border: 0; border-radius: 10px;
+  background: white; text-align: center; font-size: 32px; box-shadow: inset 0 0 0 1px #e5e0d8;
+}
+.dictation-typed { margin: 8px 0 0; font-size: 42px; font-weight: 700; letter-spacing: .04em; }
+.dictation-typed.ok { color: #247a4d; }
+.dictation-typed.bad { color: #2e332f; }
+.dictation-typed .miss { color: #e6533f; }
+.dictation-answer { margin: 0; color: #8a534c; font-size: 14px; }
+.dictation-master {
+  width: fit-content; margin: 8px auto 0; height: 36px; padding: 0 14px; border: 1px solid rgba(255,255,255,.4);
+  border-radius: 16px; background: rgba(255,255,255,.2); color: #247a4d; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700;
+}
+.dictation-board.correct .dictation-master { color: #1f6b44; background: white; border-color: #cfe6d7; }
+.dictation-controls {
+  display: flex; justify-content: center; gap: 28px; margin: 22px 0 18px; flex-wrap: wrap;
+}
+.dictation-controls button {
+  border: 0; background: none; color: #6f7279; cursor: pointer; display: inline-flex; flex-direction: column;
+  align-items: center; gap: 6px; font-size: 12px; font-weight: 700;
+}
+.dictation-controls button:disabled { opacity: .35; cursor: not-allowed; }
+.dictation-controls .primary-button { flex-direction: row; color: white; padding: 0 18px; height: 42px; }
+.dictation-stats {
+  display: flex; flex-wrap: wrap; gap: 10px 22px; padding: 12px 4px 0; border-top: 1px solid var(--line);
+  color: #6f7279; font-size: 12px;
+}
+.dictation-stats b { color: var(--ink); }
+.dictation-stats input { width: 64px; height: 28px; border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; }
+.dictation-stats button { border: 0; background: none; color: #a39f98; cursor: pointer; vertical-align: middle; }
+@media (max-width: 860px) {
+  .dictation-typed { font-size: 32px; }
+  .dictation-input { font-size: 24px; height: 54px; }
+  .dictation-stats { font-size: 11px; padding-bottom: 8px; }
+  .mobile-tabbar button { font-size: 9px; }
+}

@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import {
   AudioLines, BookMarked, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronLeft, ChevronRight,
-  Clock3, FileText, GraduationCap, Headphones, Import, LayoutGrid, LibraryBig, List, Menu,
+  Clock3, FileText, GraduationCap, Headphones, Import, Keyboard, LayoutGrid, LibraryBig, List, Menu,
   Mic, Pause, Plus, Search, Settings, Sparkles, SquarePen,
   Trash2, Trophy, UploadCloud, UserRound, Volume2, X,
 } from 'lucide-react'
@@ -9,6 +9,7 @@ import { apiFetch, AUTH_REQUIRED_EVENT, getAccessToken, setAccessToken } from '.
 import { initialUnits } from './data'
 import { readVocabularyFile } from './docx'
 import { PassageView } from './PassageView'
+import { DictationView } from './DictationView'
 import { SettingsContext, DEFAULT_SETTINGS } from './settings-context'
 import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
@@ -293,9 +294,18 @@ function App() {
             onToggleStar={(word) => { updateWord(word.id, { starred: !word.starred }); setToast(word.starred ? '已移出生词本' : '已加入生词本') }}
             search={search} onSearch={setSearch}
             onTest={() => setView('test')}
+            onDictation={() => setView('dictation')}
           />
         )}
         {view === 'test' && unit && <TestView unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')} onAnswer={(word, kind, correct) => updateWord(word.id, recordQuizAnswer(word, kind, correct))} />}
+        {view === 'dictation' && unit && (
+          <DictationView
+            unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')}
+            onCorrect={(word) => updateWord(word.id, recordQuizAnswer(word, 'listening', true))}
+            onMiss={(word) => updateWord(word.id, recordQuizAnswer(word, 'listening', false))}
+            onMaster={(word) => updateWord(word.id, { mastered: true, ...scheduleReview(word, true) })}
+          />
+        )}
         {view === 'wordbook' && <WordbookView units={units} onRemove={(wordId, targetUnitId) => { updateWord(wordId, { starred: false }, targetUnitId); setToast('已移出生词本') }} />}
         {view === 'review' && <ReviewView units={units} onReview={(word, targetUnitId, remembered) => { updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId); setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒') }} />}
         {view === 'passage' && <PassageView units={units} onAddWords={(targetUnitId, words) => {
@@ -325,6 +335,7 @@ function AppHeader({ open, view, settings, starredCount, reviewCount, onMenu, on
     { id: 'passage', label: '课文', icon: <FileText size={17} /> },
     { id: 'study', label: '学习', icon: <BookOpen size={17} /> },
     { id: 'test', label: '测试', icon: <GraduationCap size={17} /> },
+    { id: 'dictation', label: '听写', icon: <Keyboard size={17} /> },
     { id: 'wordbook', label: '生词本', icon: <BookMarked size={17} />, count: starredCount },
     { id: 'review', label: '待复习', icon: <Clock3 size={17} />, count: reviewCount },
     { id: 'settings', label: '设置', icon: <Settings size={17} /> },
@@ -342,7 +353,7 @@ function AppHeader({ open, view, settings, starredCount, reviewCount, onMenu, on
 }
 
 const VIEW_TITLES: Record<View, string> = {
-  library: '词库', study: '学习', passage: '课文', test: '测试', wordbook: '生词本', review: '待复习', settings: '我的',
+  library: '词库', study: '学习', passage: '课文', test: '测试', dictation: '听写', wordbook: '生词本', review: '待复习', settings: '我的',
 }
 
 function MobileTopBar({ view, settings, onView }: { view: View; settings: AppSettings; onView: (view: View) => void }) {
@@ -357,6 +368,7 @@ function MobileTopBar({ view, settings, onView }: { view: View; settings: AppSet
 function MobileTabBar({ view, reviewCount, onView }: { view: View; reviewCount: number; onView: (view: View) => void }) {
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'study', label: '学习', icon: <BookOpen size={21} /> },
+    { id: 'dictation', label: '听写', icon: <Keyboard size={21} /> },
     { id: 'library', label: '词库', icon: <LibraryBig size={21} /> },
     { id: 'passage', label: '课文', icon: <FileText size={21} /> },
     { id: 'review', label: '复习', icon: <Clock3 size={21} />, count: reviewCount },
@@ -458,10 +470,10 @@ function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onRenameUnit,
   )
 }
 
-function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onToggleMastered, onEdit, onToggleStar, onSearch, onTest }: {
+function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onToggleMastered, onEdit, onToggleStar, onSearch, onTest, onDictation }: {
   unit: Unit; units: Unit[]; selectedWord?: Word; search: string; onUnit: (id: string) => void; onSelect: (id: string) => void; onImport: () => void
   onToggleMastered: (word: Word) => void; onEdit: (word: Word, changes: Partial<Word>) => void
-  onToggleStar: (word: Word) => void; onSearch: (value: string) => void; onTest: () => void
+  onToggleStar: (word: Word) => void; onSearch: (value: string) => void; onTest: () => void; onDictation: () => void
 }) {
   const { voiceGender } = useContext(SettingsContext)
   const [layout, setLayout] = useState<'grid' | 'list'>('grid')
@@ -483,6 +495,7 @@ function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImpo
           <p>{isPlaceholderTheme(unit.description) ? '主题归纳中' : unit.description} · 共 {unit.words.length} 个单词</p>
         </div>
         <div className="hero-actions">
+          <button className="secondary-button" onClick={onDictation}><Keyboard size={18} />听写</button>
           <button className="secondary-button" onClick={onTest}><GraduationCap size={18} />单元测试</button>
           <button className="primary-button" onClick={onImport}><UploadCloud size={18} />导入单词</button>
         </div>
@@ -926,6 +939,7 @@ function SettingsView({ settings, onChange, starredCount = 0, onView }: {
         <div className="me-shortcuts">
           <button onClick={() => onView('wordbook')}><BookMarked size={18} /><span>生词本</span><em>{starredCount}</em></button>
           <button onClick={() => onView('test')}><GraduationCap size={18} /><span>单元测试</span></button>
+          <button onClick={() => onView('dictation')}><Keyboard size={18} /><span>听写</span></button>
         </div>
       )}
       <div className="settings-layout">
