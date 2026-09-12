@@ -509,7 +509,7 @@ async function analyzePassageWithModel(sourceText, exactSentences) {
   }
   const timeoutMs = lines.length ? 90_000 : 120_000
   let lastError
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const { data } = await callGateway('/api/ai/chat', payload, timeoutMs)
       const parsed = parseJsonContent(data?.choices?.[0]?.message?.content)
@@ -524,8 +524,10 @@ async function analyzePassageWithModel(sourceText, exactSentences) {
       return parsed
     } catch (error) {
       lastError = error
-      if (![502, 503, 504].includes(error.status) || attempt === 1) throw error
-      await new Promise((resolve) => setTimeout(resolve, 600))
+      const retryableStatus = [502, 503, 504].includes(error.status)
+      const retryableFormat = /JSON|没有返回句子|没有返回有效/i.test(String(error.message || ''))
+      if ((!retryableStatus && !retryableFormat) || attempt === 2) throw error
+      await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)))
     }
   }
   throw lastError
