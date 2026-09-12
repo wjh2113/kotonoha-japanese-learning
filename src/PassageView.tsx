@@ -299,16 +299,14 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
 
   const addPassage = (next: Passage) => {
     persistEnabled.current = true
-    setPassages((current) => {
-      const following = [next, ...current].slice(0, 50)
-      passagesRef.current = following
-      return following
-    })
+    // Keep ref in sync before any async OCR work; functional updates can lag behind paste handlers.
+    const following = [next, ...passagesRef.current.filter((item) => item.id !== next.id)].slice(0, 50)
+    passagesRef.current = following
+    setPassages(following)
     setSelectedId(next.id)
     setUploadOpen(false)
     setRaw('')
     setDraftTitle('')
-    setNotice('')
   }
 
   const processIngest = async (passageId: string, text: string, images: Blob[]) => {
@@ -318,13 +316,14 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       if (text.trim() && !isPassagePlaceholder(text) && !looksLikeErrorDocument(text)) parts.push(text.trim())
       if (!images.length && !parts.length) throw new Error('没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
       for (const [index, image] of images.slice(0, 4).entries()) {
-        if (!passagesRef.current.some((item) => item.id === passageId)) {
-          throw new Error('课文已取消，识别已停止。')
-        }
+        // Stop quietly if user deleted this passage; do not treat ref lag as a failure.
+        if (!ingestingIds.current.has(passageId)) return
+        if (!passagesRef.current.some((item) => item.id === passageId)) return
         patchPassage(passageId, { status: 'processing', statusText: `正在识别课文图片 ${index + 1}/${Math.min(images.length, 4)}…` })
         const recognized = await ocrImage(image)
         if (recognized) parts.push(recognized)
       }
+      if (!ingestingIds.current.has(passageId)) return
       const sourceText = parts.join('\n\n').trim()
       if (!sourceText || looksLikeErrorDocument(sourceText)) throw new Error('没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
       const sentences = fallbackPassage(sourceText).sentences
@@ -336,6 +335,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       })
       await fillPassage(passageId)
     } catch (reason) {
+      if (!ingestingIds.current.has(passageId)) return
       patchPassage(passageId, {
         status: 'error',
         statusText: publicApiMessage(reason instanceof Error ? reason.message : '', '课文读取失败。'),
