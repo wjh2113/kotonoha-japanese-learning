@@ -145,9 +145,21 @@ export function recordSentenceScore(progress: Record<string, SentenceProgress> |
   return {
     ...(progress || {}),
     [sentenceId]: {
+      ...previous,
       attempts: previous.attempts + 1,
       lastScore: nextScore,
       bestScore: Math.max(previous.bestScore, nextScore),
+    },
+  }
+}
+
+export function recordSentenceDictation(progress: Record<string, SentenceProgress> | undefined, sentenceId: string, dictation: string): Record<string, SentenceProgress> {
+  const previous = progress?.[sentenceId] || { attempts: 0, lastScore: 0, bestScore: 0 }
+  return {
+    ...(progress || {}),
+    [sentenceId]: {
+      ...previous,
+      dictation: String(dictation || '').slice(0, 2000),
     },
   }
 }

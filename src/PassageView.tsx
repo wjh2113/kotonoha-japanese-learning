@@ -1,6 +1,6 @@
 import { useContext, useEffect, useRef, useState, type ClipboardEvent } from 'react'
 import {
-  BookOpen, BookmarkPlus, ChevronLeft, ChevronRight, Copy, FileText, LoaderCircle, Mic, Pause,
+  BookOpen, BookmarkPlus, ChevronLeft, ChevronRight, Copy, FileText, LoaderCircle, Mic, Pause, Play,
   ScrollText, Sparkles, SquarePen, Trash2, UploadCloud, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, readApiJson } from './api'
@@ -9,16 +9,17 @@ import { extractDocxPassage, htmlToPassageText, readPassageSource } from './docx
 import { PASSAGE_OCR_PLACEHOLDER, isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import {
   chunkItems, extractPassageVocab, hasChineseTranslation, isPrimarilyChineseLine, isTransientPassage, mergeAnalyzedSentences, mergePassageBooks,
-  normalizePassageSentence, passageProgressSummary, recordSentenceScore,
+  normalizePassageSentence, passageProgressSummary, recordSentenceDictation, recordSentenceScore,
   recoverInterruptedIngest, sentenceNeedsAnalysis, unusedPassageVocab,
 } from './passage'
+import { PassageIntensive } from './PassageIntensive'
 import { usePronunciationPractice } from './pronunciation-practice'
 import { SettingsContext } from './settings-context'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
 import type { ImportDraft, Passage, PassageBook, PassageSentence, Unit, Word } from './types'
 import { makeFallbackWord, pronunciationScoreFor, splitJapaneseSentences, uid } from './utils'
 
-type Mode = 'read' | 'explain' | 'grammar' | 'source'
+type Mode = 'read' | 'explain' | 'grammar' | 'source' | 'intensive'
 
 function passageTitle(value?: string, fallback = '课文') {
   return String(value || '').trim().slice(0, 80) || fallback
@@ -33,6 +34,7 @@ function hydrateProgress(value: unknown) {
       attempts: Math.max(0, Number(row.attempts) || 0),
       lastScore: Math.max(0, Math.min(100, Number(row.lastScore) || 0)),
       bestScore: Math.max(0, Math.min(100, Number(row.bestScore) || 0)),
+      ...(typeof row.dictation === 'string' ? { dictation: row.dictation.slice(0, 2000) } : {}),
     }
   }
   return next
@@ -121,8 +123,9 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   const [books, setBooks] = useState<PassageBook[]>([])
   const [ready, setReady] = useState(false)
   const [selectedId, setSelectedId] = useState('')
-  const [mode, setMode] = useState<Mode>('read')
+  const [mode, setMode] = useState<Mode>('source')
   const [sentenceIndex, setSentenceIndex] = useState(0)
+  const [showTranslations, setShowTranslations] = useState(false)
   const [raw, setRaw] = useState('')
   const [draftTitle, setDraftTitle] = useState('')
   const [draftBookId, setDraftBookId] = useState('')
@@ -348,7 +351,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   useEffect(() => {
     setSentenceIndex(0)
     setSourceEditing(false)
-    setMode('read')
+    setMode('source')
     setPlayingFull(false)
     stopSpeaking()
   }, [selectedId])
@@ -358,6 +361,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     const following = [next, ...passagesRef.current.filter((item) => item.id !== next.id)].slice(0, 50)
     commitPassages(following)
     setSelectedId(next.id)
+    setMode('source')
     setUploadOpen(false)
     setRaw('')
     setDraftTitle('')
@@ -528,20 +532,33 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     if (speak) void speakJapanese(next.text, voiceGender, { sentence: true })
   }
 
-  const playAll = () => {
+  const playFrom = (startIndex = 0) => {
     if (!passage?.sentences.length) return
     if (playingFull) {
       stopSpeaking()
       setPlayingFull(false)
       return
     }
-    setMode('read')
+    const start = Math.max(0, Math.min(startIndex, passage.sentences.length - 1))
     setPlayingFull(true)
-    void speakJapaneseQueue(passage.sentences.map((item) => item.text), voiceGender, {
+    setSentenceIndex(start)
+    void speakJapaneseQueue(passage.sentences.slice(start).map((item) => item.text), voiceGender, {
       sentence: true,
-      onIndex: (index) => setSentenceIndex(index),
+      onIndex: (index) => setSentenceIndex(start + index),
       onAllEnd: () => setPlayingFull(false),
     })
+  }
+
+  const playAll = () => playFrom(0)
+
+  const playCurrentLine = () => {
+    if (!passage?.sentences[sentenceIndex]) return
+    if (playingFull) {
+      stopSpeaking()
+      setPlayingFull(false)
+      return
+    }
+    goSentence(sentenceIndex, true)
   }
 
   const copySource = async () => {
@@ -576,7 +593,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       statusText: '正在按原文重新翻译…',
     })
     setSentenceIndex(0)
-    setMode('read')
+    setMode('source')
     void fillPassage(passage.id)
   }
 
@@ -652,7 +669,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
         <div>
           <span className="eyebrow">TEXTBOOK PASSAGE</span>
           <h1>课文学习</h1>
-          <p>粘贴后立刻进入课文库，后台拆句并补整句翻译。可按课本分组，一键抽生词，整篇朗读并记录跟读进度。</p>
+          <p>上传后默认看全文：点某一行可听、可跟读。也可切换逐句跟读、逐词解释与语法标注。</p>
         </div>
         <div className="hero-actions">
           <button className="primary-button" disabled={!ready} onClick={() => setUploadOpen(true)}><UploadCloud size={17} />添加课文</button>
@@ -748,19 +765,37 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                 </div>
               </div>
               <div className="passage-modes">
-                {([['read', '逐句跟读'], ['explain', '逐词解释'], ['grammar', '语法标识'], ['source', '原文全文']] as const).map(([id, label]) => (
+                {([['source', '原文全文'], ['intensive', '精听'], ['read', '逐句跟读'], ['explain', '逐词解释'], ['grammar', '语法标识']] as const).map(([id, label]) => (
                   <button key={id} className={mode === id ? 'active' : ''} onClick={() => {
                     setMode(id)
                     if (id === 'source') { setSourceDraft(passage.sourceText); setSourceEditing(false) }
+                    if (id !== 'intensive') { setPlayingFull(false); stopSpeaking() }
                   }}>{label}</button>
                 ))}
               </div>
-              {mode === 'source' ? (
-                <article className="passage-card passage-source-card">
+              {mode === 'intensive' ? (
+                <PassageIntensive
+                  passage={passage}
+                  voiceGender={voiceGender}
+                  sentenceIndex={sentenceIndex}
+                  playing={playingFull}
+                  onIndex={setSentenceIndex}
+                  onPlaying={setPlayingFull}
+                  onDictation={(sentenceId, text) => patchPassage(passage.id, {
+                    progress: recordSentenceDictation(passage.progress, sentenceId, text),
+                  })}
+                  onBack={() => { setPlayingFull(false); stopSpeaking(); setMode('source') }}
+                />
+              ) : mode === 'source' ? (
+                <article className="passage-card passage-transcript-card">
                   <div className="passage-source-actions">
                     <button type="button" onClick={() => { setSourceDraft(passage.sourceText); setSourceEditing(true) }}><SquarePen size={15} />编辑原文</button>
                     <button type="button" disabled={!passage.sourceText} onClick={() => void copySource()}><Copy size={15} />复制原文</button>
                     <button type="button" disabled={passage.status === 'processing' || !(sourceEditing ? sourceDraft : passage.sourceText).trim()} onClick={reanalyze}>重新解析</button>
+                    <label className="passage-toggle">
+                      <span>译文</span>
+                      <input type="checkbox" checked={showTranslations} onChange={(event) => setShowTranslations(event.target.checked)} />
+                    </label>
                   </div>
                   {sourceEditing ? (
                     <>
@@ -770,8 +805,84 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                         <button type="button" onClick={() => { setSourceEditing(false); setSourceDraft(passage.sourceText) }}>取消</button>
                       </div>
                     </>
+                  ) : passage.sentences.length ? (
+                    <>
+                      <ol className="passage-transcript">
+                        {passage.sentences.map((item, index) => {
+                          const active = index === sentenceIndex
+                          const practice = passage.progress?.[item.id]
+                          return (
+                            <li
+                              key={item.id}
+                              className={`${active ? 'active' : ''} ${playingFull && active ? 'speaking' : ''}`}
+                              ref={active ? (node) => { node?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) } : undefined}
+                            >
+                              <button
+                                type="button"
+                                className="passage-transcript-line"
+                                onClick={() => goSentence(index, true)}
+                              >
+                                <em>{index + 1}</em>
+                                <span className="passage-transcript-body">
+                                  <span className="jp">{item.text}</span>
+                                  {showTranslations && hasChineseTranslation(item.translation) && (
+                                    <small className="passage-transcript-tr">{item.translation}</small>
+                                  )}
+                                </span>
+                                {practice?.attempts ? <small className="sentence-progress done">{practice.bestScore}分</small> : null}
+                              </button>
+                              {active && (
+                                <div className="passage-transcript-practice">
+                                  <div className="passage-transcript-meta">
+                                    <span className="jp reading">{item.reading || '—'}</span>
+                                    <button
+                                      type="button"
+                                      className="volume-button"
+                                      onClick={() => void speakJapanese(item.text, voiceGender, { sentence: true })}
+                                      aria-label="再听一遍"
+                                    >
+                                      <Volume2 size={18} />
+                                    </button>
+                                  </div>
+                                  <SentencePronunciation
+                                    sentence={item}
+                                    onScore={(score) => patchPassage(passage.id, { progress: recordSentenceScore(passage.progress, item.id, score) })}
+                                  />
+                                </div>
+                              )}
+                            </li>
+                          )
+                        })}
+                      </ol>
+                      <div className="passage-transcript-bar" role="toolbar" aria-label="课文听读控制">
+                        <button
+                          type="button"
+                          className="passage-transcript-play"
+                          onClick={() => {
+                            if (playingFull) playFrom(sentenceIndex)
+                            else playCurrentLine()
+                          }}
+                          aria-label={playingFull ? '停止' : '听当前句'}
+                        >
+                          {playingFull ? <Pause size={20} /> : <Play size={20} />}
+                        </button>
+                        <button type="button" disabled={sentenceIndex <= 0} onClick={() => goSentence(sentenceIndex - 1, true)}>
+                          <ChevronLeft size={16} />上一句
+                        </button>
+                        <span>{sentenceIndex + 1} / {passage.sentences.length}</span>
+                        <button type="button" disabled={sentenceIndex >= passage.sentences.length - 1} onClick={() => goSentence(sentenceIndex + 1, true)}>
+                          下一句<ChevronRight size={16} />
+                        </button>
+                        <button type="button" className="passage-transcript-cont" onClick={() => playFrom(sentenceIndex)}>
+                          {playingFull ? '停止连读' : '从此连读'}
+                        </button>
+                        <button type="button" className="primary-button passage-go-intensive" onClick={() => { setPlayingFull(false); stopSpeaking(); setMode('intensive') }}>
+                          前往精听页面
+                        </button>
+                      </div>
+                    </>
                   ) : (
-                    <pre className="jp passage-source">{passage.sourceText || '这篇课文还没有保存上传时的原文。可以点「编辑原文」补上。'}</pre>
+                    <pre className="jp passage-source">{passage.sourceText || '这篇课文还没有可点选的句子。可以点「编辑原文」补上后重新解析。'}</pre>
                   )}
                 </article>
               ) : sentence ? (

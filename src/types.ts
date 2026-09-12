@@ -75,6 +75,7 @@ export type SentenceProgress = {
   attempts: number
   lastScore: number
   bestScore: number
+  dictation?: string
 }
 
 export type PassageStatus = 'ready' | 'processing' | 'error'
