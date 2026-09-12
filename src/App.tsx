@@ -13,7 +13,7 @@ import { DictationView, type DictationMode } from './DictationView'
 import { ErrorBookView } from './ErrorBookView'
 import { SettingsContext, DEFAULT_SETTINGS } from './settings-context'
 import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
-import type { AppSettings, ImportDraft, Unit, View, Word } from './types'
+import type { AppSettings, ImportDraft, ThemeName, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fallbackUnitTheme, isPlaceholderTheme } from './theme'
 import { buildQuizOptions, ENRICH_BATCH_SIZE, isPlaceholderMeaning, mergeEnrichedWord, optionLabel, orderQuizByWeakness, recordQuizAnswer, sharedDistractors, usableQuizWords } from './quiz'
 import { usePronunciationPractice } from './pronunciation-practice'
@@ -315,9 +315,9 @@ function App() {
       <AppHeader
         open={mobileNav} view={view} settings={settings}
         starredCount={starredCount} errorBookCount={errorBookCount} reviewCount={reviewCount}
-        onMenu={() => setMobileNav((current) => !current)} onView={nav}
+        onMenu={() => setMobileNav((current) => !current)} onView={nav} onSettingsChange={setSettings}
       />
-      <MobileTopBar view={view} settings={settings} onView={nav} />
+      <MobileTopBar view={view} settings={settings} onView={nav} onSettingsChange={setSettings} />
       {missingMeanings > 0 && (
         <div className="enrich-banner">正在补全全部单词释义，还剩 {missingMeanings} 个。补完后测试会覆盖整个单元。</div>
       )}
@@ -389,9 +389,100 @@ function App() {
   )
 }
 
-function AppHeader({ open, view, settings, starredCount, errorBookCount, reviewCount, onMenu, onView }: {
+const THEME_OPTIONS: { id: ThemeName; name: string; desc: string }[] = [
+  { id: 'aka', name: '绯红', desc: '暖橘红' },
+  { id: 'ai', name: '黛蓝', desc: '书卷气' },
+  { id: 'matcha', name: '抹茶', desc: '日式绿' },
+]
+
+function AvatarThemeMenu({
+  settings, onSettingsChange, onOpenSettings, ariaLabel = '主题与设置',
+}: {
+  settings: AppSettings
+  onSettingsChange: (settings: AppSettings) => void
+  onOpenSettings: () => void
+  ariaLabel?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const current = settings.theme || 'aka'
+
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null
+      if (target && rootRef.current && !rootRef.current.contains(target)) setOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onPointer)
+    document.addEventListener('touchstart', onPointer)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onPointer)
+      document.removeEventListener('touchstart', onPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div className={`avatar-theme-menu${open ? ' open' : ''}`} ref={rootRef}>
+      <button
+        type="button"
+        className="header-avatar"
+        aria-label={ariaLabel}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span>{settings.avatar}</span>
+      </button>
+      {open && (
+        <div className="avatar-theme-popover" role="menu" aria-label="选择主题">
+          <p className="avatar-theme-label">主题颜色</p>
+          <div className="avatar-theme-options">
+            {THEME_OPTIONS.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={current === option.id}
+                className={current === option.id ? 'active' : ''}
+                onClick={() => {
+                  onSettingsChange({ ...settings, theme: option.id })
+                  setOpen(false)
+                }}
+              >
+                <span className={`theme-swatch theme-swatch-${option.id}`} />
+                <div>
+                  <b>{option.name}</b>
+                  <small>{option.desc}</small>
+                </div>
+                {current === option.id && <CheckCircle2 size={16} />}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="avatar-theme-settings"
+            onClick={() => {
+              setOpen(false)
+              onOpenSettings()
+            }}
+          >
+            <Settings size={15} />
+            我的设置
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AppHeader({ open, view, settings, starredCount, errorBookCount, reviewCount, onMenu, onView, onSettingsChange }: {
   open: boolean; view: View; settings: AppSettings; starredCount: number; errorBookCount: number; reviewCount: number
-  onMenu: () => void; onView: (view: View) => void
+  onMenu: () => void; onView: (view: View) => void; onSettingsChange: (settings: AppSettings) => void
 }) {
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'library', label: '词库', icon: <LibraryBig size={17} /> },
@@ -411,7 +502,12 @@ function AppHeader({ open, view, settings, starredCount, errorBookCount, reviewC
       <nav className={`header-nav ${open ? 'open' : ''}`}>
         {items.map((item) => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => onView(item.id)}>{item.icon}<span>{item.label}</span>{Boolean(item.count) && <em>{item.count}</em>}</button>)}
       </nav>
-      <button className="header-avatar" onClick={() => onView('settings')} aria-label="打开设置"><span>{settings.avatar}</span></button>
+      <AvatarThemeMenu
+        settings={settings}
+        onSettingsChange={onSettingsChange}
+        onOpenSettings={() => onView('settings')}
+        ariaLabel="主题与设置"
+      />
     </header>
   )
 }
@@ -420,11 +516,18 @@ const VIEW_TITLES: Record<View, string> = {
   library: '词库', study: '学习', passage: '课文', test: '测试', dictation: '听写', wordbook: '生词本', errorbook: '错词本', review: '待复习', settings: '我的',
 }
 
-function MobileTopBar({ view, settings, onView }: { view: View; settings: AppSettings; onView: (view: View) => void }) {
+function MobileTopBar({ view, settings, onView, onSettingsChange }: {
+  view: View; settings: AppSettings; onView: (view: View) => void; onSettingsChange: (settings: AppSettings) => void
+}) {
   return (
     <header className="mobile-topbar">
       <div className="mobile-brand"><span>語</span><b>{VIEW_TITLES[view]}</b></div>
-      <button className="header-avatar" onClick={() => onView('settings')} aria-label="打开我的"><span>{settings.avatar}</span></button>
+      <AvatarThemeMenu
+        settings={settings}
+        onSettingsChange={onSettingsChange}
+        onOpenSettings={() => onView('settings')}
+        ariaLabel="主题与我的"
+      />
     </header>
   )
 }
