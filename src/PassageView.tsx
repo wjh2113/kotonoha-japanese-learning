@@ -612,7 +612,7 @@ export function PassageView() {
     stopSpeaking()
     setSentenceIndex(index)
     const next = passage.sentences[index]
-    if (speak) void speakJapanese(next.text, voiceGender, { sentence: true })
+    if (speak) void speakJapanese(next.reading || next.text, voiceGender, { sentence: true })
   }
 
   const playFrom = (startIndex = 0) => {
@@ -626,15 +626,19 @@ export function PassageView() {
     setPlayingFull(true)
     setSentenceIndex(start)
     const run = (from: number) => {
-      void speakJapaneseQueue(passage.sentences.slice(from).map((item) => item.text), voiceGender, {
-        sentence: true,
-        speed: playSpeed,
-        onIndex: (index) => setSentenceIndex(from + index),
-        onAllEnd: () => {
-          if (playLoop) run(0)
-          else setPlayingFull(false)
+      void speakJapaneseQueue(
+        passage.sentences.slice(from).map((item) => item.reading || item.text),
+        voiceGender,
+        {
+          sentence: true,
+          speed: playSpeed,
+          onIndex: (index) => setSentenceIndex(from + index),
+          onAllEnd: () => {
+            if (playLoop) run(0)
+            else setPlayingFull(false)
+          },
         },
-      })
+      )
     }
     run(start)
   }
@@ -1077,7 +1081,7 @@ export function PassageView() {
                       <ol className="passage-sentences shadow-list">
                         {passage.sentences.map((item, index) => (
                           <li key={item.id}>
-                            <button type="button" className={index === sentenceIndex ? 'active' : ''} onClick={() => { setSentenceIndex(index); void speakJapanese(item.text, voiceGender, { sentence: true }) }}>
+                            <button type="button" className={index === sentenceIndex ? 'active' : ''} onClick={() => { setSentenceIndex(index); void speakJapanese(item.reading || item.text, voiceGender, { sentence: true }) }}>
                               <em>{index + 1}</em>
                               <span className="intensive-line-play" aria-hidden><Play size={14} strokeWidth={1.6} /></span>
                               <span className="jp">{item.text}</span>

@@ -119,33 +119,92 @@ app.get('/api/health', async (_req, res) => {
 })
 
 /** Public Japanese TTS audio (rate-limited). Used by mobile/WebView where speechSynthesis is silent. */
+const TTS_UA = 'Mozilla/5.0 (compatible; KotonohaTTS/1.1)'
+
+async function fetchTtsBuffer(url) {
+  const upstream = await fetch(url, {
+    headers: { 'User-Agent': TTS_UA },
+    signal: AbortSignal.timeout(8000),
+  })
+  if (!upstream.ok) return null
+  const buf = Buffer.from(await upstream.arrayBuffer())
+  // Reject empty / JSON error bodies; require real MPEG/audio payload.
+  if (buf.length < 400) return null
+  if (buf[0] === 0x7b /* { */ || buf[0] === 0x3c /* < */) return null
+  return buf
+}
+
+async function fetchYoudaoTts(text) {
+  return fetchTtsBuffer(`https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(text)}&le=jap`)
+}
+
+async function fetchBaiduTts(text) {
+  return fetchTtsBuffer(
+    `https://fanyi.baidu.com/gettts?lan=jp&text=${encodeURIComponent(text)}&spd=3&source=web`,
+  )
+}
+
+/** Prefer particle / punctuation boundaries so Youdao accepts short clear clips. */
+function splitJapaneseTtsChunks(text, maxLen = 8) {
+  const value = String(text || '').trim()
+  if (!value) return []
+  if (value.length <= maxLen) return [value]
+  const chunks = []
+  let buf = ''
+  for (const ch of value) {
+    buf += ch
+    const boundary = /[。．.!！?？、，,\s]|[はがをにでとはもへのねよ]/u.test(ch)
+    if ((boundary && buf.length >= 2) || buf.length >= maxLen) {
+      const piece = buf.trim()
+      if (piece) chunks.push(piece)
+      buf = ''
+    }
+  }
+  if (buf.trim()) chunks.push(buf.trim())
+  return chunks.length ? chunks : [value]
+}
+
+async function synthesizeJapaneseTts(text) {
+  // Youdao ~160kbps is clear; Baidu ~16kbps/8kHz is noisy on longer lines — prefer Youdao.
+  const whole = await fetchYoudaoTts(text)
+  if (whole) return whole
+
+  const chunks = splitJapaneseTtsChunks(text, 8)
+  if (chunks.length > 1 || text.length > 8) {
+    const parts = []
+    for (const chunk of chunks) {
+      let buf = await fetchYoudaoTts(chunk)
+      if (!buf && chunk.length > 3) {
+        for (const sub of splitJapaneseTtsChunks(chunk, 3)) {
+          buf = await fetchYoudaoTts(sub)
+          if (!buf) buf = await fetchBaiduTts(sub)
+          if (!buf) return null
+          parts.push(buf)
+          buf = null
+        }
+        continue
+      }
+      if (!buf) buf = await fetchBaiduTts(chunk)
+      if (!buf) return null
+      parts.push(buf)
+    }
+    if (parts.length) return Buffer.concat(parts)
+  }
+
+  return fetchBaiduTts(text)
+}
+
 app.get('/api/tts', rateLimit(60_000, 90), async (req, res) => {
-  const q = String(req.query.q || '').trim().slice(0, 120)
+  const q = String(req.query.q || '').trim().slice(0, 160)
   if (!q) return res.status(400).json({ error: '缺少朗读文本。' })
   if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(q)) return res.status(400).json({ error: '仅支持日语朗读。' })
-  const sources = [
-    `https://fanyi.baidu.com/gettts?lan=jp&text=${encodeURIComponent(q)}&spd=3&source=web`,
-    `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(q)}&le=jap`,
-  ]
   try {
-    for (const url of sources) {
-      try {
-        const upstream = await fetch(url, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; KotonohaTTS/1.0)' },
-          signal: AbortSignal.timeout(8000),
-        })
-        if (!upstream.ok) continue
-        const buf = Buffer.from(await upstream.arrayBuffer())
-        if (buf.length < 200) continue
-        res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg')
-        res.setHeader('Cache-Control', 'public, max-age=86400')
-        res.setHeader('Access-Control-Allow-Origin', '*')
-        return res.send(buf)
-      } catch {
-        // try next source
-      }
-    }
-    return res.status(502).json({ error: '朗读服务暂不可用。' })
+    const buf = await synthesizeJapaneseTts(q)
+    if (!buf) return res.status(502).json({ error: '朗读服务暂不可用。' })
+    res.setHeader('Content-Type', 'audio/mpeg')
+    res.setHeader('Cache-Control', 'public, max-age=86400')
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    return res.send(buf)
   } catch (error) {
     console.error(error)
     res.status(502).json({ error: '朗读服务暂不可用。' })

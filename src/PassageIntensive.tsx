@@ -62,7 +62,7 @@ export function PassageIntensive({
     onPlaying(false)
     stopSpeaking()
     onIndex(index)
-    void speakJapanese(absolute.text, voiceGender, { sentence: true })
+    void speakJapanese(absolute.reading || absolute.text, voiceGender, { sentence: true })
   }
 
   const playContinuous = (startIndex = sentenceIndex) => {
@@ -74,11 +74,15 @@ export function PassageIntensive({
     const start = Math.max(0, Math.min(startIndex, passage.sentences.length - 1))
     onPlaying(true)
     onIndex(start)
-    void speakJapaneseQueue(passage.sentences.slice(start).map((item) => item.text), voiceGender, {
-      sentence: true,
-      onIndex: (offset) => onIndex(start + offset),
-      onAllEnd: () => onPlaying(false),
-    })
+    void speakJapaneseQueue(
+      passage.sentences.slice(start).map((item) => item.reading || item.text),
+      voiceGender,
+      {
+        sentence: true,
+        onIndex: (offset) => onIndex(start + offset),
+        onAllEnd: () => onPlaying(false),
+      },
+    )
   }
 
   const saveAll = () => {
