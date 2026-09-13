@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import {
-  BookOpen, Bot, ChevronLeft, ChevronRight, Copy, FileText, Headphones, LoaderCircle, Mic, Pause, Play,
-  RefreshCw, Repeat, ScrollText, SquarePen, Trash2, UploadCloud, Volume2, X,
+  BookOpen, Bot, ChevronDown, ChevronLeft, ChevronRight, Copy, FileText, Headphones, LoaderCircle, Mic, Pause, Play,
+  RefreshCw, Repeat, ScrollText, SquarePen, Sprout, Trash2, UploadCloud, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, readApiJson } from './api'
 import { isPracticeOnlyClient } from './device'
@@ -25,6 +25,30 @@ type Mode = 'source' | 'intensive' | 'shadow'
 
 function passageTitle(value?: string, fallback = '课文') {
   return String(value || '').trim().slice(0, 80) || fallback
+}
+
+function renderPassageJp(item: PassageSentence, grammarTerms: string[]) {
+  const tokens = Array.isArray(item.tokens) ? item.tokens : []
+  if (tokens.length) {
+    return tokens.map((token, index) => {
+      const surface = String(token.surface || '').trim()
+      if (!surface) return null
+      const reading = String(token.reading || '').trim()
+      const showRuby = Boolean(reading && reading !== surface && /[\u4e00-\u9fff]/.test(surface))
+      const hit = grammarTerms.some((term) => term && surface.includes(term))
+      const body = showRuby ? <ruby>{surface}<rt>{reading}</rt></ruby> : surface
+      return (
+        <span key={`${item.id}-tk-${index}`} className={hit ? 'grammar-hit' : undefined}>
+          {body}
+        </span>
+      )
+    })
+  }
+  return highlightGrammarInText(item.reading || item.text, grammarTerms).map((part, partIndex) => (
+    part.hit
+      ? <span key={`${item.id}-g-${partIndex}`} className="grammar-hit">{part.text}</span>
+      : <span key={`${item.id}-t-${partIndex}`}>{part.text}</span>
+  ))
 }
 
 function hydrateProgress(value: unknown) {
@@ -97,6 +121,8 @@ export function PassageView() {
   const [shadowRetry, setShadowRetry] = useState(0)
   const [playSpeed, setPlaySpeed] = useState(1)
   const [playLoop, setPlayLoop] = useState(false)
+  const [mobileCatalog, setMobileCatalog] = useState(false)
+  const [grammarOpen, setGrammarOpen] = useState(true)
   const persistError = useRef(false)
   const persistEnabled = useRef(false)
   const serverSyncEnabled = useRef(false)
@@ -647,6 +673,19 @@ export function PassageView() {
   const progressPct = passage?.sentences.length
     ? Math.round(((sentenceIndex + (playingFull ? 0.4 : 0)) / Math.max(passage.sentences.length, 1)) * 100)
     : 0
+  const sentenceSecs = 7
+  const audioElapsed = (() => {
+    const sec = Math.max(0, sentenceIndex) * sentenceSecs
+    const m = Math.floor(sec / 60)
+    const s = sec % 60
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  })()
+  const audioTotal = (() => {
+    const sec = Math.max(1, passage?.sentences.length || 1) * sentenceSecs
+    const m = Math.floor(sec / 60)
+    const s = sec % 60
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  })()
   const lessonSuggestions = lessons
     .filter((item) => !draftBookId || item.bookId === draftBookId)
     .map((item) => item.name)
@@ -675,10 +714,14 @@ export function PassageView() {
   }
 
   const selectPassage = (id: string) => {
-    if (!id || id === selectedId) return
+    if (!id || id === selectedId) {
+      if (practiceOnly) setMobileCatalog(false)
+      return
+    }
     setSelectedId(id)
     setPlayingFull(false)
     stopSpeaking()
+    if (practiceOnly) setMobileCatalog(false)
   }
 
   const selectLesson = (lessonKey: string) => {
@@ -688,152 +731,272 @@ export function PassageView() {
   }
 
   return (
-    <div className="page hub-page passage-page passage-design">
-      <section className="hub-hero passage-hero-compact">
-        <div>
-          <h1>课文学习</h1>
-          <p>{practiceOnly ? '选择课时与章节后练习精听、跟读与朗读。' : '先选课时再选章节，可切换原文、精听与跟读。'}</p>
-        </div>
-        {!practiceOnly && (
-          <div className="hero-actions">
-            <button className="primary-button" disabled={!ready} onClick={openUpload}><UploadCloud size={17} strokeWidth={1.6} />添加课文</button>
+    <div className={`page hub-page passage-page passage-design${practiceOnly ? ' passage-mobile' : ''}`}>
+      {(!practiceOnly || mobileCatalog || !passages.length) && (
+        <section className="hub-hero passage-hero-compact">
+          <div>
+            <h1>课文学习</h1>
+            <p>{practiceOnly ? '选择课时与章节后练习精听、跟读与朗读。' : '先选课时再选章节，可切换原文、精听与跟读。'}</p>
           </div>
-        )}
-      </section>
+          {!practiceOnly && (
+            <div className="hero-actions">
+              <button className="primary-button" disabled={!ready} onClick={openUpload}><UploadCloud size={17} strokeWidth={1.6} />添加课文</button>
+            </div>
+          )}
+        </section>
+      )}
 
       {notice && <div className="passage-notice">{notice}<button onClick={() => setNotice('')} aria-label="关闭"><X size={14} /></button></div>}
 
-      {passages.length ? (
+      {practiceOnly && mobileCatalog && passages.length > 0 && (
+        <section className="passage-mobile-catalog">
+          {books.map((book) => {
+            const items = catalogLessons.filter((item) => item.bookId === book.id)
+            if (!items.length) return null
+            return (
+              <div key={book.id} className="passage-mobile-book">
+                <h2>{book.name}</h2>
+                {items.map((lesson) => {
+                  const chapters = orderedPassages.filter((item) => passageLessonKey(item) === lesson.key)
+                  return (
+                    <div key={lesson.key} className="passage-mobile-lesson">
+                      <b>{lesson.lessonName}</b>
+                      {chapters.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={item.id === selectedId ? 'active' : ''}
+                          onClick={() => {
+                            selectPassage(item.id)
+                            setMode('source')
+                            setSentenceIndex(0)
+                          }}
+                        >
+                          <span>{chapterOptionLabel(item)}</span>
+                          <ChevronRight size={16} strokeWidth={1.7} />
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })}
+          {catalogLessons.filter((item) => !item.bookId || !books.some((book) => book.id === item.bookId)).length > 0 && (
+            <div className="passage-mobile-book">
+              <h2>未分组</h2>
+              {catalogLessons
+                .filter((item) => !item.bookId || !books.some((book) => book.id === item.bookId))
+                .map((lesson) => {
+                  const chapters = orderedPassages.filter((item) => passageLessonKey(item) === lesson.key)
+                  return (
+                    <div key={lesson.key} className="passage-mobile-lesson">
+                      <b>{lesson.lessonName}</b>
+                      {chapters.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={item.id === selectedId ? 'active' : ''}
+                          onClick={() => {
+                            selectPassage(item.id)
+                            setMode('source')
+                            setSentenceIndex(0)
+                          }}
+                        >
+                          <span>{chapterOptionLabel(item)}</span>
+                          <ChevronRight size={16} strokeWidth={1.7} />
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })}
+            </div>
+          )}
+        </section>
+      )}
+
+      {passages.length && !(practiceOnly && mobileCatalog) ? (
         <div className="passage-workspace catalog-hidden">
           {passage ? (
             <section className="passage-stage">
-              <div className="passage-picker">
-                <div className="passage-picker-selects">
-                  <label className="passage-picker-select">
-                    <BookOpen size={15} strokeWidth={1.6} />
-                    <span>课时</span>
-                    <select
-                      value={selectedLessonKey}
-                      aria-label="选择课时"
-                      onChange={(event) => selectLesson(event.target.value)}
-                    >
-                      {books.map((book) => {
-                        const items = catalogLessons.filter((item) => item.bookId === book.id)
-                        if (!items.length) return null
-                        return (
-                          <optgroup key={book.id} label={book.name}>
-                            {items.map((item) => (
-                              <option key={item.key} value={item.key}>{item.lessonName}</option>
-                            ))}
-                          </optgroup>
-                        )
-                      })}
-                      {catalogLessons.some((item) => !item.bookId || !books.some((book) => book.id === item.bookId)) && (
-                        <optgroup label="未分组">
-                          {catalogLessons
-                            .filter((item) => !item.bookId || !books.some((book) => book.id === item.bookId))
-                            .map((item) => (
-                              <option key={item.key} value={item.key}>{item.lessonName}</option>
-                            ))}
-                        </optgroup>
-                      )}
-                    </select>
-                  </label>
-                  <label className="passage-picker-select">
-                    <span>章节</span>
-                    <select
-                      value={passage.id}
-                      aria-label="选择章节"
-                      onChange={(event) => selectPassage(event.target.value)}
-                    >
-                      {chapterOptions.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {chapterOptionLabel(item)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <div className="passage-picker-actions">
-                  {!practiceOnly && (
-                    <>
-                      <button type="button" onClick={() => createBook(false)}>新建课本</button>
-                      {passage.bookId && books.some((book) => book.id === passage.bookId) && (
-                        <>
-                          <button type="button" onClick={() => {
-                            const book = books.find((item) => item.id === passage.bookId)
-                            if (book) renameBook(book)
-                          }}>改课本</button>
-                          <button type="button" onClick={() => {
-                            const book = books.find((item) => item.id === passage.bookId)
-                            if (book) deleteBook(book)
-                          }}>删课本</button>
-                        </>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {passage.status === 'processing' && Date.now() - (passage.createdAt || 0) > 120_000 && (
-                <div className="passage-status error">
-                  识别时间过长，可删除后重试，或改粘贴正文。
-                  {!practiceOnly && <button type="button" onClick={openUpload}>重新添加</button>}
-                </div>
-              )}
-
-              <div className="passage-stage-head">
-                <label className="passage-title-label">
-                  {!practiceOnly && <SquarePen size={14} strokeWidth={1.6} />}
-                  <input
-                    className="passage-title-input"
-                    value={passage.title}
-                    maxLength={80}
-                    aria-label="课文标题"
-                    readOnly={practiceOnly}
-                    onChange={(event) => {
-                      if (practiceOnly) return
-                      patchPassage(passage.id, { title: event.target.value.slice(0, 80) })
-                    }}
-                    onBlur={(event) => {
-                      if (practiceOnly) return
-                      patchPassage(passage.id, { title: passageTitle(event.target.value) })
-                    }}
-                  />
-                </label>
-                {!practiceOnly && (
-                  <div className="passage-toolbar-actions">
-                    <button type="button" className="remove-word" onClick={() => {
-                      if (!window.confirm(`删除课文「${passage.title}」？此操作不可恢复。`)) return
-                      ingestingIds.current.delete(passage.id)
-                      deletedIds.current.add(passage.id)
-                      dirtyUpserts.current.delete(passage.id)
-                      dirtyProgress.current.delete(passage.id)
-                      const remaining = passagesRef.current.filter((item) => item.id !== passage.id)
-                      commitPassages(remaining)
-                      setSelectedId(remaining[0]?.id || '')
-                    }}><Trash2 size={15} strokeWidth={1.6} />删除</button>
-                  </div>
-                )}
-              </div>
-
-              <div className="passage-modes">
-                {([
-                  ['source', '原文', BookOpen],
-                  ['intensive', '精听', Headphones],
-                  ['shadow', '跟读', Mic],
-                ] as const).map(([id, label, Icon]) => (
-                  <button key={id} type="button" className={mode === id ? 'active' : ''} onClick={() => {
-                    setMode(id)
-                    if (id === 'source') {
-                      setSourceDraft(passage.sourceText)
-                      setSourceEditing(false)
+              {practiceOnly && mode === 'source' ? (
+                <header className="passage-mobile-top">
+                  <button
+                    type="button"
+                    className="passage-mobile-back"
+                    aria-label="返回目录"
+                    onClick={() => {
                       setPlayingFull(false)
                       stopSpeaking()
-                    }
-                  }}><Icon size={14} strokeWidth={1.6} />{label}</button>
-                ))}
-              </div>
+                      setMobileCatalog(true)
+                    }}
+                  >
+                    <ChevronLeft size={22} strokeWidth={1.8} />
+                  </button>
+                  <h1>{passage.title}</h1>
+                  <button
+                    type="button"
+                    className="passage-mobile-shadow-btn"
+                    onClick={() => {
+                      setPlayingFull(false)
+                      stopSpeaking()
+                      setMode('shadow')
+                    }}
+                  >
+                    <Mic size={15} strokeWidth={1.8} />跟读
+                  </button>
+                  <Sprout className="passage-mobile-leaf" size={16} strokeWidth={1.8} aria-hidden />
+                </header>
+              ) : (
+                <>
+                  <div className="passage-picker">
+                    <div className="passage-picker-selects">
+                      <label className="passage-picker-select">
+                        <BookOpen size={15} strokeWidth={1.6} />
+                        <span>课时</span>
+                        <select
+                          value={selectedLessonKey}
+                          aria-label="选择课时"
+                          onChange={(event) => selectLesson(event.target.value)}
+                        >
+                          {books.map((book) => {
+                            const items = catalogLessons.filter((item) => item.bookId === book.id)
+                            if (!items.length) return null
+                            return (
+                              <optgroup key={book.id} label={book.name}>
+                                {items.map((item) => (
+                                  <option key={item.key} value={item.key}>{item.lessonName}</option>
+                                ))}
+                              </optgroup>
+                            )
+                          })}
+                          {catalogLessons.some((item) => !item.bookId || !books.some((book) => book.id === item.bookId)) && (
+                            <optgroup label="未分组">
+                              {catalogLessons
+                                .filter((item) => !item.bookId || !books.some((book) => book.id === item.bookId))
+                                .map((item) => (
+                                  <option key={item.key} value={item.key}>{item.lessonName}</option>
+                                ))}
+                            </optgroup>
+                          )}
+                        </select>
+                      </label>
+                      <label className="passage-picker-select">
+                        <span>章节</span>
+                        <select
+                          value={passage.id}
+                          aria-label="选择章节"
+                          onChange={(event) => selectPassage(event.target.value)}
+                        >
+                          {chapterOptions.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {chapterOptionLabel(item)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="passage-picker-actions">
+                      {!practiceOnly && (
+                        <>
+                          <button type="button" onClick={() => createBook(false)}>新建课本</button>
+                          {passage.bookId && books.some((book) => book.id === passage.bookId) && (
+                            <>
+                              <button type="button" onClick={() => {
+                                const book = books.find((item) => item.id === passage.bookId)
+                                if (book) renameBook(book)
+                              }}>改课本</button>
+                              <button type="button" onClick={() => {
+                                const book = books.find((item) => item.id === passage.bookId)
+                                if (book) deleteBook(book)
+                              }}>删课本</button>
+                            </>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {passage.status === 'processing' && Date.now() - (passage.createdAt || 0) > 120_000 && (
+                    <div className="passage-status error">
+                      识别时间过长，可删除后重试，或改粘贴正文。
+                      {!practiceOnly && <button type="button" onClick={openUpload}>重新添加</button>}
+                    </div>
+                  )}
+
+                  <div className="passage-stage-head">
+                    <label className="passage-title-label">
+                      {!practiceOnly && <SquarePen size={14} strokeWidth={1.6} />}
+                      <input
+                        className="passage-title-input"
+                        value={passage.title}
+                        maxLength={80}
+                        aria-label="课文标题"
+                        readOnly={practiceOnly}
+                        onChange={(event) => {
+                          if (practiceOnly) return
+                          patchPassage(passage.id, { title: event.target.value.slice(0, 80) })
+                        }}
+                        onBlur={(event) => {
+                          if (practiceOnly) return
+                          patchPassage(passage.id, { title: passageTitle(event.target.value) })
+                        }}
+                      />
+                    </label>
+                    {!practiceOnly && (
+                      <div className="passage-toolbar-actions">
+                        <button type="button" className="remove-word" onClick={() => {
+                          if (!window.confirm(`删除课文「${passage.title}」？此操作不可恢复。`)) return
+                          ingestingIds.current.delete(passage.id)
+                          deletedIds.current.add(passage.id)
+                          dirtyUpserts.current.delete(passage.id)
+                          dirtyProgress.current.delete(passage.id)
+                          const remaining = passagesRef.current.filter((item) => item.id !== passage.id)
+                          commitPassages(remaining)
+                          setSelectedId(remaining[0]?.id || '')
+                        }}><Trash2 size={15} strokeWidth={1.6} />删除</button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="passage-modes">
+                    {([
+                      ['source', '原文', BookOpen],
+                      ['intensive', '精听', Headphones],
+                      ['shadow', '跟读', Mic],
+                    ] as const).map(([id, label, Icon]) => (
+                      <button key={id} type="button" className={mode === id ? 'active' : ''} onClick={() => {
+                        setMode(id)
+                        if (id === 'source') {
+                          setSourceDraft(passage.sourceText)
+                          setSourceEditing(false)
+                          setPlayingFull(false)
+                          stopSpeaking()
+                        }
+                      }}><Icon size={14} strokeWidth={1.6} />{label}</button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {practiceOnly && mode === 'shadow' && (
+                <header className="passage-mobile-top">
+                  <button
+                    type="button"
+                    className="passage-mobile-back"
+                    aria-label="返回原文"
+                    onClick={() => {
+                      setPlayingFull(false)
+                      stopSpeaking()
+                      setMode('source')
+                    }}
+                  >
+                    <ChevronLeft size={22} strokeWidth={1.8} />
+                  </button>
+                  <h1>跟读练习</h1>
+                  <span className="passage-mobile-shadow-spacer" />
+                </header>
+              )}
 
               <div className="passage-stage-body">
               {mode === 'intensive' ? (
@@ -923,7 +1086,7 @@ export function PassageView() {
                     <div className="passage-audio-progress" aria-hidden>
                       <i style={{ width: `${Math.min(100, Math.max(0, progressPct))}%` }} />
                     </div>
-                    <em>{sentenceIndex + 1} / {Math.max(passage.sentences.length, 1)}</em>
+                    <em className="passage-audio-time">{audioElapsed} / {audioTotal}</em>
                     <select
                       className="passage-speed"
                       value={playSpeed}
@@ -945,18 +1108,18 @@ export function PassageView() {
                     </button>
                   </div>
 
-                  <div className="passage-source-actions">
-                    {!practiceOnly && <button type="button" onClick={() => { setSourceDraft(passage.sourceText); setSourceEditing(true) }}><SquarePen size={15} strokeWidth={1.6} />编辑原文</button>}
-                    <button type="button" disabled={!passage.sourceText} onClick={() => void copySource()}><Copy size={15} strokeWidth={1.6} />复制原文</button>
-                    {!practiceOnly && (
+                  {!practiceOnly && (
+                    <div className="passage-source-actions">
+                      <button type="button" onClick={() => { setSourceDraft(passage.sourceText); setSourceEditing(true) }}><SquarePen size={15} strokeWidth={1.6} />编辑原文</button>
+                      <button type="button" disabled={!passage.sourceText} onClick={() => void copySource()}><Copy size={15} strokeWidth={1.6} />复制原文</button>
                       <label className="passage-book-assign">课本
                         <select value={passage.bookId || ''} onChange={(event) => movePassage(event.target.value)}>
                           <option value="">未分组</option>
                           {books.map((book) => <option key={book.id} value={book.id}>{book.name}</option>)}
                         </select>
                       </label>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
                   {sourceEditing ? (
                     <>
@@ -980,13 +1143,7 @@ export function PassageView() {
                               <button type="button" className="passage-bilingual-row" onClick={() => goSentence(index, true)}>
                                 <em>{index + 1}</em>
                                 <span className="passage-bilingual-jp">
-                                  <span className="jp">
-                                    {highlightGrammarInText(item.reading || item.text, grammarTerms).map((part, partIndex) => (
-                                      part.hit
-                                        ? <span key={`${item.id}-g-${partIndex}`} className="grammar-hit">{part.text}</span>
-                                        : <span key={`${item.id}-t-${partIndex}`}>{part.text}</span>
-                                    ))}
-                                  </span>
+                                  <span className="jp">{renderPassageJp(item, grammarTerms)}</span>
                                 </span>
                                 {hasChineseTranslation(item.translation) && (
                                   <span className="passage-bilingual-tr">{item.translation}</span>
@@ -997,27 +1154,37 @@ export function PassageView() {
                         })}
                       </ol>
 
-                      <section className="passage-grammar-block" aria-label="本课语法说明">
-                        <h4><ScrollText size={15} strokeWidth={1.6} />本课语法说明</h4>
-                        {grammarPoints.length ? (
-                          <div className="passage-grammar-cards">
-                            {grammarPoints.map((point, index) => (
-                              <article key={`${point.name}-${index}`}>
-                                <b>{index + 1}. {point.pattern || point.name}</b>
-                                {point.name && point.pattern && <code>{point.name}</code>}
-                                {point.explanation && (
-                                  <div className="passage-grammar-tip">
-                                    <span>用法提示</span>
-                                    <em>{point.explanation}</em>
-                                  </div>
-                                )}
-                              </article>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="passage-grammar-empty">
-                            {passage.status === 'processing' ? '语法点整理中，解析完成后会显示在这里。' : '本课暂无语法标注。'}
-                          </p>
+                      <section className={`passage-grammar-block${grammarOpen ? ' open' : ''}`} aria-label="本课语法说明">
+                        <button
+                          type="button"
+                          className="passage-grammar-toggle"
+                          onClick={() => setGrammarOpen((open) => !open)}
+                          aria-expanded={grammarOpen}
+                        >
+                          <span><ScrollText size={15} strokeWidth={1.6} />本课语法说明</span>
+                          <ChevronDown size={18} strokeWidth={1.7} />
+                        </button>
+                        {grammarOpen && (
+                          grammarPoints.length ? (
+                            <div className="passage-grammar-cards">
+                              {grammarPoints.map((point, index) => (
+                                <article key={`${point.name}-${index}`}>
+                                  <b>{index + 1}. {point.pattern || point.name}</b>
+                                  {point.name && point.pattern && <code>{point.name}</code>}
+                                  {point.explanation && (
+                                    <div className="passage-grammar-tip">
+                                      <span>用法提示</span>
+                                      <em>{point.explanation}</em>
+                                    </div>
+                                  )}
+                                </article>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="passage-grammar-empty">
+                              {passage.status === 'processing' ? '语法点整理中，解析完成后会显示在这里。' : '本课暂无语法标注。'}
+                            </p>
+                          )
                         )}
                       </section>
                     </>
@@ -1028,34 +1195,36 @@ export function PassageView() {
               ) : null}
               </div>
 
-              <footer className="passage-lesson-footer">
-                <b>{passage.title}</b>
-                <div className="passage-lesson-progress">
-                  <span>{Math.min(sentenceIndex + 1, passage.sentences.length || 1)} / {Math.max(passage.sentences.length, 1)}</span>
-                  <i><em style={{ width: `${Math.min(100, Math.max(0, progressPct))}%` }} /></i>
-                </div>
-                <button
-                  type="button"
-                  className="primary-button"
-                  disabled={!nextPassage}
-                  onClick={() => {
-                    if (!nextPassage) return
-                    setSelectedId(nextPassage.id)
-                    setMode('source')
-                    setSentenceIndex(0)
-                    setPlayingFull(false)
-                    stopSpeaking()
-                  }}
-                >
-                  下一课<ChevronRight size={16} strokeWidth={1.6} />
-                </button>
-              </footer>
+              {!practiceOnly && (
+                <footer className="passage-lesson-footer">
+                  <b>{passage.title}</b>
+                  <div className="passage-lesson-progress">
+                    <span>{Math.min(sentenceIndex + 1, passage.sentences.length || 1)} / {Math.max(passage.sentences.length, 1)}</span>
+                    <i><em style={{ width: `${Math.min(100, Math.max(0, progressPct))}%` }} /></i>
+                  </div>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={!nextPassage}
+                    onClick={() => {
+                      if (!nextPassage) return
+                      setSelectedId(nextPassage.id)
+                      setMode('source')
+                      setSentenceIndex(0)
+                      setPlayingFull(false)
+                      stopSpeaking()
+                    }}
+                  >
+                    下一课<ChevronRight size={16} strokeWidth={1.6} />
+                  </button>
+                </footer>
+              )}
             </section>
           ) : (
             <div className="wide-empty compact"><ScrollText /><h2>请选择课文</h2><p>用上方课程目录下拉选择一篇课文开始学习。</p></div>
           )}
         </div>
-      ) : (
+      ) : !practiceOnly || !passages.length ? (
         <div className="wide-empty">
           <ScrollText />
           <h2>还没有课文</h2>
@@ -1064,7 +1233,7 @@ export function PassageView() {
             : '请上传「课文整理」Markdown 手册。结构为课本 → 课时 → 章节（## 课文N），上传时选择课本与课时，系统自动识别章节入库，不调用模型。'}</p>
           {!practiceOnly && <button onClick={openUpload}>添加课文</button>}
         </div>
-      )}
+      ) : null}
 
       {!practiceOnly && uploadOpen && (
         <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !busy && setUploadOpen(false)}>
