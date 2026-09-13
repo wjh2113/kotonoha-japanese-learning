@@ -1163,11 +1163,17 @@ body { background: var(--cream); color: var(--ink); }
 }
 .continue-thumb .continue-scene { width: 100%; height: 100%; display: block; }
 .home-cal-grid .day.today {
-  background: var(--red-dark); color: #fff; font-weight: 700; box-shadow: none;
+  background: color-mix(in srgb, var(--red-dark) 16%, white); color: var(--red-dark); font-weight: 700; box-shadow: none;
 }
-.home-cal-grid .day.today.mark-due::after,
-.home-cal-grid .day.today.mark-done::after,
-.home-cal-grid .day.today.mark-planned::after { background: #fff; }
+.home-cal-grid .day.selected {
+  background: var(--red-dark); color: #fff; font-weight: 700;
+}
+.home-cal-grid .day.selected.mark-due::after,
+.home-cal-grid .day.selected.mark-done::after,
+.home-cal-grid .day.selected.mark-planned::after { background: #fff; }
+.home-cal-grid .day.today:not(.selected) {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--red-dark) 35%, transparent);
+}
 .home-stats { margin-top: 22px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
 .home-stats article {
   background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px;
@@ -1201,10 +1207,42 @@ body { background: var(--cream); color: var(--ink); }
 .continue-bar-row > b { font-size: 13px; color: var(--red-dark); font-variant-numeric: tabular-nums; }
 .continue-body small { display: block; margin-top: 9px; color: var(--muted); font-size: 11.5px; }
 .home-calendar-wrap { display: grid; grid-template-columns: 1fr 118px; gap: 14px; align-items: start; }
-.home-cal-head { font-size: 13.5px; font-weight: 700; margin-bottom: 10px; color: var(--ink); }
+.home-cal-head {
+  display: grid; grid-template-columns: 28px 1fr 28px; align-items: center; gap: 4px;
+  margin-bottom: 10px; color: var(--ink); text-align: center;
+}
+.home-cal-head > b { font-size: 13.5px; font-weight: 700; }
+.home-cal-nav {
+  width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent;
+  color: var(--muted); display: grid; place-items: center; cursor: pointer;
+}
+.home-cal-nav:hover { background: var(--accent-wash); color: var(--red-dark); }
 .home-cal-week, .home-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center; }
 .home-cal-week span { font-size: 10px; color: var(--muted); padding-bottom: 2px; }
-.home-cal-grid .day { height: 28px; border-radius: 999px; display: grid; place-items: center; font-size: 11.5px; color: var(--ink); position: relative; }
+.home-cal-grid .day {
+  height: 28px; border: 0; border-radius: 999px; display: grid; place-items: center;
+  font-size: 11.5px; color: var(--ink); position: relative; background: transparent; cursor: pointer; padding: 0;
+}
+.home-cal-grid .day:hover { background: var(--accent-wash); }
+.home-cal-grid .day.selected:hover { background: var(--red-dark); }
+.home-cal-day {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
+  display: grid; gap: 8px;
+}
+.home-cal-day > header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.home-cal-day > header b { font-size: 13px; color: var(--ink); }
+.home-cal-day > header small, .home-cal-more { color: var(--muted); font-size: 11.5px; }
+.home-cal-day > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.home-cal-day ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.home-cal-day li {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-size: 12.5px; color: var(--ink);
+}
+.home-cal-day li em { font-style: normal; color: var(--muted); font-size: 11px; flex: 0 0 auto; }
+.home-cal-go {
+  justify-self: start; border: 0; background: transparent; color: var(--red);
+  cursor: pointer; font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 2px; padding: 0;
+}
 .home-cal-grid .day.mark-due::after,
 .home-cal-grid .day.mark-done::after,
 .home-cal-grid .day.mark-planned::after {

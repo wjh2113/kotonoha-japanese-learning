@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import {
-  BookOpen, CalendarDays, CheckCircle2, ChevronRight, ClipboardList, FileText, Flame, Headphones, Leaf, Target, Zap,
+  BookOpen, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, FileText, Flame, Headphones, Leaf, Target, Zap,
 } from 'lucide-react'
 import type { AppSettings, Unit, View, Word } from './types'
 import { getReviewState, REVIEW_INTERVAL_DAYS } from './utils'
@@ -11,20 +12,33 @@ type Props = {
   onView: (view: View) => void
 }
 
-function calendarMarks(words: Word[], year: number, month: number) {
-  const marks = new Map<number, 'due' | 'done' | 'planned'>()
-  const now = Date.now()
+type DayMark = 'due' | 'done' | 'planned'
+
+function sameCalendarDay(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+}
+
+function calendarMarks(words: Word[], year: number, month: number, nowMs = Date.now()) {
+  const marks = new Map<number, DayMark>()
   for (const word of words) {
     if (!Number.isFinite(word.nextReviewAt)) continue
     const d = new Date(Number(word.nextReviewAt))
     if (d.getFullYear() !== year || d.getMonth() !== month) continue
     const day = d.getDate()
-    const state = getReviewState(word, now)
-    const kind = state.due ? 'due' : word.mastered ? 'done' : 'planned'
+    const state = getReviewState(word, nowMs)
+    const kind: DayMark = state.due ? 'due' : word.mastered ? 'done' : 'planned'
     const prev = marks.get(day)
     if (!prev || (kind === 'due' && prev !== 'due') || (kind === 'done' && prev === 'planned')) marks.set(day, kind)
   }
   return marks
+}
+
+function wordsOnDay(words: Word[], year: number, month: number, day: number) {
+  return words.filter((word) => {
+    if (!Number.isFinite(word.nextReviewAt)) return false
+    const d = new Date(Number(word.nextReviewAt))
+    return d.getFullYear() === year && d.getMonth() === month && d.getDate() === day
+  })
 }
 
 function reviewedToday(word: Word, now = new Date()) {
@@ -36,6 +50,9 @@ export function HomeView({ units, unit, settings, onView }: Props) {
   const allWords = units.flatMap((item) => item.words)
   const unitWords = unit?.words || []
   const now = new Date()
+  const [cursor, setCursor] = useState(() => new Date(now.getFullYear(), now.getMonth(), 1))
+  const [selectedDay, setSelectedDay] = useState(now.getDate())
+
   // 待复习：全库口径；今日计划/已练：当前单元口径
   const dueCount = allWords.filter((word) => getReviewState(word).due).length
   const unmasteredUnit = unitWords.filter((word) => !word.mastered)
@@ -52,15 +69,26 @@ export function HomeView({ units, unit, settings, onView }: Props) {
   const remaining = Math.max(0, total - learned)
   const streak = settings.streakDays || 0
 
-  const year = now.getFullYear()
-  const month = now.getMonth()
-  const marks = calendarMarks(allWords, year, month)
+  const year = cursor.getFullYear()
+  const month = cursor.getMonth()
+  const marks = calendarMarks(allWords, year, month, now.getTime())
   const firstWeekday = new Date(year, month, 1).getDay()
   const daysInMonth = new Date(year, month + 1, 0).getDate()
   const cells: Array<number | null> = [
     ...Array.from({ length: firstWeekday }, () => null),
     ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
   ]
+  const viewingTodayMonth = year === now.getFullYear() && month === now.getMonth()
+  const selectedDate = new Date(year, month, Math.min(selectedDay, daysInMonth))
+  const dayWords = wordsOnDay(allWords, year, month, selectedDate.getDate())
+  const dayDue = dayWords.filter((word) => getReviewState(word, now.getTime()).due).length
+
+  const shiftMonth = (delta: number) => {
+    const next = new Date(year, month + delta, 1)
+    const nextDays = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()
+    setCursor(next)
+    setSelectedDay((day) => Math.min(day, nextDays))
+  }
 
   const dueToday = dueCount
   const upcomingWeek = allWords.filter((w) => {
@@ -79,6 +107,9 @@ export function HomeView({ units, unit, settings, onView }: Props) {
   const unitIndex = Math.max(1, units.findIndex((item) => item.id === unit?.id) + 1)
   const unitTitle = unit ? `第${unitIndex}单元 ${unit.name}` : '未选择单元'
   const unitTheme = unit ? (unit.description || '继续巩固本单元') : '请先到词库创建单元'
+  const selectedLabel = sameCalendarDay(selectedDate, now)
+    ? '今天'
+    : `${selectedDate.getMonth() + 1}月${selectedDate.getDate()}日`
 
   return (
     <div className="page home-page">
@@ -194,14 +225,35 @@ export function HomeView({ units, unit, settings, onView }: Props) {
           </header>
           <div className="home-calendar-wrap">
             <div className="home-calendar">
-              <div className="home-cal-head">{year}年{month + 1}月</div>
+              <div className="home-cal-head">
+                <button type="button" className="home-cal-nav" onClick={() => shiftMonth(-1)} aria-label="上个月">
+                  <ChevronLeft size={16} strokeWidth={1.8} />
+                </button>
+                <b>{year}年{month + 1}月</b>
+                <button type="button" className="home-cal-nav" onClick={() => shiftMonth(1)} aria-label="下个月">
+                  <ChevronRight size={16} strokeWidth={1.8} />
+                </button>
+              </div>
               <div className="home-cal-week">{['日', '一', '二', '三', '四', '五', '六'].map((d) => <span key={d}>{d}</span>)}</div>
-              <div className="home-cal-grid">
-                {cells.map((day, i) => (
-                  <span key={i} className={day ? `day mark-${marks.get(day) || 'none'}${day === now.getDate() ? ' today' : ''}` : 'empty'}>
-                    {day || ''}
-                  </span>
-                ))}
+              <div className="home-cal-grid" role="grid" aria-label="复习日历">
+                {cells.map((day, i) => {
+                  if (!day) return <span key={i} className="empty" />
+                  const isToday = viewingTodayMonth && day === now.getDate()
+                  const isSelected = day === selectedDate.getDate()
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      role="gridcell"
+                      aria-pressed={isSelected}
+                      aria-label={`${month + 1}月${day}日${marks.get(day) ? `，有复习安排` : ''}`}
+                      className={`day mark-${marks.get(day) || 'none'}${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}`}
+                      onClick={() => setSelectedDay(day)}
+                    >
+                      {day}
+                    </button>
+                  )
+                })}
               </div>
             </div>
             <ul className="home-cal-legend">
@@ -210,6 +262,33 @@ export function HomeView({ units, unit, settings, onView }: Props) {
               <li><i className="planned" /><span>7天内</span><b>{upcomingWeek}</b></li>
               <li><i className="none" /><span>未排期</span><b>{notScheduled}</b></li>
             </ul>
+          </div>
+          <div className="home-cal-day">
+            <header>
+              <b>{selectedLabel}安排</b>
+              <small>{dayWords.length ? `${dayWords.length} 词` : '暂无排期'}{dayDue > 0 ? ` · ${dayDue} 词已到期` : ''}</small>
+            </header>
+            {dayWords.length ? (
+              <ul>
+                {dayWords.slice(0, 4).map((word) => {
+                  const state = getReviewState(word, now.getTime())
+                  return (
+                    <li key={word.id}>
+                      <span className="jp">{word.term}</span>
+                      <em>{state.due ? '已到期' : word.mastered ? '已掌握' : '待复习'}</em>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : (
+              <p>这一天还没有安排复习，点其他日期或去学习后会自动排期。</p>
+            )}
+            {dayWords.length > 4 && <small className="home-cal-more">还有 {dayWords.length - 4} 词…</small>}
+            {(dayDue > 0 || sameCalendarDay(selectedDate, now)) && (
+              <button type="button" className="home-cal-go" onClick={() => onView('review')}>
+                去复习 <ChevronRight size={14} />
+              </button>
+            )}
           </div>
           <p className="home-srs-tip"><Leaf size={14} strokeWidth={1.6} />复习是记忆的最佳方式 · 坚持 SRS（{REVIEW_INTERVAL_DAYS.join('/')} 天），让记忆更牢固！</p>
         </section>
