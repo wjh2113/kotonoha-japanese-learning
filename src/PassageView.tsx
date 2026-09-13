@@ -1,6 +1,6 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import {
-  BookOpen, Bot, CheckCircle2, ChevronLeft, ChevronRight, Circle, Copy, Eye, FileText, Headphones, LoaderCircle, Mic, Pause, Play,
+  BookOpen, Bot, ChevronLeft, ChevronRight, Copy, FileText, Headphones, LoaderCircle, Mic, Pause, Play,
   RefreshCw, Repeat, ScrollText, SquarePen, Trash2, UploadCloud, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, readApiJson } from './api'
@@ -8,7 +8,7 @@ import { readPassageSource } from './docx'
 import { isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import {
   chunkItems, hasChineseTranslation, isPrimarilyChineseLine, isTransientPassage, mergeAnalyzedSentences, mergePassageBooks,
-  normalizePassageSentence, MAX_PASSAGES, PASSAGE_ANALYZE_CONCURRENCY, passageProgressSummary, parsePassageHandbook, recordSentenceDictation, recordSentenceScore,
+  normalizePassageSentence, MAX_PASSAGES, PASSAGE_ANALYZE_CONCURRENCY, parsePassageHandbook, recordSentenceDictation, recordSentenceScore,
   recoverInterruptedIngest, sentenceNeedsAnalysis,
 } from './passage'
 import { PassageIntensive } from './PassageIntensive'
@@ -78,9 +78,7 @@ export function PassageView() {
   const [selectedId, setSelectedId] = useState('')
   const [mode, setMode] = useState<Mode>('source')
   const [sentenceIndex, setSentenceIndex] = useState(0)
-  const [catalogOpen, setCatalogOpen] = useState(true)
   const [draftBookId, setDraftBookId] = useState('')
-  const [query, setQuery] = useState('')
   const [sourceEditing, setSourceEditing] = useState(false)
   const [sourceDraft, setSourceDraft] = useState('')
   const [busy, setBusy] = useState('')
@@ -477,12 +475,6 @@ export function PassageView() {
 
   const passage = passages.find((item) => item.id === selectedId) || passages[0]
   const sentence = passage?.sentences[sentenceIndex]
-  const visiblePassages = passages.filter((item) => {
-    const needle = query.trim()
-    if (!needle) return true
-    return item.title.includes(needle) || item.sourceText.includes(needle) || (item.bookName || '').includes(needle)
-  })
-  const summary = passage ? passageProgressSummary(passage) : { total: 0, practiced: 0, average: 0 }
 
   useEffect(() => {
     setSentenceIndex(0)
@@ -668,30 +660,9 @@ export function PassageView() {
     patchPassage(passage.id, { bookId: book?.id || '', bookName: book?.name || '' })
   }
 
-  const renderPassageButton = (item: Passage) => {
-    const progress = passageProgressSummary(item)
-    const done = progress.total > 0 && progress.practiced >= progress.total
-    return (
-      <button key={item.id} type="button" className={`passage-item ${item.id === passage?.id ? 'active' : ''}`} onClick={() => { setSelectedId(item.id); setMode('source') }}>
-        <span className="passage-item-status">
-          {done ? <CheckCircle2 size={14} strokeWidth={1.6} /> : <Circle size={14} strokeWidth={1.6} />}
-        </span>
-        <span className="passage-item-copy">
-          <strong title={item.title}>{item.title}</strong>
-          <small>
-            {item.status === 'processing' ? (item.statusText || '处理中…')
-              : item.status === 'error' ? (item.statusText || '处理失败')
-                : `${item.sentences.length || item.sentenceCount || 0} 句${progress.practiced ? ` · 已跟读 ${progress.practiced}/${progress.total || item.sentenceCount || item.sentences.length}` : ''}`}
-          </small>
-        </span>
-        <ChevronRight size={14} strokeWidth={1.6} className="passage-item-arrow" />
-      </button>
-    )
-  }
-
   const orderedPassages = [
-    ...books.flatMap((book) => visiblePassages.filter((item) => item.bookId === book.id)),
-    ...visiblePassages.filter((item) => !item.bookId),
+    ...books.flatMap((book) => passages.filter((item) => item.bookId === book.id)),
+    ...passages.filter((item) => !item.bookId),
   ]
   const passageOrderIndex = passage ? orderedPassages.findIndex((item) => item.id === passage.id) : -1
   const nextPassage = passageOrderIndex >= 0 ? orderedPassages[passageOrderIndex + 1] : undefined
@@ -710,12 +681,19 @@ export function PassageView() {
     })
   })()
 
+  const selectPassage = (id: string) => {
+    if (!id || id === selectedId) return
+    setSelectedId(id)
+    setPlayingFull(false)
+    stopSpeaking()
+  }
+
   return (
     <div className="page hub-page passage-page passage-design">
       <section className="hub-hero passage-hero-compact">
         <div>
           <h1>课文学习</h1>
-          <p>点选课程目录进入原文；可切换精听与跟读。</p>
+          <p>在上方目录选择课文，可切换原文、精听与跟读。</p>
         </div>
         <div className="hero-actions">
           <button className="primary-button" disabled={!ready} onClick={() => setUploadOpen(true)}><UploadCloud size={17} strokeWidth={1.6} />添加课文</button>
@@ -725,63 +703,59 @@ export function PassageView() {
       {notice && <div className="passage-notice">{notice}<button onClick={() => setNotice('')} aria-label="关闭"><X size={14} /></button></div>}
 
       {passages.length ? (
-        <div className={`passage-workspace ${catalogOpen ? '' : 'catalog-hidden'}`.trim()}>
-          {catalogOpen && (
-            <aside className="passage-nav-col">
-              <section className="passage-catalog">
-                <header><BookOpen size={15} strokeWidth={1.6} /><b>课程目录</b></header>
-                <input className="passage-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题或原文" />
-                <button type="button" className="passage-book-new" onClick={() => createBook(false)}><BookOpen size={14} strokeWidth={1.6} />新建课本</button>
-                <div className="passage-catalog-scroll">
-                  {books.map((book) => {
-                    const items = visiblePassages.filter((item) => item.bookId === book.id)
-                    if (query.trim() && !items.length && !book.name.includes(query.trim())) return null
-                    return (
-                      <div key={book.id} className="passage-book">
-                        <div className="passage-book-head">
-                          <strong>{book.name}</strong>
-                          <span>
-                            <button type="button" onClick={() => renameBook(book)}>改</button>
-                            <button type="button" onClick={() => deleteBook(book)}>删</button>
-                          </span>
-                        </div>
-                        {items.map(renderPassageButton)}
-                        {!items.length && <small className="passage-list-empty">还没有课文</small>}
-                      </div>
-                    )
-                  })}
-                  <div className="passage-book">
-                    <div className="passage-book-head"><strong>未分组</strong></div>
-                    {visiblePassages.filter((item) => !item.bookId).map(renderPassageButton)}
-                  </div>
-                  {query.trim() && !visiblePassages.length && <small className="passage-list-empty">没有匹配的课文</small>}
-                </div>
-              </section>
-              {passage && (
-                <section className="passage-outline">
-                  <header><FileText size={15} strokeWidth={1.6} /><b>课文解析</b></header>
-                  <div className="passage-outline-scroll">
-                    {passage.sentences.map((item, index) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={`passage-outline-item ${index === sentenceIndex ? 'active' : ''}`}
-                        onClick={() => goSentence(index, true)}
-                      >
-                        <em>{index + 1}</em>
-                        <span className="jp">{item.text}</span>
-                        <ChevronRight size={14} strokeWidth={1.6} />
-                      </button>
-                    ))}
-                    {!passage.sentences.length && <small className="passage-list-empty">暂无句子</small>}
-                  </div>
-                </section>
-              )}
-            </aside>
-          )}
-
+        <div className="passage-workspace catalog-hidden">
           {passage ? (
             <section className="passage-stage">
+              <div className="passage-picker">
+                <label className="passage-picker-select">
+                  <BookOpen size={15} strokeWidth={1.6} />
+                  <span>课程目录</span>
+                  <select
+                    value={passage.id}
+                    aria-label="选择课文"
+                    onChange={(event) => selectPassage(event.target.value)}
+                  >
+                    {books.map((book) => {
+                      const items = passages.filter((item) => item.bookId === book.id)
+                      if (!items.length) return null
+                      return (
+                        <optgroup key={book.id} label={book.name}>
+                          {items.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.title}（{item.sentences.length || item.sentenceCount || 0} 句）
+                            </option>
+                          ))}
+                        </optgroup>
+                      )
+                    })}
+                    {passages.some((item) => !item.bookId) && (
+                      <optgroup label="未分组">
+                        {passages.filter((item) => !item.bookId).map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.title}（{item.sentences.length || item.sentenceCount || 0} 句）
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </label>
+                <div className="passage-picker-actions">
+                  <button type="button" onClick={() => createBook(false)}>新建课本</button>
+                  {passage.bookId && books.some((book) => book.id === passage.bookId) && (
+                    <>
+                      <button type="button" onClick={() => {
+                        const book = books.find((item) => item.id === passage.bookId)
+                        if (book) renameBook(book)
+                      }}>改课本</button>
+                      <button type="button" onClick={() => {
+                        const book = books.find((item) => item.id === passage.bookId)
+                        if (book) deleteBook(book)
+                      }}>删课本</button>
+                    </>
+                  )}
+                </div>
+              </div>
+
               {passage.status === 'processing' && Date.now() - (passage.createdAt || 0) > 120_000 && (
                 <div className="passage-status error">
                   识别时间过长，可删除后重试，或改粘贴正文。
@@ -831,24 +805,6 @@ export function PassageView() {
                     }
                   }}><Icon size={14} strokeWidth={1.6} />{label}</button>
                 ))}
-                {!catalogOpen && (
-                  <button
-                    type="button"
-                    className="passage-reparse"
-                    onClick={() => setCatalogOpen(true)}
-                  >
-                    <Eye size={14} strokeWidth={1.6} />显示目录
-                  </button>
-                )}
-                {catalogOpen && (
-                  <button
-                    type="button"
-                    className="passage-reparse"
-                    onClick={() => setCatalogOpen(false)}
-                  >
-                    <Eye size={14} strokeWidth={1.6} />隐藏目录
-                  </button>
-                )}
               </div>
 
               <div className="passage-stage-body">
@@ -858,8 +814,6 @@ export function PassageView() {
                   voiceGender={voiceGender}
                   sentenceIndex={sentenceIndex}
                   playing={playingFull}
-                  catalogOpen={catalogOpen}
-                  onToggleCatalog={() => setCatalogOpen((open) => !open)}
                   onIndex={setSentenceIndex}
                   onPlaying={setPlayingFull}
                   onDictation={(sentenceId, text) => patchPassage(passage.id, {
@@ -1059,7 +1013,7 @@ export function PassageView() {
               </footer>
             </section>
           ) : (
-            <div className="wide-empty compact"><ScrollText /><h2>选择左侧课程</h2><p>从课程目录点开一篇课文开始学习。</p></div>
+            <div className="wide-empty compact"><ScrollText /><h2>请选择课文</h2><p>用上方课程目录下拉选择一篇课文开始学习。</p></div>
           )}
         </div>
       ) : (

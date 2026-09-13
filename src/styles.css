@@ -1660,12 +1660,31 @@ body { background: var(--cream); color: var(--ink); }
 .passage-design .passage-hero-compact { margin-bottom: 14px; }
 .passage-design .passage-hero-compact h1 { font-size: 26px; margin: 0 0 4px; font-family: inherit; }
 .passage-workspace {
-  display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 14px; align-items: start;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start;
 }
 .passage-workspace.catalog-hidden {
   grid-template-columns: minmax(0, 1fr);
 }
-.passage-nav-col { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.passage-picker {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+  margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 14px;
+  background: color-mix(in srgb, var(--accent-wash) 55%, white);
+}
+.passage-picker-select {
+  display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 240px; color: var(--red-dark); font-weight: 700; font-size: 13px;
+}
+.passage-picker-select span { flex: 0 0 auto; }
+.passage-picker-select select {
+  min-width: 0; flex: 1 1 auto; height: 36px; border: 1px solid var(--line); border-radius: 10px;
+  padding: 0 10px; background: #fff; color: var(--ink); font-size: 13px; font-weight: 600;
+}
+.passage-picker-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.passage-picker-actions button {
+  height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: #fff; color: var(--muted); cursor: pointer; font-size: 12px;
+}
+.passage-picker-actions button:hover { color: var(--red-dark); border-color: color-mix(in srgb, var(--red) 35%, var(--line)); }
+.passage-nav-col { display: none; }
 .passage-catalog, .passage-outline {
   background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 12px;
   box-shadow: 0 8px 22px rgba(45,50,43,.03);
@@ -1812,7 +1831,7 @@ body { background: var(--cream); color: var(--ink); }
 .passage-lesson-footer .primary-button:disabled { opacity: .45; cursor: not-allowed; }
 
 @media (max-width: 1100px) {
-  .passage-workspace { grid-template-columns: 220px minmax(0, 1fr); }
+  .passage-workspace { grid-template-columns: minmax(0, 1fr); }
   .passage-workspace.catalog-hidden { grid-template-columns: minmax(0, 1fr); }
   .passage-bilingual-row { grid-template-columns: 28px 1fr; }
   .passage-bilingual-tr { grid-column: 2; }

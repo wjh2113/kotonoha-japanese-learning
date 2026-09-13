@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, CheckCircle2, ChevronLeft, Eye, FileText, Headphones, Pause, Play, SquarePen, Star } from 'lucide-react'
+import { Check, CheckCircle2, ChevronLeft, FileText, Headphones, Pause, Play, SquarePen, Star } from 'lucide-react'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
 import type { Passage, PassageSentence, VoiceGender } from './types'
 import { normalizeJapanese } from './utils'
@@ -9,8 +9,6 @@ type Props = {
   voiceGender: VoiceGender
   sentenceIndex: number
   playing: boolean
-  catalogOpen: boolean
-  onToggleCatalog: () => void
   onIndex: (index: number) => void
   onPlaying: (playing: boolean) => void
   onDictation: (sentenceId: string, text: string) => void
@@ -27,7 +25,7 @@ function lineMatch(input: string, sentence: PassageSentence) {
 }
 
 export function PassageIntensive({
-  passage, voiceGender, sentenceIndex, playing, catalogOpen, onToggleCatalog, onIndex, onPlaying, onDictation, onBack,
+  passage, voiceGender, sentenceIndex, playing, onIndex, onPlaying, onDictation, onBack,
 }: Props) {
   const [starredOnly, setStarredOnly] = useState(false)
   const [starred, setStarred] = useState<Record<string, boolean>>({})
@@ -187,13 +185,6 @@ export function PassageIntensive({
           <footer className="intensive-actions">
             <button type="button" className="secondary-button" onClick={() => { setProof(true); saveAll() }}>
               <Check size={15} strokeWidth={1.6} />检查答案
-            </button>
-            <button
-              type="button"
-              className="primary-button"
-              onClick={onToggleCatalog}
-            >
-              <Eye size={15} strokeWidth={1.6} />{catalogOpen ? '隐藏目录' : '显示目录'}
             </button>
           </footer>
         </section>
