@@ -267,9 +267,10 @@ function PageUnitSelect({ units, unit, onUnit, label }: { units: Unit[]; unit: U
   return <label className="page-unit-select"><span>{label}</span><select aria-label={label} value={unit.id} onChange={(event) => onUnit(event.target.value)}>{units.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
 }
 
-export function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onRenameUnit, onDeleteUnit }: {
+export function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onRenameUnit, onDeleteUnit, practiceOnly = false }: {
   units: Unit[]; unitId: string; onUnit: (id: string) => void; onImport: (unitId?: string) => void; onNewUnit: () => void
   onRenameUnit: (unitId: string, name: string) => void; onDeleteUnit: (unit: Unit) => void
+  practiceOnly?: boolean
 }) {
   const total = units.reduce((sum, item) => sum + item.words.length, 0)
   const mastered = units.reduce((sum, item) => sum + item.words.filter((word) => word.mastered).length, 0)
@@ -284,8 +285,14 @@ export function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onRena
   return (
     <div className="page hub-page">
       <section className="hub-hero">
-        <div><span className="eyebrow">VOCABULARY LIBRARY</span><h1>我的词库</h1><p>按单元管理词汇，并从「词汇手册」Excel 模版批量导入。</p></div>
-        <div className="hero-actions"><button className="secondary-button" onClick={onNewUnit}><Plus size={17} />新建单元</button><button className="primary-button" onClick={() => onImport(unitId)}><UploadCloud size={17} />上传到当前单元</button></div>
+        <div>
+          <span className="eyebrow">VOCABULARY LIBRARY</span>
+          <h1>我的词库</h1>
+          <p>{practiceOnly ? '选择单元后去学习、听写或测试。上传词库请在电脑端完成。' : '按单元管理词汇，并从「词汇手册」Excel 模版批量导入。'}</p>
+        </div>
+        {!practiceOnly && (
+          <div className="hero-actions"><button className="secondary-button" onClick={onNewUnit}><Plus size={17} />新建单元</button><button className="primary-button" onClick={() => onImport(unitId)}><UploadCloud size={17} />上传到当前单元</button></div>
+        )}
       </section>
       <div className="metric-row"><div><LibraryBig /><span><b>{units.length}</b><small>学习单元</small></span></div><div><BookOpen /><span><b>{total}</b><small>全部单词</small></span></div><div><CheckCircle2 /><span><b>{mastered}</b><small>已经掌握</small></span></div></div>
       <section className="unit-cards">
@@ -317,15 +324,17 @@ export function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onRena
               ) : (
                 <>
                   <h2>{item.name}</h2>
-                  <button
-                    type="button"
-                    className="unit-rename-btn"
-                    aria-label={`修改「${item.name}」名称`}
-                    title="修改名称"
-                    onClick={() => { setEditingId(item.id); setDraftName(item.name) }}
-                  >
-                    <SquarePen size={15} />
-                  </button>
+                  {!practiceOnly && (
+                    <button
+                      type="button"
+                      className="unit-rename-btn"
+                      aria-label={`修改「${item.name}」名称`}
+                      title="修改名称"
+                      onClick={() => { setEditingId(item.id); setDraftName(item.name) }}
+                    >
+                      <SquarePen size={15} />
+                    </button>
+                  )}
                 </>
               )}
             </div>
@@ -334,24 +343,27 @@ export function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onRena
             </p>
             <div className="unit-card-meta"><span>{item.words.length} 个单词</span><span>{learned} 个已掌握</span></div>
             <div className="unit-progress"><i style={{ width: `${percent}%`, background: item.color }} /></div>
-            <div className="unit-card-actions">
-              <button onClick={(event) => { event.stopPropagation(); onUnit(item.id); onImport(item.id) }}><UploadCloud size={15} />上传词汇</button>
-              <button className="danger-button" onClick={(event) => { event.stopPropagation(); onDeleteUnit(item) }}><Trash2 size={15} />删除单元</button>
-            </div>
+            {!practiceOnly && (
+              <div className="unit-card-actions">
+                <button onClick={(event) => { event.stopPropagation(); onUnit(item.id); onImport(item.id) }}><UploadCloud size={15} />上传词汇</button>
+                <button className="danger-button" onClick={(event) => { event.stopPropagation(); onDeleteUnit(item) }}><Trash2 size={15} />删除单元</button>
+              </div>
+            )}
           </article>
         })}
-        <button className="unit-card add-unit-card" onClick={onNewUnit}><Plus size={26} /><b>创建新单元</b><span>按主题整理你的学习内容</span></button>
+        {!practiceOnly && <button className="unit-card add-unit-card" onClick={onNewUnit}><Plus size={26} /><b>创建新单元</b><span>按主题整理你的学习内容</span></button>}
       </section>
     </div>
   )
 }
 
-export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onEdit, onToggleStar, onDeleteWord, onSearch, onTest, onDictation }: {
+export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onEdit, onToggleStar, onDeleteWord, onSearch, onTest, onDictation, practiceOnly = false }: {
   unit: Unit; units: Unit[]; selectedWord?: Word; search: string; onUnit: (id: string) => void; onSelect: (id: string) => void; onImport: () => void
   onEdit: (word: Word, changes: Partial<Word>) => void
   onToggleStar: (word: Word) => void
   onDeleteWord: (word: Word) => void
   onSearch: (value: string) => void; onTest: () => void; onDictation: () => void
+  practiceOnly?: boolean
 }) {
   const { voiceGender } = useContext(SettingsContext)
   const [layout, setLayout] = useState<'grid' | 'list'>('list')
@@ -404,7 +416,7 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
         <div className="hero-actions study-heading-actions">
           <button className="secondary-button" onClick={onDictation}><Keyboard size={16} strokeWidth={1.6} />听写</button>
           <button className="secondary-button" onClick={onTest}><GraduationCap size={16} strokeWidth={1.6} />单元测试</button>
-          <button className="primary-button" onClick={onImport}><UploadCloud size={16} strokeWidth={1.6} />导入单词</button>
+          {!practiceOnly && <button className="primary-button" onClick={onImport}><UploadCloud size={16} strokeWidth={1.6} />导入单词</button>}
         </div>
       </section>
 
@@ -426,11 +438,11 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
                   active={selectedWord?.id === word.id}
                   list={layout === 'list'}
                   onClick={() => selectWord(word)}
-                  onDelete={() => setPendingDelete(word)}
+                  onDelete={practiceOnly ? undefined : () => setPendingDelete(word)}
                 />
               ))}
             </div>
-          ) : <EmptyState onImport={onImport} />}
+          ) : <EmptyState onImport={onImport} practiceOnly={practiceOnly} />}
         </section>
         <aside className="detail-column">
           {selectedWord ? <WordDetail
@@ -446,10 +458,10 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
               if (selectedIndex < 0 || selectedIndex >= filtered.length - 1) return
               selectWord(filtered[selectedIndex + 1])
             }}
-          /> : <EmptyDetail onImport={onImport} />}
+          /> : <EmptyDetail onImport={onImport} practiceOnly={practiceOnly} />}
         </aside>
       </div>
-      {pendingDelete && (
+      {!practiceOnly && pendingDelete && (
         <ConfirmDeleteWordModal
           word={pendingDelete}
           onClose={() => setPendingDelete(null)}
@@ -465,7 +477,7 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
 }
 
 function WordCard({ word, active, list = false, onClick, onDelete }: {
-  word: Word; active: boolean; list?: boolean; onClick: () => void; onDelete: () => void
+  word: Word; active: boolean; list?: boolean; onClick: () => void; onDelete?: () => void
 }) {
   const dots = masteryDots(word)
   const pos = word.partOfSpeech.split('・')[0]
@@ -490,15 +502,17 @@ function WordCard({ word, active, list = false, onClick, onDelete }: {
           <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
             {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
           </span>
-          <button
-            type="button"
-            className="word-row-delete"
-            aria-label={`删除 ${word.term}`}
-            title="删除单词"
-            onClick={(event) => { event.stopPropagation(); onDelete() }}
-          >
-            <Trash2 size={15} strokeWidth={1.7} />
-          </button>
+          {onDelete && (
+            <button
+              type="button"
+              className="word-row-delete"
+              aria-label={`删除 ${word.term}`}
+              title="删除单词"
+              onClick={(event) => { event.stopPropagation(); onDelete() }}
+            >
+              <Trash2 size={15} strokeWidth={1.7} />
+            </button>
+          )}
           <ChevronRight className="word-row-chevron" size={16} strokeWidth={1.6} aria-hidden />
         </>
       ) : (
@@ -506,15 +520,17 @@ function WordCard({ word, active, list = false, onClick, onDelete }: {
           <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
             {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
           </span>
-          <button
-            type="button"
-            className="word-card-delete"
-            aria-label={`删除 ${word.term}`}
-            title="删除单词"
-            onClick={(event) => { event.stopPropagation(); onDelete() }}
-          >
-            <Trash2 size={14} strokeWidth={1.7} />
-          </button>
+          {onDelete && (
+            <button
+              type="button"
+              className="word-card-delete"
+              aria-label={`删除 ${word.term}`}
+              title="删除单词"
+              onClick={(event) => { event.stopPropagation(); onDelete() }}
+            >
+              <Trash2 size={14} strokeWidth={1.7} />
+            </button>
+          )}
           <b className="jp word-term">{word.term}</b>
           <span className="jp word-reading">{word.reading}</span>
           <em className="word-pos">{pos}</em>
@@ -1196,7 +1212,23 @@ export function NewUnitModal({ onClose, onCreate }: { onClose: () => void; onCre
   return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><section className="modal small-modal"><button className="modal-close" onClick={onClose}><X /></button><span className="modal-icon"><BookOpen /></span><h2>创建新单元</h2><p>只需填写名称。创建后上传词汇，AI 会根据内容自动归纳主题。</p><label>单元名称<input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：第四单元" /></label><button className="primary-button modal-submit" disabled={!name.trim()} onClick={() => onCreate(name.trim())}>创建并上传词汇</button></section></div>
 }
 
-function EmptyState({ onImport, actionLabel = '添加单词' }: { onImport: () => void; actionLabel?: string }) {
-  return <div className="empty-state"><span><FileText /></span><b>这里还没有单词</b><p>请上传词汇手册 Excel 模版。</p><button onClick={onImport}>{actionLabel}</button></div>
+function EmptyState({ onImport, actionLabel = '添加单词', practiceOnly = false }: { onImport: () => void; actionLabel?: string; practiceOnly?: boolean }) {
+  return (
+    <div className="empty-state">
+      <span><FileText /></span>
+      <b>这里还没有单词</b>
+      <p>{practiceOnly ? '请先在电脑端上传词汇手册，手机端联网同步后即可练习。' : '请上传词汇手册 Excel 模版。'}</p>
+      {!practiceOnly && <button onClick={onImport}>{actionLabel}</button>}
+    </div>
+  )
 }
-function EmptyDetail({ onImport }: { onImport: () => void }) { return <div className="detail-card empty-detail"><BookOpen /><b>选择一个单词</b><p>查看释义、例句并练习打字。</p><button onClick={onImport}>导入词汇</button></div> }
+function EmptyDetail({ onImport, practiceOnly = false }: { onImport: () => void; practiceOnly?: boolean }) {
+  return (
+    <div className="detail-card empty-detail">
+      <BookOpen />
+      <b>选择一个单词</b>
+      <p>{practiceOnly ? '从左侧列表选择单词开始练习。' : '查看释义、例句并练习打字。'}</p>
+      {!practiceOnly && <button onClick={onImport}>导入词汇</button>}
+    </div>
+  )
+}

@@ -4,8 +4,10 @@ import {
   RefreshCw, Repeat, ScrollText, SquarePen, Trash2, UploadCloud, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, readApiJson } from './api'
+import { isPracticeOnlyClient } from './device'
 import { readPassageSource } from './docx'
 import { isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
+import { loadPassagesBundle, savePassagesBundle } from './offline-cache'
 import {
   chapterOptionLabel, grammarHighlightTerms, hasChineseTranslation, highlightGrammarInText, isTransientPassage,
   listCatalogLessons, mergePassageBooks, mergePassageLessons, normalizePassageSentence, MAX_PASSAGES,
@@ -75,6 +77,7 @@ function hydratePassage(item: unknown): Passage | null {
 
 export function PassageView() {
   const { voiceGender } = useContext(SettingsContext)
+  const practiceOnly = isPracticeOnlyClient()
   const [passages, setPassages] = useState<Passage[]>([])
   const [books, setBooks] = useState<PassageBook[]>([])
   const [lessons, setLessons] = useState<PassageLesson[]>([])
@@ -96,6 +99,7 @@ export function PassageView() {
   const [playLoop, setPlayLoop] = useState(false)
   const persistError = useRef(false)
   const persistEnabled = useRef(false)
+  const serverSyncEnabled = useRef(false)
   const persistBusy = useRef(false)
   const pendingFlush = useRef(false)
   const dirtyUpserts = useRef(new Set<string>())
@@ -121,6 +125,10 @@ export function PassageView() {
   }, [sentenceIndex, mode, selectedId])
 
   const durableCount = () => passagesRef.current.filter((item) => !isTransientPassage(item)).length
+
+  const cacheLocal = () => {
+    void savePassagesBundle(passagesRef.current, booksRef.current, lessonsRef.current)
+  }
 
   const commitPassages = (next: Passage[]) => {
     passagesRef.current = next
@@ -153,10 +161,13 @@ export function PassageView() {
     const keys = Object.keys(changes)
     if (keys.length === 1 && keys[0] === 'progress') markProgress(id)
     else markUpsert(id)
+    cacheLocal()
   }
 
   const flushPersist = async () => {
     if (!persistEnabled.current) return
+    cacheLocal()
+    if (!serverSyncEnabled.current) return
     pendingFlush.current = true
     while (persistBusy.current) {
       await new Promise((resolve) => window.setTimeout(resolve, 40))
@@ -187,48 +198,59 @@ export function PassageView() {
         deletedIds.current.clear()
         dirtyBooks.current = false
 
-        for (const id of removeIds) {
-          const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}`, { method: 'DELETE' })
-          if (!response.ok && response.status !== 404) throw new Error('DELETE_FAILED')
-        }
+        try {
+          for (const id of removeIds) {
+            const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}`, { method: 'DELETE' })
+            if (!response.ok && response.status !== 404) throw new Error('DELETE_FAILED')
+          }
 
-        for (const id of upsertIds) {
-          const passage = passagesRef.current.find((item) => item.id === id)
-          if (!passage || isTransientPassage(passage)) continue
-          const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(passage),
-          })
-          if (!response.ok) throw new Error('UPSERT_FAILED')
-        }
+          for (const id of upsertIds) {
+            const passage = passagesRef.current.find((item) => item.id === id)
+            if (!passage || isTransientPassage(passage)) continue
+            const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(passage),
+            })
+            if (!response.ok) throw new Error('UPSERT_FAILED')
+          }
 
-        for (const id of progressIds) {
-          const passage = passagesRef.current.find((item) => item.id === id)
-          if (!passage || isTransientPassage(passage)) continue
-          const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}/progress`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ progress: passage.progress || {} }),
-          })
-          if (!response.ok) throw new Error('PROGRESS_FAILED')
-        }
+          for (const id of progressIds) {
+            const passage = passagesRef.current.find((item) => item.id === id)
+            if (!passage || isTransientPassage(passage)) continue
+            const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}/progress`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ progress: passage.progress || {} }),
+            })
+            if (!response.ok) throw new Error('PROGRESS_FAILED')
+          }
 
-        if (booksNeedSave) {
-          const response = await apiFetch('/api/passage-books', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ books: booksRef.current, lessons: lessonsRef.current }),
-          })
-          if (!response.ok) throw new Error('BOOKS_FAILED')
+          if (booksNeedSave) {
+            const response = await apiFetch('/api/passage-books', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ books: booksRef.current, lessons: lessonsRef.current }),
+            })
+            if (!response.ok) throw new Error('BOOKS_FAILED')
+          }
+          persistError.current = false
+          cacheLocal()
+        } catch (error) {
+          for (const id of upsertIds) dirtyUpserts.current.add(id)
+          for (const id of progressIds) dirtyProgress.current.add(id)
+          for (const id of removeIds) deletedIds.current.add(id)
+          if (booksNeedSave) dirtyBooks.current = true
+          throw error
         }
-        persistError.current = false
       }
     } catch {
+      serverSyncEnabled.current = false
       if (!persistError.current) {
         persistError.current = true
-        setNotice('课文保存失败，请检查服务状态')
+        setNotice('课文改为本地缓存；联网后会再同步')
       }
+      cacheLocal()
     } finally {
       persistBusy.current = false
     }
@@ -237,40 +259,78 @@ export function PassageView() {
 
   useEffect(() => {
     let cancelled = false
-    apiFetch('/api/passages').then(async (response) => {
-      const data = await readApiJson<{ passages?: unknown[]; books?: unknown[]; lessons?: unknown[]; error?: string }>(response)
-      if (cancelled || !response.ok) throw new Error(publicApiMessage(data.error, '读取课文失败'))
-      const next = (Array.isArray(data.passages) ? data.passages as unknown[] : []).map(hydratePassage).filter((item): item is Passage => Boolean(item))
-      persistEnabled.current = true
-      const localKeep = passagesRef.current.filter((item) => (
-        ingestingIds.current.has(item.id)
-        || item.status === 'processing'
-        || isTransientPassage(item)
-      ))
-      const merged = [
-        ...localKeep.filter((item) => !next.some((row) => row.id === item.id)),
-        ...next,
-      ]
-      if (merged.length > MAX_PASSAGES) {
-        setNotice(`课文库最多 ${MAX_PASSAGES} 篇，已只保留最新 ${MAX_PASSAGES} 篇。`)
+    const hydrate = async () => {
+      const cached = await loadPassagesBundle()
+      if (cancelled) return
+      if (cached?.passages?.length) {
+        const next = cached.passages.map(hydratePassage).filter((item): item is Passage => Boolean(item))
+        commitPassages(next)
+        const nextBooks = Array.isArray(cached.books) ? cached.books : []
+        booksRef.current = nextBooks
+        setBooks(nextBooks)
+        const nextLessons = Array.isArray(cached.lessons) ? cached.lessons : []
+        lessonsRef.current = nextLessons
+        setLessons(nextLessons)
+        setSelectedId((current) => next.some((item) => item.id === current) ? current : (next[0]?.id || ''))
       }
-      commitPassages(merged.slice(0, MAX_PASSAGES))
-      const nextBooks = mergePassageBooks(Array.isArray(data.books) ? data.books as { id: string; name: string }[] : [], merged)
-      booksRef.current = nextBooks
-      setBooks(nextBooks)
-      const nextLessons = mergePassageLessons(
-        Array.isArray(data.lessons) ? data.lessons as PassageLesson[] : [],
-        merged,
-      )
-      lessonsRef.current = nextLessons
-      setLessons(nextLessons)
-      dirtyBooks.current = false
-      setSelectedId((current) => merged.some((item) => item.id === current) ? current : (merged[0]?.id || ''))
-      setReady(true)
-    }).catch(() => {
-      if (!cancelled) { setNotice('暂时无法读取已保存的课文'); setReady(true) }
-    })
+      try {
+        const response = await apiFetch('/api/passages')
+        const data = await readApiJson<{ passages?: unknown[]; books?: unknown[]; lessons?: unknown[]; error?: string }>(response)
+        if (cancelled || !response.ok) throw new Error(publicApiMessage(data.error, '读取课文失败'))
+        const next = (Array.isArray(data.passages) ? data.passages as unknown[] : []).map(hydratePassage).filter((item): item is Passage => Boolean(item))
+        persistEnabled.current = true
+        serverSyncEnabled.current = true
+        const localKeep = passagesRef.current.filter((item) => (
+          ingestingIds.current.has(item.id)
+          || item.status === 'processing'
+          || isTransientPassage(item)
+        ))
+        const merged = [
+          ...localKeep.filter((item) => !next.some((row) => row.id === item.id)),
+          ...next,
+        ]
+        if (merged.length > MAX_PASSAGES) {
+          setNotice(`课文库最多 ${MAX_PASSAGES} 篇，已只保留最新 ${MAX_PASSAGES} 篇。`)
+        }
+        commitPassages(merged.slice(0, MAX_PASSAGES))
+        const nextBooks = mergePassageBooks(Array.isArray(data.books) ? data.books as { id: string; name: string }[] : [], merged)
+        booksRef.current = nextBooks
+        setBooks(nextBooks)
+        const nextLessons = mergePassageLessons(
+          Array.isArray(data.lessons) ? data.lessons as PassageLesson[] : [],
+          merged,
+        )
+        lessonsRef.current = nextLessons
+        setLessons(nextLessons)
+        dirtyBooks.current = false
+        setSelectedId((current) => merged.some((item) => item.id === current) ? current : (merged[0]?.id || ''))
+        cacheLocal()
+        setReady(true)
+      } catch {
+        if (cancelled) return
+        persistEnabled.current = true
+        serverSyncEnabled.current = false
+        if (cached?.passages?.length) {
+          setNotice('离线模式：已加载本地课文，联网后自动同步')
+        } else {
+          setNotice('暂时无法读取已保存的课文，且没有本地缓存')
+        }
+        setReady(true)
+      }
+    }
+    void hydrate()
     return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    const onOnline = () => {
+      serverSyncEnabled.current = true
+      persistError.current = false
+      setNotice('已恢复联网，正在同步课文…')
+      void flushPersist().then(() => setNotice('课文已同步'))
+    }
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
   }, [])
 
   // Lazy-load full passage detail when the selected item only has a light list payload.
@@ -302,7 +362,8 @@ export function PassageView() {
             ? item.progress
             : full.progress,
         } : item))
-      } catch { /* keep light row */ }
+        cacheLocal()
+      } catch { /* keep light row / offline cache */ }
       finally {
         detailLoading.current.delete(selectedId)
       }
@@ -577,6 +638,10 @@ export function PassageView() {
   const grammarTerms = grammarHighlightTerms(grammarPoints)
 
   const openUpload = () => {
+    if (practiceOnly) {
+      setNotice('手机端仅支持练习，请在电脑端上传课文')
+      return
+    }
     const firstBookId = books[0]?.id
     if (firstBookId) setDraftBookId((current) => current || firstBookId)
     setChapterPreview([])
@@ -601,11 +666,13 @@ export function PassageView() {
       <section className="hub-hero passage-hero-compact">
         <div>
           <h1>课文学习</h1>
-          <p>先选课时再选章节，可切换原文、精听与跟读。</p>
+          <p>{practiceOnly ? '选择课时与章节后练习精听、跟读与朗读。' : '先选课时再选章节，可切换原文、精听与跟读。'}</p>
         </div>
-        <div className="hero-actions">
-          <button className="primary-button" disabled={!ready} onClick={openUpload}><UploadCloud size={17} strokeWidth={1.6} />添加课文</button>
-        </div>
+        {!practiceOnly && (
+          <div className="hero-actions">
+            <button className="primary-button" disabled={!ready} onClick={openUpload}><UploadCloud size={17} strokeWidth={1.6} />添加课文</button>
+          </div>
+        )}
       </section>
 
       {notice && <div className="passage-notice">{notice}<button onClick={() => setNotice('')} aria-label="关闭"><X size={14} /></button></div>}
@@ -662,17 +729,21 @@ export function PassageView() {
                   </label>
                 </div>
                 <div className="passage-picker-actions">
-                  <button type="button" onClick={() => createBook(false)}>新建课本</button>
-                  {passage.bookId && books.some((book) => book.id === passage.bookId) && (
+                  {!practiceOnly && (
                     <>
-                      <button type="button" onClick={() => {
-                        const book = books.find((item) => item.id === passage.bookId)
-                        if (book) renameBook(book)
-                      }}>改课本</button>
-                      <button type="button" onClick={() => {
-                        const book = books.find((item) => item.id === passage.bookId)
-                        if (book) deleteBook(book)
-                      }}>删课本</button>
+                      <button type="button" onClick={() => createBook(false)}>新建课本</button>
+                      {passage.bookId && books.some((book) => book.id === passage.bookId) && (
+                        <>
+                          <button type="button" onClick={() => {
+                            const book = books.find((item) => item.id === passage.bookId)
+                            if (book) renameBook(book)
+                          }}>改课本</button>
+                          <button type="button" onClick={() => {
+                            const book = books.find((item) => item.id === passage.bookId)
+                            if (book) deleteBook(book)
+                          }}>删课本</button>
+                        </>
+                      )}
                     </>
                   )}
                 </div>
@@ -681,34 +752,43 @@ export function PassageView() {
               {passage.status === 'processing' && Date.now() - (passage.createdAt || 0) > 120_000 && (
                 <div className="passage-status error">
                   识别时间过长，可删除后重试，或改粘贴正文。
-                  <button type="button" onClick={openUpload}>重新添加</button>
+                  {!practiceOnly && <button type="button" onClick={openUpload}>重新添加</button>}
                 </div>
               )}
 
               <div className="passage-stage-head">
                 <label className="passage-title-label">
-                  <SquarePen size={14} strokeWidth={1.6} />
+                  {!practiceOnly && <SquarePen size={14} strokeWidth={1.6} />}
                   <input
                     className="passage-title-input"
                     value={passage.title}
                     maxLength={80}
                     aria-label="课文标题"
-                    onChange={(event) => patchPassage(passage.id, { title: event.target.value.slice(0, 80) })}
-                    onBlur={(event) => patchPassage(passage.id, { title: passageTitle(event.target.value) })}
+                    readOnly={practiceOnly}
+                    onChange={(event) => {
+                      if (practiceOnly) return
+                      patchPassage(passage.id, { title: event.target.value.slice(0, 80) })
+                    }}
+                    onBlur={(event) => {
+                      if (practiceOnly) return
+                      patchPassage(passage.id, { title: passageTitle(event.target.value) })
+                    }}
                   />
                 </label>
-                <div className="passage-toolbar-actions">
-                  <button type="button" className="remove-word" onClick={() => {
-                    if (!window.confirm(`删除课文「${passage.title}」？此操作不可恢复。`)) return
-                    ingestingIds.current.delete(passage.id)
-                    deletedIds.current.add(passage.id)
-                    dirtyUpserts.current.delete(passage.id)
-                    dirtyProgress.current.delete(passage.id)
-                    const remaining = passagesRef.current.filter((item) => item.id !== passage.id)
-                    commitPassages(remaining)
-                    setSelectedId(remaining[0]?.id || '')
-                  }}><Trash2 size={15} strokeWidth={1.6} />删除</button>
-                </div>
+                {!practiceOnly && (
+                  <div className="passage-toolbar-actions">
+                    <button type="button" className="remove-word" onClick={() => {
+                      if (!window.confirm(`删除课文「${passage.title}」？此操作不可恢复。`)) return
+                      ingestingIds.current.delete(passage.id)
+                      deletedIds.current.add(passage.id)
+                      dirtyUpserts.current.delete(passage.id)
+                      dirtyProgress.current.delete(passage.id)
+                      const remaining = passagesRef.current.filter((item) => item.id !== passage.id)
+                      commitPassages(remaining)
+                      setSelectedId(remaining[0]?.id || '')
+                    }}><Trash2 size={15} strokeWidth={1.6} />删除</button>
+                  </div>
+                )}
               </div>
 
               <div className="passage-modes">
@@ -840,14 +920,16 @@ export function PassageView() {
                   </div>
 
                   <div className="passage-source-actions">
-                    <button type="button" onClick={() => { setSourceDraft(passage.sourceText); setSourceEditing(true) }}><SquarePen size={15} strokeWidth={1.6} />编辑原文</button>
+                    {!practiceOnly && <button type="button" onClick={() => { setSourceDraft(passage.sourceText); setSourceEditing(true) }}><SquarePen size={15} strokeWidth={1.6} />编辑原文</button>}
                     <button type="button" disabled={!passage.sourceText} onClick={() => void copySource()}><Copy size={15} strokeWidth={1.6} />复制原文</button>
-                    <label className="passage-book-assign">课本
-                      <select value={passage.bookId || ''} onChange={(event) => movePassage(event.target.value)}>
-                        <option value="">未分组</option>
-                        {books.map((book) => <option key={book.id} value={book.id}>{book.name}</option>)}
-                      </select>
-                    </label>
+                    {!practiceOnly && (
+                      <label className="passage-book-assign">课本
+                        <select value={passage.bookId || ''} onChange={(event) => movePassage(event.target.value)}>
+                          <option value="">未分组</option>
+                          {books.map((book) => <option key={book.id} value={book.id}>{book.name}</option>)}
+                        </select>
+                      </label>
+                    )}
                   </div>
 
                   {sourceEditing ? (
@@ -951,12 +1033,14 @@ export function PassageView() {
         <div className="wide-empty">
           <ScrollText />
           <h2>还没有课文</h2>
-          <p>请上传「课文整理」Markdown 手册。结构为课本 → 课时 → 章节（## 课文N），上传时选择课本与课时，系统自动识别章节入库，不调用模型。</p>
-          <button onClick={openUpload}>添加课文</button>
+          <p>{practiceOnly
+            ? '请先在电脑端上传课文手册，手机端联网同步后即可离线练习与朗读。'
+            : '请上传「课文整理」Markdown 手册。结构为课本 → 课时 → 章节（## 课文N），上传时选择课本与课时，系统自动识别章节入库，不调用模型。'}</p>
+          {!practiceOnly && <button onClick={openUpload}>添加课文</button>}
         </div>
       )}
 
-      {uploadOpen && (
+      {!practiceOnly && uploadOpen && (
         <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !busy && setUploadOpen(false)}>
           <section className="modal import-modal">
             <button className="modal-close" onClick={() => !busy && setUploadOpen(false)}><X /></button>

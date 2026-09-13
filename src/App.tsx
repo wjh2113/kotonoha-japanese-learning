@@ -2,7 +2,9 @@ import { lazy, Suspense, useContext, useEffect, useRef, useState } from 'react'
 import { CheckCircle2, PanelLeft, PanelLeftClose } from 'lucide-react'
 import { apiFetch, apiUrl, AUTH_REQUIRED_EVENT, getAccessToken, setAccessToken } from './api'
 import { initialUnits } from './data'
+import { isPracticeOnlyClient } from './device'
 import { HomeView } from './HomeView'
+import { loadVocabState, saveVocabState } from './offline-cache'
 import { SettingsContext, DEFAULT_SETTINGS } from './settings-context'
 import type { AppSettings, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fallbackUnitTheme, isPlaceholderTheme } from './theme'
@@ -65,8 +67,10 @@ function App() {
   const persistPaused = useRef(true)
   const persistBusy = useRef(false)
   const skipNextUnitsPersist = useRef(false)
+  const serverSyncEnabled = useRef(false)
   const pendingPersist = useRef<{ units: Unit[]; settings: AppSettings } | null>(null)
   const themeRequested = useRef(new Set<string>())
+  const practiceOnly = isPracticeOnlyClient()
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
       return normalizeSettings(JSON.parse(localStorage.getItem(SETTINGS_KEY) || ''))
@@ -74,6 +78,10 @@ function App() {
       return DEFAULT_SETTINGS
     }
   })
+  const unitsRef = useRef(units)
+  const settingsRef = useRef(settings)
+  unitsRef.current = units
+  settingsRef.current = settings
 
   useEffect(() => {
     const theme = settings.theme || 'matcha'
@@ -94,7 +102,8 @@ function App() {
         if (cancelled) return
         setAuth(!data.required || data.ok ? 'ok' : 'needed')
       } catch {
-        if (!cancelled) setAuth('needed')
+        // Offline: reuse prior token so cached vocab/passages remain reachable.
+        if (!cancelled) setAuth(getAccessToken() ? 'ok' : 'needed')
       }
     }
     check()
@@ -155,6 +164,12 @@ function App() {
     if (auth !== 'ok') return
     let cancelled = false
     const hydrate = async () => {
+      const cached = await loadVocabState()
+      if (cancelled) return
+      if (cached?.units?.length) {
+        setUnits(cached.units)
+        setSettings(normalizeSettings(cached.settings))
+      }
       try {
         const response = await apiFetch('/api/state')
         if (!response.ok) throw new Error('DATABASE_READ_FAILED')
@@ -163,31 +178,47 @@ function App() {
         if (Array.isArray(stored.units) && stored.units.length) {
           setUnits(stored.units)
           setSettings(normalizeSettings(stored.settings))
+          await saveVocabState(stored.units, normalizeSettings(stored.settings))
         } else {
           const seed = await apiFetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ units, settings }) })
           if (!seed.ok) throw new Error('DATABASE_SEED_FAILED')
+          await saveVocabState(units, settings)
         }
         localStorage.removeItem(STORAGE_KEY)
         localStorage.removeItem(SETTINGS_KEY)
         persistPaused.current = true
+        serverSyncEnabled.current = true
         setDatabaseReady(true)
         try {
           const sourceUnits = (Array.isArray(stored.units) ? stored.units : units) as Unit[]
           const incomplete = sourceUnits.reduce((sum, item) => sum + (item.words || []).filter((word) => isCoreLexiconIncomplete(word)).length, 0)
           setEnrichRemaining(incomplete)
-          if (incomplete > 0) await runEnrichMissing(() => cancelled)
+          if (incomplete > 0 && !practiceOnly) await runEnrichMissing(() => cancelled)
         } catch { /* keep whatever the database already has */ }
         if (!cancelled) {
           persistPaused.current = false
           setUnits((current) => current.map((item) => ({ ...item, words: [...item.words] })))
         }
       } catch {
-        if (!cancelled) setToast('PostgreSQL 暂时无法连接，本次修改不会被持久化')
+        if (cancelled) return
+        if (cached?.units?.length) {
+          serverSyncEnabled.current = false
+          persistPaused.current = false
+          setDatabaseReady(true)
+          setToast('离线模式：已加载本地词库，联网后自动同步')
+        } else {
+          setToast('PostgreSQL 暂时无法连接，且没有本地词库缓存')
+        }
       }
     }
     hydrate()
     return () => { cancelled = true }
   }, [auth]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (auth !== 'ok' || !databaseReady) return
+    void saveVocabState(units, settings)
+  }, [units, settings, databaseReady, auth])
 
   useEffect(() => {
     if (auth !== 'ok' || !databaseReady) return
@@ -200,9 +231,10 @@ function App() {
       return
     }
     pendingPersist.current = { units, settings }
+    if (!serverSyncEnabled.current) return
     const timer = window.setTimeout(() => {
       const flush = async () => {
-        if (persistBusy.current || persistPaused.current) return
+        if (persistBusy.current || persistPaused.current || !serverSyncEnabled.current) return
         const payload = pendingPersist.current
         if (!payload) return
         pendingPersist.current = null
@@ -223,16 +255,18 @@ function App() {
           if (!pendingPersist.current && Array.isArray(stored.units)) {
             persistPaused.current = true
             setUnits(stored.units)
+            await saveVocabState(stored.units, settings)
             window.setTimeout(() => { persistPaused.current = false }, 0)
           }
         } catch {
+          serverSyncEnabled.current = false
           if (!databaseErrorShown.current) {
             databaseErrorShown.current = true
-            setToast('数据写入 PostgreSQL 失败，请检查服务状态')
+            setToast('已改为本地缓存；联网后会再同步到服务器')
           }
         } finally {
           persistBusy.current = false
-          if (pendingPersist.current) void flush()
+          if (pendingPersist.current && serverSyncEnabled.current) void flush()
         }
       }
       void flush()
@@ -241,7 +275,7 @@ function App() {
   }, [units, databaseReady, auth])
 
   useEffect(() => {
-    if (auth !== 'ok' || !databaseReady || persistPaused.current) return
+    if (auth !== 'ok' || !databaseReady || persistPaused.current || !serverSyncEnabled.current) return
     const timer = window.setTimeout(() => {
       void apiFetch('/api/settings', {
         method: 'PATCH',
@@ -252,8 +286,43 @@ function App() {
     return () => window.clearTimeout(timer)
   }, [settings, databaseReady, auth])
 
+  useEffect(() => {
+    if (auth !== 'ok') return
+    const onOnline = () => {
+      const snapshot = { units: unitsRef.current, settings: settingsRef.current }
+      serverSyncEnabled.current = true
+      databaseErrorShown.current = false
+      pendingPersist.current = snapshot
+      setToast('已恢复联网，正在同步词库…')
+      void (async () => {
+        try {
+          const response = await apiFetch('/api/state', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(snapshot),
+          })
+          if (!response.ok) throw new Error('SYNC_FAILED')
+          const stored = await response.json()
+          if (Array.isArray(stored.units)) {
+            persistPaused.current = true
+            setUnits(stored.units)
+            await saveVocabState(stored.units, normalizeSettings(stored.settings) || snapshot.settings)
+            window.setTimeout(() => { persistPaused.current = false }, 0)
+          }
+          setToast('词库已同步到服务器')
+        } catch {
+          serverSyncEnabled.current = false
+          setToast('联网同步失败，仍使用本地缓存')
+        }
+      })()
+    }
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  }, [auth])
+
   const wordPatchTimers = useRef(new Map<string, number>())
   const queueWordPatch = (wordId: string, changes: Partial<Word>) => {
+    if (!serverSyncEnabled.current) return
     const previous = wordPatchTimers.current.get(wordId)
     if (previous) window.clearTimeout(previous)
     const timer = window.setTimeout(() => {
@@ -511,6 +580,10 @@ function App() {
   }
 
   const openImport = (targetUnitId = unitId) => {
+    if (practiceOnly) {
+      setToast('手机端仅支持练习，请在电脑端上传词库')
+      return
+    }
     setImportUnitId(targetUnitId)
     setImportOpen(true)
   }
@@ -552,8 +625,8 @@ function App() {
           <div className="enrich-banner">正在补全核心字段（假名 / 罗马音 / 中文释义 / 例句），还剩 {enrichRemaining} 个。同义词与记忆技巧等可选列不会自动补全。</div>
         )}
         <main className="main">
-          {view === 'home' && <HomeView units={units} unit={unit} settings={settings} onView={nav} />}
-          {view === 'library' && <LibraryView units={units} unitId={unitId} onUnit={setUnitId} onImport={openImport} onNewUnit={() => setNewUnitOpen(true)} onRenameUnit={renameUnit} onDeleteUnit={requestDeleteUnit} />}
+          {view === 'home' && <HomeView units={units} unit={unit} settings={settings} onView={nav} practiceOnly={practiceOnly} />}
+          {view === 'library' && <LibraryView units={units} unitId={unitId} onUnit={setUnitId} onImport={openImport} onNewUnit={() => setNewUnitOpen(true)} onRenameUnit={renameUnit} onDeleteUnit={requestDeleteUnit} practiceOnly={practiceOnly} />}
           {view === 'study' && unit && (
             <StudyView
               unit={unit} units={units} selectedWord={selectedWord} onUnit={setUnitId}
@@ -568,6 +641,7 @@ function App() {
               search={search} onSearch={setSearch}
               onTest={() => setView('test')}
               onDictation={() => openDictation('plan')}
+              practiceOnly={practiceOnly}
             />
           )}
           {view === 'test' && unit && <TestView unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')} onAnswer={(word, kind, correct) => updateWord(word.id, recordQuizAnswer(word, kind, correct))} />}
@@ -620,9 +694,9 @@ function App() {
       </div>
       <MobileTabBar view={view} reviewCount={reviewCount} onView={nav} />
 
-      {importOpen && importUnit && <ImportModal unit={importUnit} onClose={() => setImportOpen(false)} onImported={(words, description) => addImportedWords(importUnit, words, description)} />}
-      {newUnitOpen && <NewUnitModal onClose={() => setNewUnitOpen(false)} onCreate={addUnit} />}
-      {pendingDeleteUnit && <ConfirmDeleteUnitModal unit={pendingDeleteUnit} onlyUnit={units.length <= 1} onClose={() => setPendingDeleteUnit(null)} onConfirm={() => deleteUnit(pendingDeleteUnit)} />}
+      {!practiceOnly && importOpen && importUnit && <ImportModal unit={importUnit} onClose={() => setImportOpen(false)} onImported={(words, description) => addImportedWords(importUnit, words, description)} />}
+      {!practiceOnly && newUnitOpen && <NewUnitModal onClose={() => setNewUnitOpen(false)} onCreate={addUnit} />}
+      {!practiceOnly && pendingDeleteUnit && <ConfirmDeleteUnitModal unit={pendingDeleteUnit} onlyUnit={units.length <= 1} onClose={() => setPendingDeleteUnit(null)} onConfirm={() => deleteUnit(pendingDeleteUnit)} />}
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
       {mobileNav && <button className="mobile-overlay" onClick={() => setMobileNav(false)} aria-label="关闭菜单" />}
     </div>
