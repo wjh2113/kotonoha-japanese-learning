@@ -346,15 +346,17 @@ export function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onRena
   )
 }
 
-export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onEdit, onToggleStar, onSearch, onTest, onDictation }: {
+export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onEdit, onToggleStar, onDeleteWord, onSearch, onTest, onDictation }: {
   unit: Unit; units: Unit[]; selectedWord?: Word; search: string; onUnit: (id: string) => void; onSelect: (id: string) => void; onImport: () => void
   onEdit: (word: Word, changes: Partial<Word>) => void
   onToggleStar: (word: Word) => void
+  onDeleteWord: (word: Word) => void
   onSearch: (value: string) => void; onTest: () => void; onDictation: () => void
 }) {
   const { voiceGender } = useContext(SettingsContext)
   const [layout, setLayout] = useState<'grid' | 'list'>('list')
   const [filter, setFilter] = useState<'all' | 'learning' | 'mastered'>('all')
+  const [pendingDelete, setPendingDelete] = useState<Word | null>(null)
   const filtered = unit.words.filter((word) => {
     const matches = `${word.term}${word.reading}${word.meaning}`.toLowerCase().includes(search.toLowerCase())
     return matches && (filter === 'all' || (filter === 'mastered' ? word.mastered : !word.mastered))
@@ -417,7 +419,16 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
           </div>
           {filtered.length ? (
             <div className={`word-grid ${layout === 'list' ? 'word-list' : ''}`}>
-              {filtered.map((word) => <WordCard key={word.id} word={word} active={selectedWord?.id === word.id} list={layout === 'list'} onClick={() => selectWord(word)} />)}
+              {filtered.map((word) => (
+                <WordCard
+                  key={word.id}
+                  word={word}
+                  active={selectedWord?.id === word.id}
+                  list={layout === 'list'}
+                  onClick={() => selectWord(word)}
+                  onDelete={() => setPendingDelete(word)}
+                />
+              ))}
             </div>
           ) : <EmptyState onImport={onImport} />}
         </section>
@@ -438,11 +449,24 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
           /> : <EmptyDetail onImport={onImport} />}
         </aside>
       </div>
+      {pendingDelete && (
+        <ConfirmDeleteWordModal
+          word={pendingDelete}
+          onClose={() => setPendingDelete(null)}
+          onConfirm={() => {
+            const target = pendingDelete
+            setPendingDelete(null)
+            onDeleteWord(target)
+          }}
+        />
+      )}
     </div>
   )
 }
 
-function WordCard({ word, active, list = false, onClick }: { word: Word; active: boolean; list?: boolean; onClick: () => void }) {
+function WordCard({ word, active, list = false, onClick, onDelete }: {
+  word: Word; active: boolean; list?: boolean; onClick: () => void; onDelete: () => void
+}) {
   const dots = masteryDots(word)
   const pos = word.partOfSpeech.split('・')[0]
   return (
@@ -466,6 +490,15 @@ function WordCard({ word, active, list = false, onClick }: { word: Word; active:
           <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
             {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
           </span>
+          <button
+            type="button"
+            className="word-row-delete"
+            aria-label={`删除 ${word.term}`}
+            title="删除单词"
+            onClick={(event) => { event.stopPropagation(); onDelete() }}
+          >
+            <Trash2 size={15} strokeWidth={1.7} />
+          </button>
           <ChevronRight className="word-row-chevron" size={16} strokeWidth={1.6} aria-hidden />
         </>
       ) : (
@@ -473,6 +506,15 @@ function WordCard({ word, active, list = false, onClick }: { word: Word; active:
           <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
             {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
           </span>
+          <button
+            type="button"
+            className="word-card-delete"
+            aria-label={`删除 ${word.term}`}
+            title="删除单词"
+            onClick={(event) => { event.stopPropagation(); onDelete() }}
+          >
+            <Trash2 size={14} strokeWidth={1.7} />
+          </button>
           <b className="jp word-term">{word.term}</b>
           <span className="jp word-reading">{word.reading}</span>
           <em className="word-pos">{pos}</em>
@@ -1123,6 +1165,26 @@ export function ConfirmDeleteUnitModal({ unit, onlyUnit, onClose, onConfirm }: {
         <div className="modal-actions">
           <button className="secondary-button" onClick={onClose}>{onlyUnit ? '我知道了' : '取消'}</button>
           {!onlyUnit && <button className="primary-button danger-confirm" onClick={onConfirm}>确认删除</button>}
+        </div>
+      </section>
+    </div>
+  )
+}
+
+export function ConfirmDeleteWordModal({ word, onClose, onConfirm }: {
+  word: Word; onClose: () => void; onConfirm: () => void
+}) {
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="modal small-modal delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-word-title">
+        <button className="modal-close" onClick={onClose} aria-label="关闭"><X /></button>
+        <span className="modal-icon danger"><Trash2 /></span>
+        <h2 id="delete-word-title">删除单词？</h2>
+        <p>将删除「<b className="jp">{word.term}</b>」{word.reading ? `（${word.reading}）` : ''}及其学习记录，此操作无法恢复。</p>
+        {word.meaning && <p className="delete-word-meaning">{word.meaning}</p>}
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>取消</button>
+          <button type="button" className="primary-button danger-confirm" onClick={onConfirm}>确认删除</button>
         </div>
       </section>
     </div>

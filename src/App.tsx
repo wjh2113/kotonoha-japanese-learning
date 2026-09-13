@@ -321,6 +321,35 @@ function App() {
     bumpStreak()
   }
 
+  const deleteWord = (word: Word) => {
+    const owner = units.find((item) => item.words.some((entry) => entry.id === word.id))
+    const remaining = (owner?.words || []).filter((entry) => entry.id !== word.id)
+    const nextSelected = selectedId === word.id ? (remaining[0]?.id || '') : selectedId
+    skipNextUnitsPersist.current = true
+    setUnits((current) => current.map((item) => ({
+      ...item,
+      words: item.words.filter((entry) => entry.id !== word.id),
+    })))
+    if (selectedId === word.id) setSelectedId(nextSelected)
+    void (async () => {
+      try {
+        const response = await apiFetch(`/api/words/${encodeURIComponent(word.id)}`, { method: 'DELETE' })
+        if (!response.ok) throw new Error('DELETE_WORD_FAILED')
+        setToast(`已删除「${word.term}」`)
+      } catch {
+        // Roll back optimistic removal if the API rejects.
+        if (owner) {
+          skipNextUnitsPersist.current = true
+          setUnits((current) => current.map((item) => item.id === owner.id
+            ? { ...item, words: [...item.words, word] }
+            : item))
+          if (selectedId === nextSelected && nextSelected !== word.id) setSelectedId(word.id)
+        }
+        setToast('删除失败，请稍后重试')
+      }
+    })()
+  }
+
   const updateWordById = (wordId: string, updater: (word: Word) => Partial<Word>) => {
     skipNextUnitsPersist.current = true
     setUnits((current) => current.map((item) => ({
@@ -528,6 +557,7 @@ function App() {
                 updateWord(word.id, { starred: nextStarred })
                 setToast(nextStarred ? '已加入生词本' : '已移出生词本')
               }}
+              onDeleteWord={(word) => deleteWord(word)}
               search={search} onSearch={setSearch}
               onTest={() => setView('test')}
               onDictation={() => openDictation('plan')}

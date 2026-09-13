@@ -182,6 +182,16 @@ app.patch('/api/words/:id', async (req, res) => {
   }
 })
 
+app.delete('/api/words/:id', async (req, res) => {
+  try {
+    await database.deleteWord(req.params.id)
+    res.json({ ok: true, id: req.params.id })
+  } catch (error) {
+    console.error(error)
+    res.status(500).json({ error: '单词删除失败。' })
+  }
+})
+
 app.post('/api/units', async (req, res) => {
   try {
     const body = req.body || {}
