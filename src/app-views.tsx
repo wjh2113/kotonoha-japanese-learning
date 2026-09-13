@@ -884,55 +884,113 @@ export function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit
   if (!current) return null
   const picked = answers[current.id]
   const listening = kind === 'listening'
-  const revealed = Boolean(picked) || !listening
+  const progressPct = ((index + (picked ? 1 : 0)) / Math.max(questions.length, 1)) * 100
   return (
-    <div className="page test-page quiz-design">
-      <div className="quiz-hero-deco" aria-hidden>
-        <svg viewBox="0 0 220 120" className="home-torii" fill="none">
-          <circle cx="168" cy="32" r="22" fill="currentColor" opacity=".16" />
-          <circle cx="168" cy="32" r="12" fill="currentColor" opacity=".08" />
-          <path d="M42 48 H178" stroke="currentColor" strokeWidth="5" strokeLinecap="round" opacity=".28" />
-          <path d="M36 40 H184" stroke="currentColor" strokeWidth="4" strokeLinecap="round" opacity=".22" />
-          <path d="M58 48 V92 M162 48 V92" stroke="currentColor" strokeWidth="5" strokeLinecap="round" opacity=".26" />
-          <path d="M50 58 H170" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" opacity=".2" />
-          <path d="M18 102 C48 82 72 92 96 78 C118 66 140 84 178 70 C192 64 204 68 214 62" stroke="currentColor" strokeWidth="2.2" opacity=".18" />
-        </svg>
-      </div>
-      <div className="test-top quiz-top-bar">
-        <div className="quiz-chips">
-          <span><BookOpen size={14} strokeWidth={1.6} />{unit.name}</span>
-          <span><Headphones size={14} strokeWidth={1.6} />{listening ? '听发音，选出单词' : '选出正确释义'}</span>
-          <span className="quiz-progress-chip">
-            <b>{index + 1} / {questions.length}</b>
-            <i className="quiz-progress-mini"><em style={{ width: `${((index + (picked ? 1 : 0)) / questions.length) * 100}%` }} /></i>
-          </span>
+    <div className="page test-page quiz-design quiz-session">
+      <header className="quiz-session-top">
+        <label className="quiz-unit-chip">
+          <BookOpen size={15} strokeWidth={1.7} aria-hidden />
+          <select aria-label="测试单元" value={unit.id} onChange={(event) => onUnit(event.target.value)}>
+            {units.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+          <ChevronRight size={14} strokeWidth={1.8} aria-hidden />
+        </label>
+        <div className="quiz-session-progress" aria-label={`进度 ${index + 1} / ${questions.length}`}>
+          <Headphones size={15} strokeWidth={1.7} aria-hidden />
+          <b>{index + 1} / {questions.length}</b>
+          <i className="quiz-progress-mini"><em style={{ width: `${Math.min(100, Math.max(0, progressPct))}%` }} /></i>
         </div>
-      </div>
+        <button type="button" className="quiz-exit" onClick={onBack}>
+          <X size={15} strokeWidth={1.8} />退出
+        </button>
+      </header>
+
+      <p className="quiz-prompt">
+        <Headphones size={16} strokeWidth={1.7} aria-hidden />
+        {listening ? '听发音，选出单词' : '选出正确释义'}
+      </p>
+
       <section className="quiz-card quiz-card-design">
-        {revealed ? (
-          <>
-            <span className="jp quiz-reading">{current.reading}</span>
-            <div><h2 className="jp">{current.term}</h2><VolumeButton word={current} /></div>
-          </>
-        ) : (
-          <div className="quiz-listen">
-            <button className="quiz-listen-play" onClick={() => void speakJapanese(current.term, voiceGender)} aria-label="播放单词">
-              <Volume2 size={36} strokeWidth={1.6} />
+        {listening ? (
+          <div className="quiz-listen quiz-listen-wave">
+            <span className="quiz-wave" aria-hidden>
+              <i /><i /><i /><i /><i /><i />
+            </span>
+            <button
+              type="button"
+              className="quiz-listen-play"
+              onClick={() => void speakJapanese(current.term, voiceGender)}
+              aria-label="播放单词"
+            >
+              <Volume2 size={34} strokeWidth={1.6} />
             </button>
-            <b>点击播放</b>
-            <span>听完后选择下面的单词</span>
+            <span className="quiz-wave quiz-wave-flip" aria-hidden>
+              <i /><i /><i /><i /><i /><i />
+            </span>
+          </div>
+        ) : (
+          <div className="quiz-meaning-prompt">
+            <span className="jp quiz-reading">{current.reading}</span>
+            <div>
+              <h2 className="jp">{current.term}</h2>
+              <VolumeButton word={current} />
+            </div>
           </div>
         )}
-        <div className="quiz-options quiz-options-design">{options.map((option, i) => {
-          const selected = picked === option.id
-          const showCorrect = picked && option.id === current.id
-          const wrong = selected && option.id !== current.id
-          return <button key={`${option.id}-${i}`} className={`${selected ? 'selected' : ''} ${showCorrect ? 'correct' : ''} ${wrong ? 'wrong' : ''}`} onClick={() => choose(option.id)}><em>{String.fromCharCode(65 + i)}</em>{listening ? <strong className="jp">{optionLabel(option, 'listening')}</strong> : optionLabel(option, 'meaning')}{selected && <CheckCircle2 size={18} strokeWidth={1.6} />}</button>
-        })}</div>
-        {picked && <div className={`answer-feedback ${picked === current.id ? 'correct' : 'wrong'}`}><b>{picked === current.id ? '回答正确' : '再记一次'}</b><span className="jp">{current.example}</span><small>{current.translation}</small></div>}
-        <button className="primary-button quiz-next" disabled={!picked} onClick={next}>{index === questions.length - 1 ? '查看结果' : '下一题'}<ChevronRight size={18} strokeWidth={1.6} /></button>
+
+        <div className="quiz-options quiz-options-design">
+          {options.map((option, i) => {
+            const selected = picked === option.id
+            const showCorrect = Boolean(picked && option.id === current.id)
+            const wrong = Boolean(selected && option.id !== current.id)
+            return (
+              <button
+                key={`${option.id}-${i}`}
+                type="button"
+                className={`${selected ? 'selected' : ''} ${showCorrect ? 'correct' : ''} ${wrong ? 'wrong' : ''}`}
+                onClick={() => choose(option.id)}
+              >
+                <em>{String.fromCharCode(65 + i)}</em>
+                {listening
+                  ? <strong className="jp">{optionLabel(option, 'listening')}</strong>
+                  : <span>{optionLabel(option, 'meaning')}</span>}
+                {showCorrect && <CheckCircle2 size={20} strokeWidth={1.7} />}
+                {wrong && <X size={18} strokeWidth={1.8} />}
+              </button>
+            )
+          })}
+        </div>
+
+        {picked && (
+          <div className={`answer-feedback ${picked === current.id ? 'correct' : 'wrong'}`}>
+            <b>{picked === current.id ? '回答正确' : '再记一次'}</b>
+            <span className="jp">{current.example}</span>
+            <small>{current.translation}</small>
+          </div>
+        )}
+
+        <button type="button" className="primary-button quiz-next" disabled={!picked} onClick={next}>
+          {index === questions.length - 1 ? '查看结果' : '下一题'}
+          <ChevronRight size={18} strokeWidth={1.7} />
+        </button>
       </section>
-      <button className="back-link" onClick={() => setKind(null)}><ChevronLeft size={17} strokeWidth={1.6} />返回选择</button>
+
+      <div className="quiz-footer-deco" aria-hidden>
+        <svg viewBox="0 0 360 120" fill="none">
+          <ellipse cx="290" cy="26" rx="22" ry="10" fill="#e8d4a8" opacity=".45" />
+          <path d="M0 98 C40 72 70 86 108 64 C140 46 168 58 200 42 C236 22 268 48 310 58 C332 64 348 60 360 66 L360 120 L0 120 Z" fill="currentColor" opacity=".1" />
+          <path d="M20 120 C55 86 88 94 118 72 C148 50 172 62 204 50 C232 40 258 58 292 68 C318 76 340 70 360 78 L360 120 Z" fill="currentColor" opacity=".16" />
+          <path d="M132 58 H228" stroke="currentColor" strokeWidth="4.5" strokeLinecap="round" opacity=".22" />
+          <path d="M126 50 H234" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" opacity=".16" />
+          <path d="M148 58 V92 M212 58 V92" stroke="currentColor" strokeWidth="4.5" strokeLinecap="round" opacity=".2" />
+          <path d="M140 68 H220" stroke="currentColor" strokeWidth="3" strokeLinecap="round" opacity=".14" />
+          <circle cx="48" cy="78" r="3.2" fill="#e8b7c4" opacity=".7" />
+          <circle cx="62" cy="86" r="2.4" fill="#e8b7c4" opacity=".55" />
+          <circle cx="54" cy="92" r="2.8" fill="#d9a0b0" opacity=".6" />
+          <path d="M300 88 C312 70 328 64 340 72 C330 82 316 88 300 88 Z" fill="#e8b7c4" opacity=".35" />
+          <path d="M318 78 C328 66 342 62 352 70 C344 80 330 84 318 78 Z" fill="#e8b7c4" opacity=".28" />
+        </svg>
+      </div>
     </div>
   )
 }
