@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizePassageBooks, prepareUnitWords, validatePassages, validateState } from './database.mjs'
+import { normalizePassageBooks, prepareUnitWords, validateGrammarLesson, validateGrammarProgress, validatePassages, validateState } from './database.mjs'
 
 const validState = {
   units: [{ id: 'unit-1', name: '第一单元', words: [{ id: 'word-1', term: '水' }] }],
@@ -58,5 +58,27 @@ describe('passage validation', () => {
       books: [{ id: 'book-1', name: '大家的日语 第1册' }],
       passages: [{ id: 'p1', title: '第一课' }],
     })).toEqual([{ id: 'book-1', name: '大家的日语 第1册' }])
+  })
+})
+
+describe('grammar validation', () => {
+  it('accepts a parsed grammar lesson snapshot', () => {
+    expect(validateGrammarLesson({
+      id: 'g1',
+      title: '電気屋で',
+      parts: [{ id: 'p1', title: '部分1', points: [{ id: 'pt1', index: 1, title: 'です', blocks: [], questions: [] }] }],
+    }).id).toBe('g1')
+  })
+
+  it('rejects empty grammar lessons', () => {
+    expect(() => validateGrammarLesson({ id: '', title: '', parts: [] })).toThrow('INVALID_GRAMMAR_LESSON')
+  })
+
+  it('normalizes progress payloads', () => {
+    expect(validateGrammarProgress({
+      points: {
+        a: { correct: 2, wrong: 1, wrongQuestionIds: ['q1'], studiedAt: 10 },
+      },
+    }).points.a).toEqual({ correct: 2, wrong: 1, wrongQuestionIds: ['q1'], studiedAt: 10 })
   })
 })

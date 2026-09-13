@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { extractUploadedLexeme, looksLikeVocabularyTerm } from './lexeme.mjs'
+import { parseGrammarMarkdown } from './grammar.mjs'
 
 const { Pool } = pg
 const dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -53,6 +54,37 @@ export function validatePassages(input) {
   if (passages.length > 50) throw new Error('TOO_MANY_PASSAGES')
   if (passages.some((item) => !text(item?.id) || !text(item?.title))) throw new Error('INVALID_PASSAGE')
   return passages
+}
+
+export function validateGrammarLesson(input) {
+  const lesson = input && typeof input === 'object' ? input : null
+  if (!lesson || !text(lesson.id) || !text(lesson.title) || !Array.isArray(lesson.parts)) {
+    throw new Error('INVALID_GRAMMAR_LESSON')
+  }
+  if (lesson.parts.length > 20) throw new Error('TOO_MANY_GRAMMAR_PARTS')
+  const pointCount = lesson.parts.reduce((sum, part) => sum + (Array.isArray(part?.points) ? part.points.length : 0), 0)
+  if (pointCount > 80) throw new Error('TOO_MANY_GRAMMAR_POINTS')
+  return lesson
+}
+
+export function validateGrammarProgress(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { points: {} }
+  const points = input.points && typeof input.points === 'object' && !Array.isArray(input.points)
+    ? input.points
+    : {}
+  const next = {}
+  for (const [pointId, row] of Object.entries(points).slice(0, 120)) {
+    if (!pointId || !row || typeof row !== 'object') continue
+    next[String(pointId).slice(0, 80)] = {
+      studiedAt: Number.isFinite(Number(row.studiedAt)) ? Number(row.studiedAt) : undefined,
+      correct: Math.max(0, Math.min(999, Math.floor(Number(row.correct) || 0))),
+      wrong: Math.max(0, Math.min(999, Math.floor(Number(row.wrong) || 0))),
+      wrongQuestionIds: Array.isArray(row.wrongQuestionIds)
+        ? row.wrongQuestionIds.map((id) => String(id || '').slice(0, 80)).filter(Boolean).slice(0, 80)
+        : [],
+    }
+  }
+  return { points: next }
 }
 
 export function normalizePassageBooks(input, passages = []) {
@@ -189,6 +221,7 @@ export function createDatabase(connectionString) {
     await pool.query(schema)
     await migrateBooksMetaRow()
     await migrateLessonsFromPassages()
+    await seedDefaultGrammarLessons()
   }
 
   const listPassageBooks = async () => {
@@ -771,6 +804,156 @@ export function createDatabase(connectionString) {
     return { id: passageId }
   }
 
+  const mapGrammarRow = (row) => {
+    const content = row.content && typeof row.content === 'object' ? row.content : {}
+    const lesson = {
+      id: row.id,
+      course: text(content.course || row.course),
+      unit: Number(content.unit ?? row.unit_no) || 0,
+      unitTitle: text(content.unitTitle || row.unit_title),
+      lesson: Number(content.lesson ?? row.lesson_no) || 0,
+      title: text(content.title || row.title) || '语法课',
+      summary: text(content.summary || row.summary),
+      parts: Array.isArray(content.parts) ? content.parts : [],
+      sourceName: text(content.sourceName || row.source_name) || undefined,
+    }
+    return {
+      lesson,
+      progress: validateGrammarProgress(row.progress),
+      sourceMarkdown: text(row.source_markdown),
+      updatedAt: row.updated_at?.getTime?.() || Date.now(),
+    }
+  }
+
+  const listGrammarLessons = async () => {
+    const result = await pool.query(
+      `SELECT id, course, unit_no, unit_title, lesson_no, title, summary, source_name,
+              source_markdown, content, progress, sort_order, created_at, updated_at
+       FROM grammar_lessons
+       ORDER BY course, unit_no, lesson_no, sort_order, created_at, id`,
+    )
+    const lessons = []
+    const progress = {}
+    for (const row of result.rows) {
+      const mapped = mapGrammarRow(row)
+      lessons.push(mapped.lesson)
+      progress[mapped.lesson.id] = mapped.progress
+    }
+    return { lessons, progress }
+  }
+
+  const getGrammarLesson = async (id) => {
+    const lessonId = text(id)
+    if (!lessonId) throw new Error('INVALID_GRAMMAR_LESSON')
+    const result = await pool.query(
+      `SELECT id, course, unit_no, unit_title, lesson_no, title, summary, source_name,
+              source_markdown, content, progress, sort_order, created_at, updated_at
+       FROM grammar_lessons WHERE id = $1`,
+      [lessonId],
+    )
+    if (!result.rows[0]) throw new Error('GRAMMAR_NOT_FOUND')
+    return mapGrammarRow(result.rows[0])
+  }
+
+  const upsertGrammarLesson = async (input) => {
+    const lesson = validateGrammarLesson(input?.lesson || input)
+    const progress = validateGrammarProgress(input?.progress)
+    const sourceMarkdown = text(input?.sourceMarkdown).slice(0, 200_000)
+    const sortOrder = Number.isFinite(Number(input?.sortOrder)) ? Number(input.sortOrder) : Number(lesson.lesson) || 0
+    await pool.query(
+      `INSERT INTO grammar_lessons (
+         id, course, unit_no, unit_title, lesson_no, title, summary, source_name,
+         source_markdown, content, progress, sort_order, updated_at
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,NOW()
+       )
+       ON CONFLICT (id) DO UPDATE SET
+         course = EXCLUDED.course,
+         unit_no = EXCLUDED.unit_no,
+         unit_title = EXCLUDED.unit_title,
+         lesson_no = EXCLUDED.lesson_no,
+         title = EXCLUDED.title,
+         summary = EXCLUDED.summary,
+         source_name = EXCLUDED.source_name,
+         source_markdown = CASE
+           WHEN EXCLUDED.source_markdown = '' THEN grammar_lessons.source_markdown
+           ELSE EXCLUDED.source_markdown
+         END,
+         content = EXCLUDED.content,
+         progress = CASE
+           WHEN $13::boolean THEN EXCLUDED.progress
+           ELSE grammar_lessons.progress
+         END,
+         sort_order = EXCLUDED.sort_order,
+         updated_at = NOW()`,
+      [
+        text(lesson.id).slice(0, 80),
+        text(lesson.course).slice(0, 80),
+        Number(lesson.unit) || 0,
+        text(lesson.unitTitle).slice(0, 80),
+        Number(lesson.lesson) || 0,
+        text(lesson.title).slice(0, 120),
+        text(lesson.summary).slice(0, 500),
+        text(lesson.sourceName).slice(0, 120),
+        sourceMarkdown,
+        JSON.stringify(lesson),
+        JSON.stringify(progress),
+        sortOrder,
+        Boolean(input?.replaceProgress),
+      ],
+    )
+    return getGrammarLesson(lesson.id)
+  }
+
+  const patchGrammarProgress = async (id, progressInput) => {
+    const lessonId = text(id)
+    if (!lessonId) throw new Error('INVALID_GRAMMAR_LESSON')
+    const progress = validateGrammarProgress(progressInput)
+    const result = await pool.query(
+      `UPDATE grammar_lessons
+       SET progress = $2::jsonb, updated_at = NOW()
+       WHERE id = $1
+       RETURNING id`,
+      [lessonId, JSON.stringify(progress)],
+    )
+    if (!result.rows[0]) throw new Error('GRAMMAR_NOT_FOUND')
+    return getGrammarLesson(lessonId)
+  }
+
+  const deleteGrammarLesson = async (id) => {
+    const lessonId = text(id)
+    if (!lessonId) throw new Error('INVALID_GRAMMAR_LESSON')
+    const result = await pool.query('DELETE FROM grammar_lessons WHERE id = $1 RETURNING id', [lessonId])
+    if (!result.rows[0]) throw new Error('GRAMMAR_NOT_FOUND')
+    return { id: lessonId }
+  }
+
+  const seedDefaultGrammarLessons = async () => {
+    const count = await pool.query('SELECT COUNT(*)::int AS count FROM grammar_lessons')
+    if ((count.rows[0]?.count || 0) > 0) return
+    const candidates = [
+      path.join(dirname, 'content', 'grammar', 'L02_電気屋で.md'),
+      path.join(dirname, 'content', 'grammar', 'L02.md'),
+    ]
+    for (const filePath of candidates) {
+      try {
+        const raw = await fs.readFile(filePath, 'utf8')
+        const lesson = parseGrammarMarkdown(raw, path.basename(filePath))
+        if (!lesson) continue
+        await upsertGrammarLesson({
+          lesson,
+          sourceMarkdown: raw,
+          progress: { points: {} },
+          replaceProgress: true,
+          sortOrder: lesson.lesson || 2,
+        })
+        return
+      } catch {
+        // try next candidate
+      }
+    }
+  }
+
   /** Clear units/words/passages/books; keep app_settings. */
   const wipeLearningData = async () => {
     const client = await pool.connect()
@@ -781,6 +964,7 @@ export function createDatabase(connectionString) {
       await client.query('DELETE FROM passages')
       await client.query('DELETE FROM passage_lessons')
       await client.query('DELETE FROM passage_books')
+      await client.query('DELETE FROM grammar_lessons')
       await client.query('DELETE FROM passages WHERE id = $1', [BOOKS_META_ID]).catch(() => {})
       await client.query('COMMIT')
       return { ok: true }
@@ -981,6 +1165,7 @@ export function createDatabase(connectionString) {
     listIncompleteWords, countIncompleteWords, updateWordLexicon, unitHasTerm, deleteWord,
     createUnit, patchUnit, deleteUnit, appendWords,
     listPassages, getPassage, replacePassages, upsertPassage, patchPassageProgress, replacePassageBooks, deletePassage,
+    listGrammarLessons, getGrammarLesson, upsertGrammarLesson, patchGrammarProgress, deleteGrammarLesson,
     wipeLearningData,
     close: () => pool.end(),
   }

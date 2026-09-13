@@ -1,12 +1,12 @@
-import { useContext, useEffect, useMemo, useState } from 'react'
+import { useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpen, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, GraduationCap,
   UploadCloud, Volume2, X,
 } from 'lucide-react'
 import { flattenGrammarPoints, parseGrammarMarkdown } from './grammar'
 import {
-  lessonProgressSummary, loadAllGrammarLessons, loadGrammarProgress, loadUploadedGrammarLessons,
-  markGrammarPointStudied, recordGrammarAnswer, saveGrammarProgress, saveUploadedGrammarLessons,
+  fetchGrammarBundle, lessonProgressSummary, markGrammarPointStudied, recordGrammarAnswer,
+  syncGrammarProgress, uploadGrammarLesson,
 } from './grammar-store'
 import type { GrammarBlock, GrammarLesson, GrammarPoint, GrammarProgressState, GrammarQuestion } from './grammar-types'
 import { SettingsContext } from './settings-context'
@@ -232,14 +232,37 @@ function QuizSession({
 }
 
 export function GrammarView({ practiceOnly = false }: { practiceOnly?: boolean }) {
-  const [lessons, setLessons] = useState<GrammarLesson[]>(() => loadAllGrammarLessons())
-  const [progress, setProgress] = useState<GrammarProgressState>(() => loadGrammarProgress())
+  const [lessons, setLessons] = useState<GrammarLesson[]>([])
+  const [progress, setProgress] = useState<GrammarProgressState>({})
   const [screen, setScreen] = useState<Screen>({ name: 'hub' })
   const [notice, setNotice] = useState('')
+  const [loading, setLoading] = useState(true)
+  const progressRef = useRef(progress)
+  progressRef.current = progress
 
   useEffect(() => {
-    saveGrammarProgress(progress)
-  }, [progress])
+    let cancelled = false
+    ;(async () => {
+      setLoading(true)
+      const bundle = await fetchGrammarBundle()
+      if (cancelled) return
+      setLessons(bundle.lessons)
+      setProgress(bundle.progress)
+      setLoading(false)
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (loading) return
+    const timer = window.setTimeout(() => {
+      const state = progressRef.current
+      for (const [lessonId, row] of Object.entries(state)) {
+        void syncGrammarProgress(lessonId, row)
+      }
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [progress, loading])
 
   const activeLesson = screen.name === 'hub' ? null : findLesson(lessons, screen.lessonId)
   const activePoint = screen.name === 'point' && activeLesson
@@ -270,15 +293,19 @@ export function GrammarView({ practiceOnly = false }: { practiceOnly?: boolean }
         setNotice('无法解析该语法文件，请确认是带测验的 Markdown 课包。')
         return
       }
-      const uploaded = loadUploadedGrammarLessons().filter((item) => item.id !== lesson.id)
-      const nextUploaded = [...uploaded, lesson]
-      saveUploadedGrammarLessons(nextUploaded)
-      setLessons(loadAllGrammarLessons())
-      setNotice(`已导入：${lesson.title}（${flattenGrammarPoints(lesson).length} 个语法点）`)
+      const saved = await uploadGrammarLesson(lesson, text)
+      const bundle = await fetchGrammarBundle()
+      setLessons(bundle.lessons)
+      setProgress(bundle.progress)
+      setNotice(`已保存到数据库：${saved.lesson?.title || lesson.title}（${flattenGrammarPoints(lesson).length} 个语法点）`)
       setScreen({ name: 'lesson', lessonId: lesson.id })
-    } catch {
-      setNotice('读取文件失败。')
+    } catch (reason) {
+      setNotice(reason instanceof Error ? reason.message : '上传失败。')
     }
+  }
+
+  if (loading) {
+    return <div className="page grammar-page"><div className="wide-empty compact"><b>加载语法课…</b></div></div>
   }
 
   if (screen.name === 'quiz' && activeLesson && quizPack) {
@@ -437,7 +464,7 @@ export function GrammarView({ practiceOnly = false }: { practiceOnly?: boolean }
         <div>
           <span className="eyebrow">GRAMMAR</span>
           <h1>语法学习</h1>
-          <p>按课学习语法点、看例句，再用上传讲义里的题库自测。不使用 AI 生成内容。</p>
+          <p>按课学习语法点、看例句，再用上传讲义里的题库自测。内容保存在数据库，不使用 AI 生成。</p>
         </div>
         {!practiceOnly && (
           <label className="primary-button grammar-upload">

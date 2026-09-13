@@ -821,6 +821,65 @@ app.delete('/api/passages/:id', async (req, res) => {
   }
 })
 
+app.get('/api/grammar', async (_req, res) => {
+  try {
+    res.json(await database.listGrammarLessons())
+  } catch (error) {
+    console.error(error)
+    res.status(500).json({ error: '读取语法课失败。' })
+  }
+})
+
+app.get('/api/grammar/:id', async (req, res) => {
+  try {
+    res.json(await database.getGrammarLesson(req.params.id))
+  } catch (error) {
+    console.error(error)
+    if (error.message === 'GRAMMAR_NOT_FOUND') return res.status(404).json({ error: '语法课不存在。' })
+    res.status(error.message === 'INVALID_GRAMMAR_LESSON' ? 400 : 500).json({ error: '读取语法课失败。' })
+  }
+})
+
+app.put('/api/grammar/:id', async (req, res) => {
+  try {
+    const body = req.body || {}
+    const lesson = { ...(body.lesson || body), id: req.params.id }
+    const saved = await database.upsertGrammarLesson({
+      lesson,
+      sourceMarkdown: body.sourceMarkdown,
+      progress: body.progress,
+      replaceProgress: Boolean(body.replaceProgress),
+      sortOrder: body.sortOrder,
+    })
+    res.json(saved)
+  } catch (error) {
+    console.error(error)
+    const clientError = ['INVALID_GRAMMAR_LESSON', 'TOO_MANY_GRAMMAR_PARTS', 'TOO_MANY_GRAMMAR_POINTS'].includes(error.message)
+    res.status(clientError ? 400 : 500).json({ error: clientError ? '提交的语法数据无效。' : '保存语法课失败。' })
+  }
+})
+
+app.patch('/api/grammar/:id/progress', async (req, res) => {
+  try {
+    const saved = await database.patchGrammarProgress(req.params.id, req.body?.progress || req.body)
+    res.json(saved)
+  } catch (error) {
+    console.error(error)
+    if (error.message === 'GRAMMAR_NOT_FOUND') return res.status(404).json({ error: '语法课不存在。' })
+    res.status(error.message === 'INVALID_GRAMMAR_LESSON' ? 400 : 500).json({ error: '更新语法进度失败。' })
+  }
+})
+
+app.delete('/api/grammar/:id', async (req, res) => {
+  try {
+    res.json(await database.deleteGrammarLesson(req.params.id))
+  } catch (error) {
+    console.error(error)
+    if (error.message === 'GRAMMAR_NOT_FOUND') return res.status(404).json({ error: '语法课不存在。' })
+    res.status(500).json({ error: '删除语法课失败。' })
+  }
+})
+
 app.put('/api/passage-books', async (req, res) => {
   try {
     const body = req.body || {}

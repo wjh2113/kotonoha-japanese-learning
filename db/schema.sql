@@ -101,4 +101,24 @@ CREATE TABLE IF NOT EXISTS passage_lessons (
 
 CREATE INDEX IF NOT EXISTS passage_lessons_book_idx ON passage_lessons(book_id, sort_order, created_at, id);
 
+CREATE TABLE IF NOT EXISTS grammar_lessons (
+  id TEXT PRIMARY KEY,
+  course TEXT NOT NULL DEFAULT '',
+  unit_no INTEGER NOT NULL DEFAULT 0,
+  unit_title TEXT NOT NULL DEFAULT '',
+  lesson_no INTEGER NOT NULL DEFAULT 0,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  source_name TEXT NOT NULL DEFAULT '',
+  source_markdown TEXT NOT NULL DEFAULT '',
+  content JSONB NOT NULL DEFAULT '{}'::jsonb,
+  progress JSONB NOT NULL DEFAULT '{}'::jsonb,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS grammar_lessons_order_idx
+  ON grammar_lessons(course, unit_no, lesson_no, sort_order, created_at, id);
+
 INSERT INTO app_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;

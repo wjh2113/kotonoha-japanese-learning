@@ -1,39 +1,11 @@
-import bundledLessonMd from '../content/grammar/L02_電気屋で.md?raw'
-import { countGrammarQuestions, flattenGrammarPoints, mergeGrammarLessons, parseGrammarMarkdown } from './grammar'
+import { apiFetch, readApiJson } from './api'
+import { mergeGrammarLessons, parseGrammarMarkdown } from './grammar'
 import type { GrammarLesson, GrammarLessonProgress, GrammarProgressState } from './grammar-types'
+import bundledLessonMd from '../content/grammar/L02_電気屋で.md?raw'
 
-const UPLOAD_KEY = 'kotonoha-grammar-lessons-v1'
 const PROGRESS_KEY = 'kotonoha-grammar-progress-v1'
 
-export function loadBundledGrammarLessons(): GrammarLesson[] {
-  const lesson = parseGrammarMarkdown(bundledLessonMd, 'L02_電気屋で.md')
-  return lesson ? [lesson] : []
-}
-
-export function loadUploadedGrammarLessons(): GrammarLesson[] {
-  try {
-    const raw = localStorage.getItem(UPLOAD_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as GrammarLesson[]
-    return Array.isArray(parsed) ? parsed.filter((item) => item?.id && Array.isArray(item.parts)) : []
-  } catch {
-    return []
-  }
-}
-
-export function saveUploadedGrammarLessons(lessons: GrammarLesson[]) {
-  try {
-    localStorage.setItem(UPLOAD_KEY, JSON.stringify(lessons))
-  } catch {
-    // ignore quota
-  }
-}
-
-export function loadAllGrammarLessons(): GrammarLesson[] {
-  return mergeGrammarLessons(loadBundledGrammarLessons(), loadUploadedGrammarLessons())
-}
-
-export function loadGrammarProgress(): GrammarProgressState {
+function loadLocalProgress(): GrammarProgressState {
   try {
     const raw = localStorage.getItem(PROGRESS_KEY)
     if (!raw) return {}
@@ -44,11 +16,69 @@ export function loadGrammarProgress(): GrammarProgressState {
   }
 }
 
-export function saveGrammarProgress(state: GrammarProgressState) {
+function saveLocalProgress(state: GrammarProgressState) {
   try {
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(state))
   } catch {
     // ignore
+  }
+}
+
+export function loadBundledGrammarLessons(): GrammarLesson[] {
+  const lesson = parseGrammarMarkdown(bundledLessonMd, 'L02_電気屋で.md')
+  return lesson ? [lesson] : []
+}
+
+export async function fetchGrammarBundle(): Promise<{ lessons: GrammarLesson[]; progress: GrammarProgressState }> {
+  try {
+    const response = await apiFetch('/api/grammar')
+    const data = await readApiJson<{ lessons?: GrammarLesson[]; progress?: GrammarProgressState }>(response)
+    if (!response.ok) throw new Error('GRAMMAR_FETCH_FAILED')
+    const lessons = Array.isArray(data.lessons) ? data.lessons.filter((item) => item?.id && Array.isArray(item.parts)) : []
+    const progress = data.progress && typeof data.progress === 'object' ? data.progress : {}
+    if (lessons.length) {
+      saveLocalProgress(progress)
+      return { lessons, progress }
+    }
+  } catch {
+    // fall through to local/bundled
+  }
+  const localProgress = loadLocalProgress()
+  return {
+    lessons: loadBundledGrammarLessons(),
+    progress: localProgress,
+  }
+}
+
+export async function uploadGrammarLesson(lesson: GrammarLesson, sourceMarkdown: string) {
+  const response = await apiFetch(`/api/grammar/${encodeURIComponent(lesson.id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      lesson,
+      sourceMarkdown,
+      replaceProgress: false,
+      sortOrder: lesson.lesson || 0,
+    }),
+  })
+  const data = await readApiJson<{ lesson?: GrammarLesson; progress?: GrammarLessonProgress; error?: string }>(response)
+  if (!response.ok || !data.lesson) {
+    throw new Error(data.error || '语法课保存失败。')
+  }
+  return data
+}
+
+export async function syncGrammarProgress(lessonId: string, progress: GrammarLessonProgress) {
+  saveLocalProgress({ ...loadLocalProgress(), [lessonId]: progress })
+  try {
+    const response = await apiFetch(`/api/grammar/${encodeURIComponent(lessonId)}/progress`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ progress }),
+    })
+    if (!response.ok) throw new Error('PROGRESS_SYNC_FAILED')
+  } catch {
+    // keep local cache; retry next change
   }
 }
 
@@ -100,9 +130,9 @@ export function recordGrammarAnswer(
 }
 
 export function lessonProgressSummary(lesson: GrammarLesson, progress?: GrammarLessonProgress) {
-  const points = flattenGrammarPoints(lesson)
+  const points = lesson.parts.flatMap((part) => part.points)
   const totalPoints = points.length
-  const totalQuestions = countGrammarQuestions(lesson)
+  const totalQuestions = points.reduce((sum, point) => sum + point.questions.length, 0)
   let studied = 0
   let correct = 0
   let wrong = 0
@@ -126,3 +156,5 @@ export function lessonProgressSummary(lesson: GrammarLesson, progress?: GrammarL
     weakPointIds,
   }
 }
+
+export { mergeGrammarLessons }
