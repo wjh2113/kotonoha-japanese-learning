@@ -7,14 +7,13 @@ import {
 } from 'lucide-react'
 import { apiFetch, apiUrl, setAccessToken } from './api'
 import { readVocabularyFile } from './docx'
-import { PronunciationPractice } from './PronunciationPractice'
 import { SettingsContext } from './settings-context'
 import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, ThemeName, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fallbackUnitTheme, isPlaceholderTheme } from './theme'
 import { buildQuizOptions, isPlaceholderMeaning, optionLabel, orderQuizByWeakness, recordQuizAnswer, sharedDistractors, usableQuizWords } from './quiz'
 import { isCoreLexiconIncomplete } from './lexeme'
-import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, masteryDots, parseVocabularyHandbook, proficiencyPercent, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, splitWordList, toRomaji, uid } from './utils'
+import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, masteryDots, parseVocabularyHandbook, proficiencyPercent, REVIEW_INTERVAL_DAYS, scheduleReview, splitWordList, toRomaji, uid } from './utils'
 
 const THEME_OPTIONS: { id: ThemeName; name: string; desc: string }[] = [
   { id: 'matcha', name: '抹茶', desc: '日式绿' },
@@ -347,10 +346,10 @@ export function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onRena
   )
 }
 
-export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onToggleMastered, onEdit, onToggleStar, onSearch, onTest, onDictation }: {
+export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onEdit, onSearch, onTest, onDictation }: {
   unit: Unit; units: Unit[]; selectedWord?: Word; search: string; onUnit: (id: string) => void; onSelect: (id: string) => void; onImport: () => void
-  onToggleMastered: (word: Word) => void; onEdit: (word: Word, changes: Partial<Word>) => void
-  onToggleStar: (word: Word) => void; onSearch: (value: string) => void; onTest: () => void; onDictation: () => void
+  onEdit: (word: Word, changes: Partial<Word>) => void
+  onSearch: (value: string) => void; onTest: () => void; onDictation: () => void
 }) {
   const { voiceGender } = useContext(SettingsContext)
   const [layout, setLayout] = useState<'grid' | 'list'>('list')
@@ -423,7 +422,7 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
         </section>
         <aside className="detail-column">
           {selectedWord ? <WordDetail
-            word={selectedWord} onToggle={() => onToggleMastered(selectedWord)} onToggleStar={() => onToggleStar(selectedWord)}
+            word={selectedWord}
             onEdit={(changes) => onEdit(selectedWord, changes)}
             position={selectedIndex >= 0 ? selectedIndex + 1 : 0} total={filtered.length}
             onPrevious={() => {
@@ -496,17 +495,16 @@ function VolumeButton({ word, small = false, sentence = false }: { word: Word; s
   return <button className={`volume-button ${small ? 'small' : ''} ${speaking ? 'speaking' : ''}`} onClick={speak} aria-label="朗读">{speaking ? <Pause size={small ? 14 : 19} /> : <Volume2 size={small ? 14 : 19} />}</button>
 }
 
-function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onPrevious, onNext }: {
-  word: Word; onToggle: () => void; onToggleStar: () => void; onEdit: (changes: Partial<Word>) => void
+function WordDetail({ word, onEdit, position, total, onPrevious, onNext }: {
+  word: Word; onEdit: (changes: Partial<Word>) => void
   position: number; total: number; onPrevious: () => void; onNext: () => void
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(word)
   const [typing, setTyping] = useState('')
   const [typingResult, setTypingResult] = useState<'correct' | 'wrong' | null>(null)
-  const [practiceOpen, setPracticeOpen] = useState(false)
   const [notesDraft, setNotesDraft] = useState(word.notes || '')
-  useEffect(() => { setDraft(word); setEditing(false); setTyping(''); setTypingResult(null); setPracticeOpen(false); setNotesDraft(word.notes || '') }, [word])
+  useEffect(() => { setDraft(word); setEditing(false); setTyping(''); setTypingResult(null); setNotesDraft(word.notes || '') }, [word])
   const save = () => { onEdit(draft); setEditing(false) }
   const checkTyping = () => {
     const correct = matchesTypingAnswer(typing, word)
@@ -520,7 +518,6 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
         <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
           {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
         </span>
-        <button onClick={onToggleStar} aria-label={word.starred ? '移出生词本' : '加入生词本'} className={word.starred ? 'starred' : ''}><BookMarked size={17} strokeWidth={1.6} /></button>
         <button onClick={() => setEditing(!editing)} aria-label="编辑词卡"><SquarePen size={17} strokeWidth={1.6} /></button>
       </div>
       <div className="detail-main-word">
@@ -529,7 +526,6 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
           <span className="jp">{word.reading}</span>
           {(word.romaji || toRomaji(word.reading)) && <small className="romaji">{word.romaji || toRomaji(word.reading)}</small>}
           {word.partOfSpeech && <em>{word.partOfSpeech}</em>}
-          <span className="detail-speak"><VolumeButton word={word} small /><b>发音</b></span>
         </div>
       </div>
       {editing ? (
@@ -595,7 +591,7 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
             />
             <small className="notes-count">{notesDraft.length}/200</small>
           </div>
-          <details className="typing-practice">
+          <details className="typing-practice" open>
             <summary><SquarePen size={14} /> 打字练习</summary>
             <p>输入“{word.meaning}”对应的日语单词或假名</p>
             <div className={typingResult ? `typing-input ${typingResult}` : 'typing-input'}><input value={typing} onChange={(event) => { setTyping(event.target.value); setTypingResult(null) }} onKeyDown={(event) => event.key === 'Enter' && checkTyping()} placeholder="在这里输入…" /><button onClick={checkTyping} disabled={!typing.trim()}>检查</button></div>
@@ -603,32 +599,8 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
           </details>
         </>
       )}
-      <button className={`pronounce-button ${practiceOpen ? 'open' : ''}`} onClick={() => setPracticeOpen((current) => !current)}><Mic size={18} />{practiceOpen ? '收起发音练习' : '练习这个词的发音'}</button>
-      {practiceOpen && <InlinePronunciationPractice word={word} />}
-      <div className="detail-footer-actions">
-        <button type="button" className={`mark-button ${word.starred ? 'on' : ''}`} onClick={onToggleStar}><BookMarked size={16} />{word.starred ? '已标记' : '标记'}</button>
-        <button className={`master-button ${word.mastered ? 'done' : ''}`} onClick={onToggle}>{word.mastered ? <><CheckCircle2 size={18} />已掌握</> : <><Check size={18} />标记为已掌握</>}</button>
-      </div>
       <div className="detail-nav"><button disabled={position <= 1} onClick={onPrevious}><ChevronLeft size={16} />上一个</button><span>{position || 0} / {total}</span><button disabled={position <= 0 || position >= total} onClick={onNext}>下一个<ChevronRight size={16} /></button></div>
     </div>
-  )
-}
-
-function InlinePronunciationPractice({ word }: { word: Word }) {
-  return (
-    <PronunciationPractice
-      variant="inline"
-      referenceText={word.term}
-      referenceReading={word.reading}
-      resetKey={word.id}
-      scoreFn={(text) => pronunciationScore(text, word)}
-      header={(
-        <div className="inline-practice-head">
-          <div><span>当前练习</span><b className="jp">{word.term} · {word.reading}</b></div>
-          <VolumeButton word={word} />
-        </div>
-      )}
-    />
   )
 }
 
@@ -1115,4 +1087,4 @@ export function NewUnitModal({ onClose, onCreate }: { onClose: () => void; onCre
 function EmptyState({ onImport, actionLabel = '添加单词' }: { onImport: () => void; actionLabel?: string }) {
   return <div className="empty-state"><span><FileText /></span><b>这里还没有单词</b><p>请上传词汇手册 Excel 模版。</p><button onClick={onImport}>{actionLabel}</button></div>
 }
-function EmptyDetail({ onImport }: { onImport: () => void }) { return <div className="detail-card empty-detail"><BookOpen /><b>选择一个单词</b><p>查看释义、例句并练习发音。</p><button onClick={onImport}>导入词汇</button></div> }
+function EmptyDetail({ onImport }: { onImport: () => void }) { return <div className="detail-card empty-detail"><BookOpen /><b>选择一个单词</b><p>查看释义、例句并练习打字。</p><button onClick={onImport}>导入词汇</button></div> }

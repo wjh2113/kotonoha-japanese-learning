@@ -418,7 +418,7 @@ body { background: var(--cream); color: var(--ink); }
 
 /* Larger study detail and active typing practice */
 .study-page { max-width: 1400px; }
-.study-page .content-columns { grid-template-columns: minmax(540px, 1.25fr) minmax(320px, .78fr); gap: 14px; }
+.study-page .content-columns { grid-template-columns: minmax(420px, 1.15fr) minmax(340px, .85fr); gap: 14px; }
 .study-page .detail-card { min-height: 0; padding: 14px 16px 10px; }
 .typing-practice { padding: 17px 2px 4px; border-bottom: 1px solid var(--line); }
 .typing-practice > label { display: flex; align-items: center; gap: 6px; color: #8f8e88; font-size: 9px; font-weight: 700; letter-spacing: .8px; }
@@ -1570,9 +1570,10 @@ body { background: var(--cream); color: var(--ink); }
 .study-design .detail-actions { top: 8px; right: 8px; gap: 0; }
 .study-design .detail-actions button { width: 28px; height: 28px; }
 .study-design .detail-main-word { text-align: left; padding: 4px 36px 8px 0; border-bottom: 1px solid var(--line); }
+.study-design .detail-main-word > div { justify-content: flex-start; }
 .study-design .detail-main-word h2 { font-size: 28px; margin: 0 0 4px; line-height: 1.15; }
 .study-design .detail-reading-row {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 2px;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 6px 8px; margin-top: 2px;
 }
 .study-design .detail-reading-row > span.jp { font-size: 13px; color: var(--accent-ink); }
 .study-design .detail-reading-row .romaji {

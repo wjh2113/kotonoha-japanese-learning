@@ -379,10 +379,6 @@ function App() {
     setMobileNav(false)
   }
 
-  const toggleMastered = (word: Word) => updateWord(word.id, word.mastered
-    ? { mastered: false }
-    : { mastered: true, ...scheduleReview(word, true) })
-
   const addImportedWords = (targetUnit: Unit, words: Word[], description?: string) => {
     const nextDescription = description?.trim()
     void (async () => {
@@ -504,9 +500,7 @@ function App() {
             <StudyView
               unit={unit} units={units} selectedWord={selectedWord} onUnit={setUnitId}
               onSelect={setSelectedId} onImport={() => openImport()}
-              onToggleMastered={toggleMastered}
               onEdit={(word, changes) => updateWord(word.id, changes)}
-              onToggleStar={(word) => { updateWord(word.id, { starred: !word.starred }); setToast(word.starred ? '已移出生词本' : '已加入生词本') }}
               search={search} onSearch={setSearch}
               onTest={() => setView('test')}
               onDictation={() => openDictation('plan')}
