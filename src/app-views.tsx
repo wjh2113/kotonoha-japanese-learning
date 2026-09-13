@@ -504,8 +504,39 @@ function WordDetail({ word, onEdit, position, total, onPrevious, onNext }: {
   const [typing, setTyping] = useState('')
   const [typingResult, setTypingResult] = useState<'correct' | 'wrong' | null>(null)
   const [notesDraft, setNotesDraft] = useState(word.notes || '')
-  useEffect(() => { setDraft(word); setEditing(false); setTyping(''); setTypingResult(null); setNotesDraft(word.notes || '') }, [word])
-  const save = () => { onEdit(draft); setEditing(false) }
+
+  // Only reset editor when switching to another word — not when the same word is patched.
+  useEffect(() => {
+    setDraft(word)
+    setEditing(false)
+    setTyping('')
+    setTypingResult(null)
+    setNotesDraft(word.notes || '')
+  }, [word.id])
+
+  useEffect(() => {
+    if (editing) return
+    setDraft(word)
+    setNotesDraft(word.notes || '')
+  }, [word, editing])
+
+  const save = () => {
+    onEdit({
+      term: draft.term.trim(),
+      reading: draft.reading,
+      partOfSpeech: draft.partOfSpeech,
+      romaji: draft.romaji,
+      meaning: draft.meaning,
+      example: draft.example,
+      translation: draft.translation,
+      pronunciationNote: draft.pronunciationNote,
+      memoryTip: draft.memoryTip,
+      synonyms: draft.synonyms,
+      similarWords: draft.similarWords,
+      notes: draft.notes,
+    })
+    setEditing(false)
+  }
   const checkTyping = () => {
     const correct = matchesTypingAnswer(typing, word)
     setTypingResult(correct ? 'correct' : 'wrong')
@@ -518,29 +549,37 @@ function WordDetail({ word, onEdit, position, total, onPrevious, onNext }: {
         <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
           {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
         </span>
-        <button onClick={() => setEditing(!editing)} aria-label="编辑词卡"><SquarePen size={17} strokeWidth={1.6} /></button>
+        <button onClick={() => setEditing((open) => !open)} aria-label={editing ? '取消编辑' : '编辑词卡'}><SquarePen size={17} strokeWidth={1.6} /></button>
       </div>
       <div className="detail-main-word">
-        <h2 className="jp">{word.term}</h2>
+        <h2 className="jp">{editing ? draft.term : word.term}</h2>
         <div className="detail-reading-row">
-          <span className="jp">{word.reading}</span>
-          {(word.romaji || toRomaji(word.reading)) && <small className="romaji">{word.romaji || toRomaji(word.reading)}</small>}
-          {word.partOfSpeech && <em>{word.partOfSpeech}</em>}
+          <span className="jp">{editing ? draft.reading : word.reading}</span>
+          {((editing ? draft.romaji : word.romaji) || toRomaji(editing ? draft.reading : word.reading)) && (
+            <small className="romaji">{(editing ? draft.romaji : word.romaji) || toRomaji(editing ? draft.reading : word.reading)}</small>
+          )}
+          {(editing ? draft.partOfSpeech : word.partOfSpeech) && <em>{editing ? draft.partOfSpeech : word.partOfSpeech}</em>}
         </div>
       </div>
       {editing ? (
         <div className="edit-form">
+          <label>单词<input value={draft.term} onChange={(e) => setDraft({ ...draft, term: e.target.value })} /></label>
           <label>读音<input value={draft.reading} onChange={(e) => setDraft({ ...draft, reading: e.target.value })} /></label>
           <small className="romaji-hint">罗马音：{toRomaji(draft.reading) || '（填入假名读音后自动生成）'}</small>
           <label>罗马音（可改）<input value={draft.romaji || ''} onChange={(e) => setDraft({ ...draft, romaji: e.target.value })} placeholder="留空则按读音自动转换" /></label>
+          <label>词性<input value={draft.partOfSpeech || ''} onChange={(e) => setDraft({ ...draft, partOfSpeech: e.target.value })} placeholder="如 [名] [动] [形]" /></label>
           <label>释义<input value={draft.meaning} onChange={(e) => setDraft({ ...draft, meaning: e.target.value })} /></label>
           <label>例句<textarea value={draft.example} onChange={(e) => setDraft({ ...draft, example: e.target.value })} /></label>
+          <label>例句译文<input value={draft.translation || ''} onChange={(e) => setDraft({ ...draft, translation: e.target.value })} /></label>
           <label>发音注意事项<input value={draft.pronunciationNote || ''} onChange={(e) => setDraft({ ...draft, pronunciationNote: e.target.value })} /></label>
           <label>记忆技巧<input value={draft.memoryTip || ''} onChange={(e) => setDraft({ ...draft, memoryTip: e.target.value })} /></label>
           <label>同义词<input value={draft.synonyms || ''} onChange={(e) => setDraft({ ...draft, synonyms: e.target.value })} placeholder="多个用 、隔开" /></label>
           <label>形近词<input value={draft.similarWords || ''} onChange={(e) => setDraft({ ...draft, similarWords: e.target.value })} placeholder="多个用 、隔开" /></label>
           <label>我的笔记<textarea value={draft.notes || ''} maxLength={200} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></label>
-          <button className="primary-button compact" onClick={save}>保存修改</button>
+          <div className="edit-form-actions">
+            <button type="button" className="secondary-button compact" onClick={() => { setDraft(word); setEditing(false) }}>取消</button>
+            <button type="button" className="primary-button compact" onClick={save} disabled={!draft.term.trim()}>保存修改</button>
+          </div>
         </div>
       ) : (
         <>

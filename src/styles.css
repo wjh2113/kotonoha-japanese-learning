@@ -223,6 +223,9 @@ h1, h2, h3 { letter-spacing: .01em; }
 .edit-form label, .small-modal label { color: #85857e; font-size: 10px; font-weight: 700; }
 .edit-form input, .edit-form textarea, .small-modal input { width: 100%; border: 1px solid var(--line); background: #fbfaf6; border-radius: 5px; padding: 9px 10px; margin-top: 5px; color: var(--ink); font-size: 12px; }
 .edit-form textarea { min-height: 65px; resize: vertical; }
+.edit-form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+.edit-form-actions .secondary-button,
+.edit-form-actions .primary-button { min-width: 88px; }
 .empty-state { min-height: 300px; border: 1px dashed #d9d4c9; background: rgba(255,255,255,.4); border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #99958e; text-align: center; }
 .empty-state > span { width: 50px; height: 50px; border-radius: 50%; display: grid; place-items: center; background: #eeeae1; color: #b1aba1; }.empty-state b { color: #666863; margin-top: 13px; }.empty-state p { font-size: 11px; }.empty-state button, .empty-detail button { border: 0; background: none; color: var(--red); cursor: pointer; font-weight: 700; font-size: 11px; }
 .empty-detail { display: flex; flex-direction: column; align-items: center; justify-content: center; color: #a8a59d; min-height: 380px; }.empty-detail b { color: #62655f; margin-top: 15px; }.empty-detail p { font-size: 11px; }
