@@ -114,13 +114,13 @@ export function AppHeader({ open, view, starredCount, errorBookCount, reviewCoun
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'home', label: '首页', icon: <Home size={18} strokeWidth={1.6} /> },
     { id: 'study', label: '单词学习', icon: <BookOpen size={18} strokeWidth={1.6} /> },
-    { id: 'library', label: '词库', icon: <LibraryBig size={18} strokeWidth={1.6} /> },
     { id: 'passage', label: '课文学习', icon: <FileText size={18} strokeWidth={1.6} /> },
     { id: 'test', label: '测试', icon: <GraduationCap size={18} strokeWidth={1.6} /> },
     { id: 'dictation', label: '听写', icon: <Keyboard size={18} strokeWidth={1.6} /> },
     { id: 'wordbook', label: '生词本', icon: <BookMarked size={18} strokeWidth={1.6} />, count: starredCount },
     { id: 'errorbook', label: '错词本', icon: <NotebookPen size={18} strokeWidth={1.6} />, count: errorBookCount },
     { id: 'review', label: '复习', icon: <Clock3 size={18} strokeWidth={1.6} />, count: reviewCount },
+    { id: 'library', label: '词库', icon: <LibraryBig size={18} strokeWidth={1.6} /> },
     { id: 'settings', label: '设置', icon: <Settings size={18} strokeWidth={1.6} /> },
   ]
   return (
@@ -363,6 +363,11 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
   const percent = Math.round(mastered / Math.max(unit.words.length, 1) * 100)
   const selectedIndex = selectedWord ? filtered.findIndex((word) => word.id === selectedWord.id) : -1
 
+  const selectWord = (word: Word) => {
+    onSelect(word.id)
+    if (word.term) void speakJapanese(word.term, voiceGender)
+  }
+
   return (
     <div className="page study-page study-design">
       <div className="study-topbar">
@@ -412,7 +417,7 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
           </div>
           {filtered.length ? (
             <div className={`word-grid ${layout === 'list' ? 'word-list' : ''}`}>
-              {filtered.map((word) => <WordCard key={word.id} word={word} active={selectedWord?.id === word.id} onClick={() => onSelect(word.id)} />)}
+              {filtered.map((word) => <WordCard key={word.id} word={word} active={selectedWord?.id === word.id} onClick={() => selectWord(word)} />)}
             </div>
           ) : <EmptyState onImport={onImport} />}
         </section>
@@ -423,15 +428,11 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
             position={selectedIndex >= 0 ? selectedIndex + 1 : 0} total={filtered.length}
             onPrevious={() => {
               if (selectedIndex <= 0) return
-              const previous = filtered[selectedIndex - 1]
-              onSelect(previous.id)
-              void speakJapanese(previous.term, voiceGender)
+              selectWord(filtered[selectedIndex - 1])
             }}
             onNext={() => {
               if (selectedIndex < 0 || selectedIndex >= filtered.length - 1) return
-              const next = filtered[selectedIndex + 1]
-              onSelect(next.id)
-              void speakJapanese(next.term, voiceGender)
+              selectWord(filtered[selectedIndex + 1])
             }}
           /> : <EmptyDetail onImport={onImport} />}
         </aside>
@@ -808,7 +809,6 @@ export function ReviewView({ units, onReview }: { units: Unit[]; onReview: (word
     day,
     count: entries.filter((item) => (item.word.reviewStage ?? 0) === index && Number.isFinite(item.word.nextReviewAt)).length,
     goal: stageGoals[day] || '',
-    primary: day <= 15,
   }))
   const [activeIndex, setActiveIndex] = useState(0)
   const [sessionOpen, setSessionOpen] = useState(false)
@@ -819,24 +819,22 @@ export function ReviewView({ units, onReview }: { units: Unit[]; onReview: (word
         <div>
           <h1>待复习</h1>
           <p className="review-today-line">今日 <b>{due.length}</b> 词待复习</p>
-          <p>根据艾宾浩斯遗忘曲线，合理安排复习计划，巩固日语记忆。</p>
-        </div>
-        <div className="quiz-hero-deco review-hero-deco" aria-hidden>
-          <svg viewBox="0 0 220 120" className="home-torii" fill="none">
-            <circle cx="168" cy="32" r="22" fill="currentColor" opacity=".16" />
-            <path d="M42 48 H178" stroke="currentColor" strokeWidth="5" strokeLinecap="round" opacity=".28" />
-            <path d="M58 48 V92 M162 48 V92" stroke="currentColor" strokeWidth="5" strokeLinecap="round" opacity=".26" />
-            <path d="M18 102 C48 82 72 92 96 78 C118 66 140 84 178 70 C192 64 204 68 214 62" stroke="currentColor" strokeWidth="2.2" opacity=".18" />
-          </svg>
+          <p className="review-hero-desc">根据艾宾浩斯遗忘曲线，合理安排复习计划，巩固日语记忆。</p>
         </div>
       </section>
       <section className="home-card memory-curve-card">
-        <div className="curve-copy"><Target size={18} strokeWidth={1.6} /><div><b>艾宾浩斯间隔重复</b><span>科学安排复习时间，让记忆更牢固。</span></div></div>
-        <div className="curve-steps curve-steps-rich">
-          {stageCounts.map(({ day, count, goal, primary }, index) => (
-            <span key={day} className={primary ? '' : 'curve-stage-soft'}>
+        <div className="curve-copy">
+          <Target size={18} strokeWidth={1.6} />
+          <div>
+            <b>艾宾浩斯间隔重复</b>
+            <span>科学安排复习时间，让记忆更牢固。</span>
+          </div>
+        </div>
+        <div className="curve-steps-rich" role="list">
+          {stageCounts.map(({ day, count, goal }, index) => (
+            <span key={day} role="listitem">
               <i>{day}d</i>
-              <strong>{day}天后复习</strong>
+              <strong>{day}天后 复习</strong>
               <small>{goal}</small>
               <b>{count} 词</b>
               {index < stageCounts.length - 1 && <em className="curve-arrow" aria-hidden>→</em>}
@@ -866,7 +864,11 @@ export function ReviewView({ units, onReview }: { units: Unit[]; onReview: (word
             ))}
           </div>
         ) : (
-          <div className="wide-empty compact"><CheckCircle2 strokeWidth={1.6} /><h2>今天的复习完成了</h2><p>系统会根据下一次到期时间自动把单词放回这里。</p></div>
+          <div className="review-empty">
+            <CheckCircle2 strokeWidth={1.6} />
+            <h2>今天的复习完成了</h2>
+            <p>系统会根据下一次到期时间自动把单词放回这里。</p>
+          </div>
         )}
         {sessionOpen && active && (
           <div className="review-active-card">
