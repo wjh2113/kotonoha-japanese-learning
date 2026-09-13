@@ -1,6 +1,6 @@
 import { useContext, useEffect, useRef, useState, type ClipboardEvent } from 'react'
 import {
-  BookOpen, BookmarkPlus, Bot, CheckCircle2, ChevronLeft, ChevronRight, Circle, Copy, FileText, Headphones, LoaderCircle, Mic, Pause, Play,
+  BookOpen, BookmarkPlus, Bot, CheckCircle2, ChevronLeft, ChevronRight, Circle, Copy, Eye, FileText, Headphones, LoaderCircle, Mic, Pause, Play,
   RefreshCw, Repeat, ScrollText, Sparkles, SquarePen, Trash2, TriangleAlert, UploadCloud, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, readApiJson } from './api'
@@ -19,7 +19,7 @@ import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
 import type { ImportDraft, Passage, PassageBook, PassageSentence, Unit, Word } from './types'
 import { makeFallbackWord, normalizeJapanese, pronunciationScoreFor, splitJapaneseSentences, uid } from './utils'
 
-type Mode = 'source' | 'translation' | 'intensive' | 'shadow'
+type Mode = 'source' | 'intensive' | 'shadow'
 
 function passageTitle(value?: string, fallback = '课文') {
   return String(value || '').trim().slice(0, 80) || fallback
@@ -125,7 +125,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   const [selectedId, setSelectedId] = useState('')
   const [mode, setMode] = useState<Mode>('source')
   const [sentenceIndex, setSentenceIndex] = useState(0)
-  const [showTranslations, setShowTranslations] = useState(false)
+  const [catalogOpen, setCatalogOpen] = useState(true)
   const [raw, setRaw] = useState('')
   const [draftTitle, setDraftTitle] = useState('')
   const [draftBookId, setDraftBookId] = useState('')
@@ -719,7 +719,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       <section className="hub-hero passage-hero-compact">
         <div>
           <h1>课文学习</h1>
-          <p>点选课程目录进入原文；可切换译文、精听与跟读。</p>
+          <p>点选课程目录进入原文；可切换精听与跟读。</p>
         </div>
         <div className="hero-actions">
           <button className="primary-button" disabled={!ready} onClick={() => setUploadOpen(true)}><UploadCloud size={17} strokeWidth={1.6} />添加课文</button>
@@ -729,58 +729,60 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       {notice && <div className="passage-notice">{notice}<button onClick={() => setNotice('')} aria-label="关闭"><X size={14} /></button></div>}
 
       {passages.length ? (
-        <div className="passage-workspace">
-          <aside className="passage-nav-col">
-            <section className="passage-catalog">
-              <header><BookOpen size={15} strokeWidth={1.6} /><b>课程目录</b></header>
-              <input className="passage-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题或原文" />
-              <button type="button" className="passage-book-new" onClick={() => createBook(false)}><BookOpen size={14} strokeWidth={1.6} />新建课本</button>
-              <div className="passage-catalog-scroll">
-                {books.map((book) => {
-                  const items = visiblePassages.filter((item) => item.bookId === book.id)
-                  if (query.trim() && !items.length && !book.name.includes(query.trim())) return null
-                  return (
-                    <div key={book.id} className="passage-book">
-                      <div className="passage-book-head">
-                        <strong>{book.name}</strong>
-                        <span>
-                          <button type="button" onClick={() => renameBook(book)}>改</button>
-                          <button type="button" onClick={() => deleteBook(book)}>删</button>
-                        </span>
+        <div className={`passage-workspace ${catalogOpen ? '' : 'catalog-hidden'}`.trim()}>
+          {catalogOpen && (
+            <aside className="passage-nav-col">
+              <section className="passage-catalog">
+                <header><BookOpen size={15} strokeWidth={1.6} /><b>课程目录</b></header>
+                <input className="passage-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题或原文" />
+                <button type="button" className="passage-book-new" onClick={() => createBook(false)}><BookOpen size={14} strokeWidth={1.6} />新建课本</button>
+                <div className="passage-catalog-scroll">
+                  {books.map((book) => {
+                    const items = visiblePassages.filter((item) => item.bookId === book.id)
+                    if (query.trim() && !items.length && !book.name.includes(query.trim())) return null
+                    return (
+                      <div key={book.id} className="passage-book">
+                        <div className="passage-book-head">
+                          <strong>{book.name}</strong>
+                          <span>
+                            <button type="button" onClick={() => renameBook(book)}>改</button>
+                            <button type="button" onClick={() => deleteBook(book)}>删</button>
+                          </span>
+                        </div>
+                        {items.map(renderPassageButton)}
+                        {!items.length && <small className="passage-list-empty">还没有课文</small>}
                       </div>
-                      {items.map(renderPassageButton)}
-                      {!items.length && <small className="passage-list-empty">还没有课文</small>}
-                    </div>
-                  )
-                })}
-                <div className="passage-book">
-                  <div className="passage-book-head"><strong>未分组</strong></div>
-                  {visiblePassages.filter((item) => !item.bookId).map(renderPassageButton)}
-                </div>
-                {query.trim() && !visiblePassages.length && <small className="passage-list-empty">没有匹配的课文</small>}
-              </div>
-            </section>
-            {passage && (
-              <section className="passage-outline">
-                <header><FileText size={15} strokeWidth={1.6} /><b>课文解析</b></header>
-                <div className="passage-outline-scroll">
-                  {passage.sentences.map((item, index) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`passage-outline-item ${index === sentenceIndex ? 'active' : ''}`}
-                      onClick={() => goSentence(index, true)}
-                    >
-                      <em>{index + 1}</em>
-                      <span className="jp">{item.text}</span>
-                      <ChevronRight size={14} strokeWidth={1.6} />
-                    </button>
-                  ))}
-                  {!passage.sentences.length && <small className="passage-list-empty">暂无句子</small>}
+                    )
+                  })}
+                  <div className="passage-book">
+                    <div className="passage-book-head"><strong>未分组</strong></div>
+                    {visiblePassages.filter((item) => !item.bookId).map(renderPassageButton)}
+                  </div>
+                  {query.trim() && !visiblePassages.length && <small className="passage-list-empty">没有匹配的课文</small>}
                 </div>
               </section>
-            )}
-          </aside>
+              {passage && (
+                <section className="passage-outline">
+                  <header><FileText size={15} strokeWidth={1.6} /><b>课文解析</b></header>
+                  <div className="passage-outline-scroll">
+                    {passage.sentences.map((item, index) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`passage-outline-item ${index === sentenceIndex ? 'active' : ''}`}
+                        onClick={() => goSentence(index, true)}
+                      >
+                        <em>{index + 1}</em>
+                        <span className="jp">{item.text}</span>
+                        <ChevronRight size={14} strokeWidth={1.6} />
+                      </button>
+                    ))}
+                    {!passage.sentences.length && <small className="passage-list-empty">暂无句子</small>}
+                  </div>
+                </section>
+              )}
+            </aside>
+          )}
 
           {passage ? (
             <section className="passage-stage">
@@ -818,18 +820,17 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
               <div className="passage-modes">
                 {([
                   ['source', '原文', BookOpen],
-                  ['translation', '译文', FileText],
                   ['intensive', '精听', Headphones],
                   ['shadow', '跟读', Mic],
                 ] as const).map(([id, label, Icon]) => (
                   <button key={id} type="button" className={mode === id ? 'active' : ''} onClick={() => {
                     setMode(id)
-                    if (id === 'source' || id === 'translation') {
+                    if (id === 'source') {
                       setSourceDraft(passage.sourceText)
                       setSourceEditing(false)
-                      if (id === 'source') { setPlayingFull(false); stopSpeaking() }
+                      setPlayingFull(false)
+                      stopSpeaking()
                     }
-                    if (id === 'translation') setShowTranslations(true)
                   }}><Icon size={14} strokeWidth={1.6} />{label}</button>
                 ))}
                 <button
@@ -840,6 +841,24 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                 >
                   <RefreshCw size={14} strokeWidth={1.6} />重新解析
                 </button>
+                {!catalogOpen && (
+                  <button
+                    type="button"
+                    className="passage-reparse"
+                    onClick={() => setCatalogOpen(true)}
+                  >
+                    <Eye size={14} strokeWidth={1.6} />显示目录
+                  </button>
+                )}
+                {catalogOpen && (
+                  <button
+                    type="button"
+                    className="passage-reparse"
+                    onClick={() => setCatalogOpen(false)}
+                  >
+                    <Eye size={14} strokeWidth={1.6} />隐藏目录
+                  </button>
+                )}
               </div>
 
               <div className="passage-stage-body">
@@ -849,6 +868,8 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                   voiceGender={voiceGender}
                   sentenceIndex={sentenceIndex}
                   playing={playingFull}
+                  catalogOpen={catalogOpen}
+                  onToggleCatalog={() => setCatalogOpen((open) => !open)}
                   onIndex={setSentenceIndex}
                   onPlaying={setPlayingFull}
                   onDictation={(sentenceId, text) => patchPassage(passage.id, {
@@ -909,7 +930,7 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                     </div>
                   </article>
                 </div>
-              ) : mode === 'source' || mode === 'translation' ? (
+              ) : mode === 'source' ? (
                 <article className="passage-reader">
                   <div className="passage-audio-bar">
                     <button
@@ -981,8 +1002,8 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                                   <span className="jp">{item.text}</span>
                                   {item.reading && <small className="jp passage-furi">{item.reading}</small>}
                                 </span>
-                                {(mode === 'translation' || mode === 'source') && hasChineseTranslation(item.translation) && (
-                                  <span className={`passage-bilingual-tr ${mode === 'source' ? '' : ''}`}>{item.translation}</span>
+                                {hasChineseTranslation(item.translation) && (
+                                  <span className="passage-bilingual-tr">{item.translation}</span>
                                 )}
                               </button>
                             </li>

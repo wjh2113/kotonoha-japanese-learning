@@ -1596,6 +1596,9 @@ body { background: var(--cream); color: var(--ink); }
 .passage-workspace {
   display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 14px; align-items: start;
 }
+.passage-workspace.catalog-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
 .passage-nav-col { display: grid; gap: 12px; align-content: start; }
 .passage-catalog, .passage-outline {
   background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 12px;
@@ -1732,6 +1735,7 @@ body { background: var(--cream); color: var(--ink); }
 
 @media (max-width: 1100px) {
   .passage-workspace { grid-template-columns: 220px minmax(0, 1fr); }
+  .passage-workspace.catalog-hidden { grid-template-columns: minmax(0, 1fr); }
   .passage-bilingual-row { grid-template-columns: 28px 1fr; }
   .passage-bilingual-tr { grid-column: 2; }
   .passage-grammar-cards, .intensive-dual { grid-template-columns: 1fr; }

@@ -126,7 +126,7 @@ export function createDatabase(connectionString) {
         listening_wrong, meaning_wrong, listening_correct, meaning_correct,
         wrong_book, dictation_misses, error_reviewed, created_at
         FROM words ORDER BY unit_id, sort_order, created_at, id`),
-      pool.query('SELECT avatar, voice_gender FROM app_settings WHERE id = 1'),
+      pool.query('SELECT avatar, voice_gender, theme, display_name, streak_days, last_study_date FROM app_settings WHERE id = 1'),
     ])
     const wordsByUnit = new Map()
     for (const row of wordResult.rows) {
@@ -145,11 +145,19 @@ export function createDatabase(connectionString) {
       })
       wordsByUnit.set(row.unit_id, words)
     }
+    const theme = settingsResult.rows[0]?.theme
     return {
       units: unitResult.rows.map((unit) => ({ ...unit, words: wordsByUnit.get(unit.id) || [] })),
       settings: settingsResult.rows[0]
-        ? { avatar: settingsResult.rows[0].avatar, voiceGender: settingsResult.rows[0].voice_gender }
-        : { avatar: 'ゆ', voiceGender: 'female' },
+        ? {
+          avatar: settingsResult.rows[0].avatar,
+          voiceGender: settingsResult.rows[0].voice_gender,
+          theme: theme === 'aka' || theme === 'ai' || theme === 'matcha' ? theme : 'matcha',
+          displayName: settingsResult.rows[0].display_name || '小林同学',
+          streakDays: Math.max(0, Number(settingsResult.rows[0].streak_days) || 0),
+          lastStudyDate: String(settingsResult.rows[0].last_study_date || ''),
+        }
+        : { avatar: 'ゆ', voiceGender: 'female', theme: 'matcha', displayName: '小林同学', streakDays: 0, lastStudyDate: '' },
     }
   }
 
@@ -197,10 +205,26 @@ export function createDatabase(connectionString) {
           )
         }
       }
+      const theme = settings.theme === 'aka' || settings.theme === 'ai' ? settings.theme : 'matcha'
       await client.query(
-        `INSERT INTO app_settings (id, avatar, voice_gender, updated_at) VALUES (1, $1, $2, NOW())
-         ON CONFLICT (id) DO UPDATE SET avatar = EXCLUDED.avatar, voice_gender = EXCLUDED.voice_gender, updated_at = NOW()`,
-        [text(settings.avatar, 'ゆ').slice(0, 2), settings.voiceGender === 'male' ? 'male' : 'female'],
+        `INSERT INTO app_settings (id, avatar, voice_gender, theme, display_name, streak_days, last_study_date, updated_at)
+         VALUES (1, $1, $2, $3, $4, $5, $6, NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           avatar = EXCLUDED.avatar,
+           voice_gender = EXCLUDED.voice_gender,
+           theme = EXCLUDED.theme,
+           display_name = EXCLUDED.display_name,
+           streak_days = EXCLUDED.streak_days,
+           last_study_date = EXCLUDED.last_study_date,
+           updated_at = NOW()`,
+        [
+          text(settings.avatar, 'ゆ').slice(0, 2),
+          settings.voiceGender === 'male' ? 'male' : 'female',
+          theme,
+          text(settings.displayName, '小林同学').slice(0, 40) || '小林同学',
+          Math.max(0, Math.min(9999, Number(settings.streakDays) || 0)),
+          text(settings.lastStudyDate).slice(0, 16),
+        ],
       )
       await client.query('COMMIT')
       const state = await getState()

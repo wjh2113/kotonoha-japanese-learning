@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Check, CheckCircle2, ChevronLeft, Eye, FileText, Headphones, Pause, Play, SquarePen, Star } from 'lucide-react'
-import { hasChineseTranslation } from './passage'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
 import type { Passage, PassageSentence, VoiceGender } from './types'
 import { normalizeJapanese } from './utils'
@@ -10,6 +9,8 @@ type Props = {
   voiceGender: VoiceGender
   sentenceIndex: number
   playing: boolean
+  catalogOpen: boolean
+  onToggleCatalog: () => void
   onIndex: (index: number) => void
   onPlaying: (playing: boolean) => void
   onDictation: (sentenceId: string, text: string) => void
@@ -26,10 +27,8 @@ function lineMatch(input: string, sentence: PassageSentence) {
 }
 
 export function PassageIntensive({
-  passage, voiceGender, sentenceIndex, playing, onIndex, onPlaying, onDictation, onBack,
+  passage, voiceGender, sentenceIndex, playing, catalogOpen, onToggleCatalog, onIndex, onPlaying, onDictation, onBack,
 }: Props) {
-  const [showOriginal, setShowOriginal] = useState(true)
-  const [showTranslation, setShowTranslation] = useState(false)
   const [loopPlay, setLoopPlay] = useState(false)
   const [autoNext, setAutoNext] = useState(true)
   const [starredOnly, setStarredOnly] = useState(false)
@@ -131,10 +130,6 @@ export function PassageIntensive({
           <input type="checkbox" checked={loopPlay} onChange={(event) => setLoopPlay(event.target.checked)} />
           循环播放
         </label>
-        <label className="intensive-check">
-          <input type="checkbox" checked={showTranslation} onChange={(event) => setShowTranslation(event.target.checked)} />
-          显示译文
-        </label>
       </div>
 
       <div className="intensive-dual">
@@ -155,10 +150,7 @@ export function PassageIntensive({
                     {playing && active ? <Pause size={14} strokeWidth={1.6} /> : <Play size={14} strokeWidth={1.6} />}
                   </button>
                   <button type="button" className="intensive-line-text" onClick={() => playOne(index)}>
-                    {showOriginal
-                      ? <span className="jp">{item.text}</span>
-                      : <span className="intensive-hidden">原文已隐藏</span>}
-                    {showTranslation && hasChineseTranslation(item.translation) && <small>{item.translation}</small>}
+                    <span className="jp">{item.text}</span>
                   </button>
                   <button
                     type="button"
@@ -219,9 +211,9 @@ export function PassageIntensive({
             <button
               type="button"
               className="primary-button"
-              onClick={() => setShowOriginal((value) => !value)}
+              onClick={onToggleCatalog}
             >
-              <Eye size={15} strokeWidth={1.6} />{showOriginal ? '隐藏原文' : '显示原文'}
+              <Eye size={15} strokeWidth={1.6} />{catalogOpen ? '隐藏目录' : '显示目录'}
             </button>
           </footer>
         </section>
@@ -229,4 +221,3 @@ export function PassageIntensive({
     </div>
   )
 }
-

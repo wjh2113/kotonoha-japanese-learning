@@ -51,8 +51,17 @@ CREATE TABLE IF NOT EXISTS app_settings (
   id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   avatar TEXT NOT NULL DEFAULT 'ゆ',
   voice_gender TEXT NOT NULL DEFAULT 'female' CHECK (voice_gender IN ('female', 'male')),
+  theme TEXT NOT NULL DEFAULT 'matcha' CHECK (theme IN ('matcha', 'aka', 'ai')),
+  display_name TEXT NOT NULL DEFAULT '小林同学',
+  streak_days INTEGER NOT NULL DEFAULT 0,
+  last_study_date TEXT NOT NULL DEFAULT '',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS theme TEXT NOT NULL DEFAULT 'matcha';
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '小林同学';
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS streak_days INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS last_study_date TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS passages (
   id TEXT PRIMARY KEY,
