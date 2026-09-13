@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chunkItems, extractPassageVocab, unusedPassageVocab, isTransientPassage, listPassageBooks, mergeAnalyzedSentences, mergePassageLessons, MAX_PASSAGES, orderPassagesByCatalog, catalogOptionLabel, PASSAGE_ANALYZE_CHUNK, PASSAGE_ANALYZE_CONCURRENCY, passageNeedsAnalysis, passageProgressSummary, parsePassageHandbook, parsePassageTable, recordSentenceScore, recoverInterruptedIngest } from './passage'
+import { chunkItems, extractPassageVocab, unusedPassageVocab, isTransientPassage, listCatalogLessons, listPassageBooks, mergeAnalyzedSentences, mergePassageLessons, MAX_PASSAGES, orderPassagesByCatalog, catalogOptionLabel, chapterOptionLabel, passageLessonKey, PASSAGE_ANALYZE_CHUNK, PASSAGE_ANALYZE_CONCURRENCY, passageNeedsAnalysis, passageProgressSummary, parsePassageHandbook, parsePassageTable, recordSentenceScore, recoverInterruptedIngest } from './passage'
 import type { Passage } from './types'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -163,6 +163,13 @@ describe('passage progress and books', () => {
     expect(ordered.map((item) => item.id)).toEqual(['b', 'c', 'a', 'd'])
     expect(catalogOptionLabel(c)).toContain('第001课')
     expect(mergePassageLessons([], [c])[0]).toEqual({ id: 'l1', bookId: 'b1', name: '第001课' })
+    expect(passageLessonKey(c)).toBe('lesson:l1')
+    expect(chapterOptionLabel(c)).toBe('课文1（1 句）')
+    expect(listCatalogLessons(
+      [{ id: 'b1', name: '册1' }],
+      [{ id: 'l1', bookId: 'b1', name: '第001课' }, { id: 'l2', bookId: 'b1', name: '第002课' }],
+      [a, b, c, d],
+    ).map((item) => item.lessonName)).toEqual(['第001课', '第002课', '未分课时'])
   })
 })
 

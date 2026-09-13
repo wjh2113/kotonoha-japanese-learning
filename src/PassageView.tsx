@@ -7,10 +7,10 @@ import { apiFetch, readApiJson } from './api'
 import { readPassageSource } from './docx'
 import { isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import {
-  catalogOptionLabel, grammarHighlightTerms, hasChineseTranslation, highlightGrammarInText, isTransientPassage,
-  mergePassageBooks, mergePassageLessons, normalizePassageSentence, MAX_PASSAGES, orderPassagesByCatalog,
-  parsePassageHandbook, recordSentenceDictation, recordSentenceScore, recoverInterruptedIngest,
-  sentenceNeedsAnalysis,
+  chapterOptionLabel, grammarHighlightTerms, hasChineseTranslation, highlightGrammarInText, isTransientPassage,
+  listCatalogLessons, mergePassageBooks, mergePassageLessons, normalizePassageSentence, MAX_PASSAGES,
+  orderPassagesByCatalog, passageLessonKey, parsePassageHandbook, recordSentenceDictation, recordSentenceScore,
+  recoverInterruptedIngest, sentenceNeedsAnalysis,
 } from './passage'
 import { PassageIntensive } from './PassageIntensive'
 import { PronunciationPractice } from './PronunciationPractice'
@@ -552,6 +552,9 @@ export function PassageView() {
   }
 
   const orderedPassages = orderPassagesByCatalog(books, lessons, passages)
+  const catalogLessons = listCatalogLessons(books, lessons, passages)
+  const selectedLessonKey = passage ? passageLessonKey(passage) : (catalogLessons[0]?.key || '')
+  const chapterOptions = orderedPassages.filter((item) => passageLessonKey(item) === selectedLessonKey)
   const passageOrderIndex = passage ? orderedPassages.findIndex((item) => item.id === passage.id) : -1
   const nextPassage = passageOrderIndex >= 0 ? orderedPassages[passageOrderIndex + 1] : undefined
   const progressPct = passage?.sentences.length
@@ -587,12 +590,18 @@ export function PassageView() {
     stopSpeaking()
   }
 
+  const selectLesson = (lessonKey: string) => {
+    if (!lessonKey || lessonKey === selectedLessonKey) return
+    const first = orderedPassages.find((item) => passageLessonKey(item) === lessonKey)
+    if (first) selectPassage(first.id)
+  }
+
   return (
     <div className="page hub-page passage-page passage-design">
       <section className="hub-hero passage-hero-compact">
         <div>
           <h1>课文学习</h1>
-          <p>在上方目录选择课文，可切换原文、精听与跟读。</p>
+          <p>先选课时再选章节，可切换原文、精听与跟读。</p>
         </div>
         <div className="hero-actions">
           <button className="primary-button" disabled={!ready} onClick={openUpload}><UploadCloud size={17} strokeWidth={1.6} />添加课文</button>
@@ -606,38 +615,52 @@ export function PassageView() {
           {passage ? (
             <section className="passage-stage">
               <div className="passage-picker">
-                <label className="passage-picker-select">
-                  <BookOpen size={15} strokeWidth={1.6} />
-                  <span>课程目录</span>
-                  <select
-                    value={passage.id}
-                    aria-label="选择课文"
-                    onChange={(event) => selectPassage(event.target.value)}
-                  >
-                    {books.map((book) => {
-                      const bookPassages = orderedPassages.filter((item) => item.bookId === book.id)
-                      if (!bookPassages.length) return null
-                      return (
-                        <optgroup key={book.id} label={book.name}>
-                          {bookPassages.map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {catalogOptionLabel(item)}
-                            </option>
-                          ))}
+                <div className="passage-picker-selects">
+                  <label className="passage-picker-select">
+                    <BookOpen size={15} strokeWidth={1.6} />
+                    <span>课时</span>
+                    <select
+                      value={selectedLessonKey}
+                      aria-label="选择课时"
+                      onChange={(event) => selectLesson(event.target.value)}
+                    >
+                      {books.map((book) => {
+                        const items = catalogLessons.filter((item) => item.bookId === book.id)
+                        if (!items.length) return null
+                        return (
+                          <optgroup key={book.id} label={book.name}>
+                            {items.map((item) => (
+                              <option key={item.key} value={item.key}>{item.lessonName}</option>
+                            ))}
+                          </optgroup>
+                        )
+                      })}
+                      {catalogLessons.some((item) => !item.bookId || !books.some((book) => book.id === item.bookId)) && (
+                        <optgroup label="未分组">
+                          {catalogLessons
+                            .filter((item) => !item.bookId || !books.some((book) => book.id === item.bookId))
+                            .map((item) => (
+                              <option key={item.key} value={item.key}>{item.lessonName}</option>
+                            ))}
                         </optgroup>
-                      )
-                    })}
-                    {passages.some((item) => !item.bookId) && (
-                      <optgroup label="未分组">
-                        {orderedPassages.filter((item) => !item.bookId).map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {catalogOptionLabel(item)}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                  </select>
-                </label>
+                      )}
+                    </select>
+                  </label>
+                  <label className="passage-picker-select">
+                    <span>章节</span>
+                    <select
+                      value={passage.id}
+                      aria-label="选择章节"
+                      onChange={(event) => selectPassage(event.target.value)}
+                    >
+                      {chapterOptions.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {chapterOptionLabel(item)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
                 <div className="passage-picker-actions">
                   <button type="button" onClick={() => createBook(false)}>新建课本</button>
                   {passage.bookId && books.some((book) => book.id === passage.bookId) && (

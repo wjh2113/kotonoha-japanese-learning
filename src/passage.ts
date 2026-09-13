@@ -625,12 +625,92 @@ export function orderPassagesByCatalog(
   return ordered
 }
 
+/** 目录里「课时」选项的稳定 key（有 lessonId 用课时，否则按课本下的未分课时）。 */
+export function passageLessonKey(passage: Passage) {
+  const lessonId = String(passage.lessonId || '').trim()
+  if (lessonId) return `lesson:${lessonId}`
+  return `orphan:${String(passage.bookId || '').trim()}`
+}
+
+export type CatalogLessonOption = {
+  key: string
+  bookId: string
+  bookName: string
+  lessonId: string
+  lessonName: string
+}
+
+/** 课程目录用的课时列表（按课本分组顺序）。 */
+export function listCatalogLessons(
+  books: Array<{ id: string; name: string }>,
+  lessons: Array<{ id: string; bookId: string; name: string }>,
+  passages: Passage[],
+): CatalogLessonOption[] {
+  const options: CatalogLessonOption[] = []
+  const seen = new Set<string>()
+  const bookName = (bookId: string) => books.find((book) => book.id === bookId)?.name
+    || passages.find((item) => item.bookId === bookId)?.bookName
+    || ''
+
+  const push = (option: CatalogLessonOption) => {
+    if (!option.key || seen.has(option.key)) return
+    if (!passages.some((item) => passageLessonKey(item) === option.key)) return
+    seen.add(option.key)
+    options.push(option)
+  }
+
+  for (const book of books) {
+    for (const lesson of lessons.filter((item) => item.bookId === book.id)) {
+      push({
+        key: `lesson:${lesson.id}`,
+        bookId: book.id,
+        bookName: book.name,
+        lessonId: lesson.id,
+        lessonName: lesson.name,
+      })
+    }
+    push({
+      key: `orphan:${book.id}`,
+      bookId: book.id,
+      bookName: book.name,
+      lessonId: '',
+      lessonName: '未分课时',
+    })
+  }
+
+  for (const lesson of lessons.filter((item) => !item.bookId || !books.some((book) => book.id === item.bookId))) {
+    push({
+      key: `lesson:${lesson.id}`,
+      bookId: lesson.bookId,
+      bookName: bookName(lesson.bookId) || '未分组',
+      lessonId: lesson.id,
+      lessonName: lesson.name,
+    })
+  }
+
+  push({
+    key: 'orphan:',
+    bookId: '',
+    bookName: '未分组',
+    lessonId: '',
+    lessonName: '未分课时',
+  })
+
+  return options
+}
+
 export function catalogOptionLabel(passage: Passage) {
   const lesson = String(passage.lessonName || '').trim()
   const title = String(passage.title || '').trim() || '课文'
   const count = passage.sentences?.length || passage.sentenceCount || 0
   const head = lesson ? `${lesson} · ${title}` : title
   return `${head}（${count} 句）`
+}
+
+export function chapterOptionLabel(passage: Passage) {
+  const title = String(passage.title || '').trim() || '课文'
+  const count = passage.sentences?.length || passage.sentenceCount || 0
+  return `${title}（${count} 句）`
 }
 
 export function sentencePractice(passage: Passage, sentence: PassageSentence) {

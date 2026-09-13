@@ -1713,8 +1713,11 @@ body { background: var(--cream); color: var(--ink); }
   margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 14px;
   background: color-mix(in srgb, var(--accent-wash) 55%, white);
 }
+.passage-picker-selects {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0; flex: 1 1 320px;
+}
 .passage-picker-select {
-  display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 240px; color: var(--red-dark); font-weight: 700; font-size: 13px;
+  display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 180px; color: var(--red-dark); font-weight: 700; font-size: 13px;
 }
 .passage-picker-select span { flex: 0 0 auto; }
 .passage-picker-select select {
