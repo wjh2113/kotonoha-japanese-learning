@@ -693,7 +693,7 @@ export function PassageView() {
           {done ? <CheckCircle2 size={14} strokeWidth={1.6} /> : <Circle size={14} strokeWidth={1.6} />}
         </span>
         <span className="passage-item-copy">
-          <strong>{item.title}</strong>
+          <strong title={item.title}>{item.title}</strong>
           <small>
             {item.status === 'processing' ? (item.statusText || '处理中…')
               : item.status === 'error' ? (item.statusText || '处理失败')
