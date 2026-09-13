@@ -1504,6 +1504,59 @@ body { background: var(--cream); color: var(--ink); }
   box-shadow: 0 4px 12px rgba(45, 50, 43, .03);
 }
 .study-design .word-grid { grid-template-columns: repeat(3, minmax(120px, 1fr)); gap: 8px; }
+.study-design .word-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 6px;
+  box-shadow: 0 6px 18px rgba(45, 50, 43, .03);
+}
+.study-design .word-card.word-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 1.1fr) auto minmax(0, 1.4fr) auto auto;
+  align-items: center;
+  gap: 10px 12px;
+  min-height: 56px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  box-shadow: none;
+  background: transparent;
+}
+.study-design .word-card.word-row:hover {
+  transform: none;
+  background: color-mix(in srgb, var(--red) 6%, white);
+  border-color: transparent;
+  box-shadow: none;
+}
+.study-design .word-card.word-row.active {
+  background: var(--accent-wash);
+  border-color: color-mix(in srgb, var(--red) 28%, var(--line));
+  box-shadow: none;
+}
+.study-design .word-row-main { min-width: 0; display: grid; gap: 2px; }
+.study-design .word-card.word-row .word-term {
+  font-size: 18px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.study-design .word-card.word-row .word-reading {
+  margin: 0; font-size: 12px; color: var(--accent-ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.study-design .word-card.word-row .word-pos {
+  margin: 0; padding: 3px 8px; border-radius: 999px;
+  background: var(--accent-wash); color: var(--red-dark); font-size: 11px; font-style: normal; white-space: nowrap;
+}
+.study-design .word-card.word-row .word-meaning {
+  margin: 0; font-size: 13px; color: var(--ink); line-height: 1.35;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.study-design .word-card.word-row .mastery-dots {
+  position: static; display: inline-flex; gap: 3px;
+}
+.study-design .word-row-chevron { color: #b4bbb0; flex: 0 0 auto; }
 .study-design .word-term { font-size: 22px; line-height: 1.2; }
 .study-design .word-reading { font-size: 12px; margin-top: 2px; }
 .study-design .word-pos { margin-top: 4px; padding: 1px 6px; font-size: 9px; }
@@ -1517,19 +1570,27 @@ body { background: var(--cream); color: var(--ink); }
 .study-design .detail-actions { top: 8px; right: 8px; gap: 0; }
 .study-design .detail-actions button { width: 28px; height: 28px; }
 .study-design .detail-main-word { text-align: left; padding: 4px 36px 8px 0; border-bottom: 1px solid var(--line); }
-.study-design .detail-main-word h2 { font-size: 30px; margin: 0 0 2px; line-height: 1.15; }
-.study-design .detail-main-word > span { font-size: 13px; }
-.study-design .romaji {
-  display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 999px;
+.study-design .detail-main-word h2 { font-size: 28px; margin: 0 0 4px; line-height: 1.15; }
+.study-design .detail-reading-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 2px;
+}
+.study-design .detail-reading-row > span.jp { font-size: 13px; color: var(--accent-ink); }
+.study-design .detail-reading-row .romaji {
+  display: inline-block; margin: 0; padding: 2px 8px; border-radius: 999px;
   background: #f0f2ea; color: #7a8170; font-style: normal; font-size: 11px;
 }
+.study-design .detail-reading-row em {
+  font-style: normal; background: var(--accent-wash); color: var(--red-dark);
+  border-radius: 999px; padding: 2px 8px; font-size: 11px;
+}
+.study-design .detail-reading-row .detail-speak { margin-left: 2px; }
 .study-design .detail-meta-row { justify-content: flex-start; margin-top: 6px; gap: 8px; }
 .study-design .detail-meta-row em {
   background: var(--accent-wash); color: var(--red-dark); border-radius: 999px; padding: 2px 8px; font-size: 11px;
 }
 .detail-speak { display: inline-flex; align-items: center; gap: 5px; color: var(--red-dark); font-size: 12px; font-weight: 700; }
 .detail-speak b { font-size: 11px; }
-.detail-speak .volume-button { width: 30px; height: 30px; }
+.detail-speak .volume-button { width: 28px; height: 28px; }
 .meaning-wash {
   margin-top: 4px; padding: 7px 10px; border-radius: 10px; background: var(--accent-wash); color: var(--ink); font-size: 13px;
 }
@@ -1542,11 +1603,19 @@ body { background: var(--cream); color: var(--ink); }
 }
 .study-design .detail-block label svg { width: 13px; height: 13px; }
 .study-design .definition { margin: 4px 0 0; font-size: 13px; line-height: 1.45; }
-.study-design .example-block { padding-right: 34px; }
-.study-design .example-block .example { margin: 4px 0 0; font-size: 14px; line-height: 1.55; }
+.study-design .example-block { padding-right: 0; }
+.study-design .example-line {
+  display: flex; align-items: flex-start; gap: 8px; margin-top: 4px;
+}
+.study-design .example-copy { flex: 1; min-width: 0; }
+.study-design .example-block .example { margin: 0; font-size: 14px; line-height: 1.5; }
 .study-design .example-block .furigana { font-size: 11px; margin-top: 2px; }
-.study-design .example-block .translation { margin: 4px 0 0; font-size: 12px; line-height: 1.4; }
-.study-design .example-block .volume-button { top: 28px; width: 26px; height: 26px; }
+.study-design .example-block .translation {
+  margin: 2px 0 0; font-size: 12px; line-height: 1.4; color: var(--muted);
+}
+.study-design .example-block .volume-button {
+  position: static; flex: 0 0 auto; width: 28px; height: 28px; margin-top: 1px;
+}
 .study-design .detail-related { gap: 8px; margin-top: 0; }
 .study-design .word-chips { gap: 4px; }
 .study-design .word-chips span { padding: 2px 8px; font-size: 12px; }
@@ -2156,6 +2225,11 @@ body { background: var(--cream); color: var(--ink); }
   .passage-nav-col { position: static; }
   .quiz-options-design { grid-template-columns: 1fr !important; }
   .study-design .word-grid { grid-template-columns: 1fr 1fr; }
+  .study-design .word-list { grid-template-columns: 1fr; }
+  .study-design .word-card.word-row {
+    grid-template-columns: minmax(80px, 1fr) auto minmax(0, 1.2fr) auto;
+  }
+  .study-design .word-row-chevron { display: none; }
   .study-design .detail-column { max-height: none; overflow: visible; position: static; }
   .review-design .curve-steps-rich { grid-template-columns: 1fr 1fr; }
   .review-design .curve-steps-rich .curve-arrow { display: none; }

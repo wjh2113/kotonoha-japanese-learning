@@ -353,7 +353,7 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
   onToggleStar: (word: Word) => void; onSearch: (value: string) => void; onTest: () => void; onDictation: () => void
 }) {
   const { voiceGender } = useContext(SettingsContext)
-  const [layout, setLayout] = useState<'grid' | 'list'>('grid')
+  const [layout, setLayout] = useState<'grid' | 'list'>('list')
   const [filter, setFilter] = useState<'all' | 'learning' | 'mastered'>('all')
   const filtered = unit.words.filter((word) => {
     const matches = `${word.term}${word.reading}${word.meaning}`.toLowerCase().includes(search.toLowerCase())
@@ -390,7 +390,7 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
       <section className="study-heading">
         <div>
           <h1><BookOpen size={22} strokeWidth={1.6} />单词学习</h1>
-          <p>选择单词卡片，开始学习和记忆吧！</p>
+          <p>从列表选择单词，右侧查看词卡并跟读。</p>
         </div>
         <div className="study-mastery-meta">
           <span>共 {unit.words.length} 个单词</span>
@@ -417,7 +417,7 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
           </div>
           {filtered.length ? (
             <div className={`word-grid ${layout === 'list' ? 'word-list' : ''}`}>
-              {filtered.map((word) => <WordCard key={word.id} word={word} active={selectedWord?.id === word.id} onClick={() => selectWord(word)} />)}
+              {filtered.map((word) => <WordCard key={word.id} word={word} active={selectedWord?.id === word.id} list={layout === 'list'} onClick={() => selectWord(word)} />)}
             </div>
           ) : <EmptyState onImport={onImport} />}
         </section>
@@ -441,19 +441,43 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
   )
 }
 
-function WordCard({ word, active, onClick }: { word: Word; active: boolean; onClick: () => void }) {
+function WordCard({ word, active, list = false, onClick }: { word: Word; active: boolean; list?: boolean; onClick: () => void }) {
   const dots = masteryDots(word)
+  const pos = word.partOfSpeech.split('・')[0]
   return (
-    <div className={`word-card ${active ? 'active' : ''}`} onClick={onClick} role="button" tabIndex={0} onKeyDown={(event) => {
-      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick() }
-    }}>
-      <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
-        {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
-      </span>
-      <b className="jp word-term">{word.term}</b>
-      <span className="jp word-reading">{word.reading}</span>
-      <em className="word-pos">{word.partOfSpeech.split('・')[0]}</em>
-      <span className="word-meaning">{word.meaning}</span>
+    <div
+      className={`word-card ${list ? 'word-row' : ''} ${active ? 'active' : ''}`}
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick() }
+      }}
+    >
+      {list ? (
+        <>
+          <div className="word-row-main">
+            <b className="jp word-term">{word.term}</b>
+            <span className="jp word-reading">{word.reading}</span>
+          </div>
+          {pos && <em className="word-pos">{pos}</em>}
+          <span className="word-meaning">{word.meaning}</span>
+          <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
+            {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
+          </span>
+          <ChevronRight className="word-row-chevron" size={16} strokeWidth={1.6} aria-hidden />
+        </>
+      ) : (
+        <>
+          <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
+            {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
+          </span>
+          <b className="jp word-term">{word.term}</b>
+          <span className="jp word-reading">{word.reading}</span>
+          <em className="word-pos">{pos}</em>
+          <span className="word-meaning">{word.meaning}</span>
+        </>
+      )}
     </div>
   )
 }
@@ -501,11 +525,11 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
       </div>
       <div className="detail-main-word">
         <h2 className="jp">{word.term}</h2>
-        <span className="jp">{word.reading}</span>
-        {(word.romaji || toRomaji(word.reading)) && <small className="romaji">{word.romaji || toRomaji(word.reading)}</small>}
-        <div className="detail-meta-row">
-          <em>{word.partOfSpeech}</em>
-          <span className="detail-speak"><VolumeButton word={word} /><b>发音</b></span>
+        <div className="detail-reading-row">
+          <span className="jp">{word.reading}</span>
+          {(word.romaji || toRomaji(word.reading)) && <small className="romaji">{word.romaji || toRomaji(word.reading)}</small>}
+          {word.partOfSpeech && <em>{word.partOfSpeech}</em>}
+          <span className="detail-speak"><VolumeButton word={word} small /><b>发音</b></span>
         </div>
       </div>
       {editing ? (
@@ -528,10 +552,23 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
           {(word.example || word.translation) && (
             <div className="detail-block example-block">
               <label><FileText size={14} strokeWidth={1.6} />例句</label>
-              {word.example && <p className="jp example">{word.example}</p>}
-              {word.exampleReading && <p className="jp furigana">{word.exampleReading}</p>}
-              {word.translation && <p className="translation">{word.translation}</p>}
-              {word.example && <VolumeButton word={word} sentence />}
+              <div className="example-line">
+                <div className="example-copy">
+                  {word.example && <p className="jp example">{word.example}</p>}
+                  {word.exampleReading && <p className="jp furigana">{word.exampleReading}</p>}
+                  {word.translation && <p className="translation">{word.translation}</p>}
+                </div>
+                {word.example && <VolumeButton word={word} sentence small />}
+              </div>
+            </div>
+          )}
+          {word.pronunciationNote && (
+            <div className="detail-block"><label><Mic size={14} strokeWidth={1.6} />发音注意事项</label><p className="definition">{word.pronunciationNote}</p></div>
+          )}
+          {word.memoryTip && (
+            <div className="detail-block">
+              <label><SquarePen size={14} strokeWidth={1.6} />记忆技巧</label>
+              <p className="definition">{word.memoryTip}</p>
             </div>
           )}
           {(splitWordList(word.similarWords).length > 0 || splitWordList(word.synonyms).length > 0) && (
@@ -542,15 +579,6 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
               {splitWordList(word.synonyms).length > 0 && (
                 <div className="detail-block"><label><Sparkles size={14} strokeWidth={1.6} />同义词</label><p className="word-chips">{splitWordList(word.synonyms).map((item) => <span key={item} className="jp">{item}</span>)}</p></div>
               )}
-            </div>
-          )}
-          {word.pronunciationNote && (
-            <div className="detail-block"><label><Mic size={14} strokeWidth={1.6} />发音注意事项</label><p className="definition">{word.pronunciationNote}</p></div>
-          )}
-          {word.memoryTip && (
-            <div className="detail-block">
-              <label><SquarePen size={14} strokeWidth={1.6} />记忆技巧</label>
-              <p className="definition">{word.memoryTip}</p>
             </div>
           )}
           <div className="detail-block">
