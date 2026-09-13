@@ -525,13 +525,15 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
       ) : (
         <>
           <div className="detail-block"><label><BookOpen size={14} strokeWidth={1.6} />中文释义</label><p className="definition meaning-wash">{word.meaning}</p></div>
-          <div className="detail-block example-block">
-            <label><FileText size={14} strokeWidth={1.6} />例句</label>
-            <p className="jp example">{word.example}</p>
-            {word.exampleReading && <p className="jp furigana">{word.exampleReading}</p>}
-            {word.translation && <p className="translation">{word.translation}</p>}
-            <VolumeButton word={word} sentence />
-          </div>
+          {(word.example || word.translation) && (
+            <div className="detail-block example-block">
+              <label><FileText size={14} strokeWidth={1.6} />例句</label>
+              {word.example && <p className="jp example">{word.example}</p>}
+              {word.exampleReading && <p className="jp furigana">{word.exampleReading}</p>}
+              {word.translation && <p className="translation">{word.translation}</p>}
+              {word.example && <VolumeButton word={word} sentence />}
+            </div>
+          )}
           {(splitWordList(word.similarWords).length > 0 || splitWordList(word.synonyms).length > 0) && (
             <div className="detail-related">
               {splitWordList(word.similarWords).length > 0 && (
@@ -545,10 +547,12 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
           {word.pronunciationNote && (
             <div className="detail-block"><label><Mic size={14} strokeWidth={1.6} />发音注意事项</label><p className="definition">{word.pronunciationNote}</p></div>
           )}
-          <div className="detail-block">
-            <label><SquarePen size={14} strokeWidth={1.6} />记忆技巧</label>
-            <p className="definition">{word.memoryTip || '暂无记忆技巧，可点右上角编辑补充。'}</p>
-          </div>
+          {word.memoryTip && (
+            <div className="detail-block">
+              <label><SquarePen size={14} strokeWidth={1.6} />记忆技巧</label>
+              <p className="definition">{word.memoryTip}</p>
+            </div>
+          )}
           <div className="detail-block">
             <label><NotebookPen size={14} strokeWidth={1.6} />我的笔记</label>
             <textarea
@@ -563,12 +567,12 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
             />
             <small className="notes-count">{notesDraft.length}/200</small>
           </div>
-          <div className="typing-practice">
-            <label><SquarePen size={14} /> 打字练习</label>
+          <details className="typing-practice">
+            <summary><SquarePen size={14} /> 打字练习</summary>
             <p>输入“{word.meaning}”对应的日语单词或假名</p>
             <div className={typingResult ? `typing-input ${typingResult}` : 'typing-input'}><input value={typing} onChange={(event) => { setTyping(event.target.value); setTypingResult(null) }} onKeyDown={(event) => event.key === 'Enter' && checkTyping()} placeholder="在这里输入…" /><button onClick={checkTyping} disabled={!typing.trim()}>检查</button></div>
             {typingResult && <span className={`typing-feedback ${typingResult}`}>{typingResult === 'correct' ? <><CheckCircle2 size={14} />输入正确</> : <><X size={14} />再试一次，正确答案是 {word.term}（{word.reading}）</>}</span>}
-          </div>
+          </details>
         </>
       )}
       <button className={`pronounce-button ${practiceOpen ? 'open' : ''}`} onClick={() => setPracticeOpen((current) => !current)}><Mic size={18} />{practiceOpen ? '收起发音练习' : '练习这个词的发音'}</button>
