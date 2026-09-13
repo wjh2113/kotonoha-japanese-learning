@@ -29,8 +29,6 @@ function lineMatch(input: string, sentence: PassageSentence) {
 export function PassageIntensive({
   passage, voiceGender, sentenceIndex, playing, catalogOpen, onToggleCatalog, onIndex, onPlaying, onDictation, onBack,
 }: Props) {
-  const [loopPlay, setLoopPlay] = useState(false)
-  const [autoNext, setAutoNext] = useState(true)
   const [starredOnly, setStarredOnly] = useState(false)
   const [starred, setStarred] = useState<Record<string, boolean>>({})
   const [proof, setProof] = useState(false)
@@ -71,24 +69,14 @@ export function PassageIntensive({
       onPlaying(false)
       return
     }
-    if (!autoNext) {
-      playOne(startIndex)
-      return
-    }
     const start = Math.max(0, Math.min(startIndex, passage.sentences.length - 1))
     onPlaying(true)
     onIndex(start)
-    const run = (from: number) => {
-      void speakJapaneseQueue(passage.sentences.slice(from).map((item) => item.text), voiceGender, {
-        sentence: true,
-        onIndex: (offset) => onIndex(from + offset),
-        onAllEnd: () => {
-          if (loopPlay) run(0)
-          else onPlaying(false)
-        },
-      })
-    }
-    run(start)
+    void speakJapaneseQueue(passage.sentences.slice(start).map((item) => item.text), voiceGender, {
+      sentence: true,
+      onIndex: (offset) => onIndex(start + offset),
+      onAllEnd: () => onPlaying(false),
+    })
   }
 
   const saveAll = () => {
@@ -121,14 +109,6 @@ export function PassageIntensive({
         <label className="intensive-check">
           <input type="checkbox" checked={starredOnly} onChange={(event) => setStarredOnly(event.target.checked)} />
           仅显示标记的句子
-        </label>
-        <label className="intensive-check">
-          <input type="checkbox" checked={!autoNext} onChange={(event) => setAutoNext(!event.target.checked)} />
-          当句播完不自动下一句
-        </label>
-        <label className="intensive-check">
-          <input type="checkbox" checked={loopPlay} onChange={(event) => setLoopPlay(event.target.checked)} />
-          循环播放
         </label>
       </div>
 

@@ -632,23 +632,7 @@ export function PassageView() {
     if (!sourceText) { setNotice('原文不能为空。'); return }
     patchPassage(passage.id, { sourceText })
     setSourceEditing(false)
-    setNotice('原文已保存。如需按新原文重新拆句，请点「重新解析」。')
-  }
-
-  const reanalyze = () => {
-    if (!passage) return
-    if (!passage.sentences.length) { setNotice('没有句子可以重新解析。'); return }
-    setSourceEditing(false)
-    // 保留手册导入的原文/翻译/语法，只重新补读音与逐词。
-    patchPassage(passage.id, {
-      sentences: passage.sentences.map((item) => ({ ...item, reading: '', tokens: item.tokens?.length ? [] : item.tokens })),
-      progress: {},
-      status: 'processing',
-      statusText: '正在补全读音与逐词注释…',
-    })
-    setSentenceIndex(0)
-    setMode('source')
-    void fillPassage(passage.id)
+    setNotice('原文已保存。')
   }
 
   const createBook = (assignCurrent = false) => {
@@ -847,14 +831,6 @@ export function PassageView() {
                     }
                   }}><Icon size={14} strokeWidth={1.6} />{label}</button>
                 ))}
-                <button
-                  type="button"
-                  className="passage-reparse"
-                  disabled={passage.status === 'processing' || !(sourceEditing ? sourceDraft : passage.sourceText).trim()}
-                  onClick={reanalyze}
-                >
-                  <RefreshCw size={14} strokeWidth={1.6} />重新解析
-                </button>
                 {!catalogOpen && (
                   <button
                     type="button"
@@ -1053,7 +1029,7 @@ export function PassageView() {
                       </section>
                     </>
                   ) : (
-                    <pre className="jp passage-source">{passage.sourceText || '这篇课文还没有可点选的句子。可以点「编辑原文」补上后重新解析。'}</pre>
+                    <pre className="jp passage-source">{passage.sourceText || '这篇课文还没有可点选的句子。可以点「编辑原文」补上内容。'}</pre>
                   )}
                 </article>
               ) : null}
