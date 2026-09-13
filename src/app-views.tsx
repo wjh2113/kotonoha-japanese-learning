@@ -7,12 +7,12 @@ import {
 } from 'lucide-react'
 import { apiFetch, apiUrl, setAccessToken } from './api'
 import { readVocabularyFile } from './docx'
+import { PronunciationPractice } from './PronunciationPractice'
 import { SettingsContext } from './settings-context'
 import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, ThemeName, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fallbackUnitTheme, isPlaceholderTheme } from './theme'
 import { buildQuizOptions, isPlaceholderMeaning, optionLabel, orderQuizByWeakness, recordQuizAnswer, sharedDistractors, usableQuizWords } from './quiz'
-import { usePronunciationPractice } from './pronunciation-practice'
 import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, masteryDots, parseVocabularyHandbook, proficiencyPercent, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, splitWordList, toRomaji, uid } from './utils'
 
 const THEME_OPTIONS: { id: ThemeName; name: string; desc: string }[] = [
@@ -561,34 +561,21 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
 }
 
 function InlinePronunciationPractice({ word }: { word: Word }) {
-  const [transcript, setTranscript] = useState('')
-  const [score, setScore] = useState<number | null>(null)
-  const practice = usePronunciationPractice((text) => {
-    setTranscript(text)
-    setScore(pronunciationScore(text, word))
-  }, word.id)
-
-  useEffect(() => {
-    setTranscript('')
-    setScore(null)
-  }, [word.id])
-
-  return <div className="inline-practice">
-    <div className="inline-practice-head"><div><span>当前练习</span><b className="jp">{word.term} · {word.reading}</b></div><VolumeButton word={word} /></div>
-    <button
-      className={`inline-record ${practice.recording ? 'recording' : ''}`}
-      disabled={practice.evaluating}
-      onClick={() => {
-        if (practice.recording) practice.stop()
-        else { setScore(null); setTranscript(''); practice.start() }
-      }}
-    >
-      {practice.evaluating ? <span className="spinner" /> : practice.recording ? <Pause size={18} /> : <Mic size={18} />}
-      <span>{practice.evaluating ? '正在分析…' : practice.recording ? '结束录音' : '开始朗读'}</span>
-    </button>
-    {practice.error && <div className="speech-error">{practice.error}</div>}
-    {score !== null && <div className={`inline-score ${score >= 80 ? 'great' : score >= 55 ? 'okay' : 'retry'}`}><b>{score}<small>分</small></b><span>{score >= 80 ? '发音很自然' : score >= 55 ? '已经很接近了' : '请跟读后再试'}<small>识别结果：{transcript}</small></span></div>}
-  </div>
+  return (
+    <PronunciationPractice
+      variant="inline"
+      referenceText={word.term}
+      referenceReading={word.reading}
+      resetKey={word.id}
+      scoreFn={(text) => pronunciationScore(text, word)}
+      header={(
+        <div className="inline-practice-head">
+          <div><span>当前练习</span><b className="jp">{word.term} · {word.reading}</b></div>
+          <VolumeButton word={word} />
+        </div>
+      )}
+    />
+  )
 }
 
 export function AccessGate({ onUnlock }: { onUnlock: () => void }) {

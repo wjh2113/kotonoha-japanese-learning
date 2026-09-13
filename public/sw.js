@@ -1,6 +1,7 @@
 /* 言の葉 KOTONOHA — offline-first service worker.
-   静态资源 cache-first；页面导航 network-first 回退缓存；API GET network-first 并缓存最新数据供离线读取。 */
-const CACHE = 'kotonoha-v1'
+   静态资源 cache-first；页面导航 network-first 回退缓存。
+   /api/state 与 /api/passages 永不缓存，避免离线读到过期词库/课文。 */
+const CACHE = 'kotonoha-v2'
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png']
 
 self.addEventListener('install', (event) => {
@@ -23,6 +24,16 @@ function put(request, response) {
   caches.open(CACHE).then((cache) => cache.put(request, copy)).catch(() => {})
 }
 
+function isLiveApi(pathname) {
+  return pathname === '/api/state'
+    || pathname.startsWith('/api/state/')
+    || pathname === '/api/passages'
+    || pathname.startsWith('/api/passages/')
+    || pathname === '/api/passage-books'
+    || pathname.startsWith('/api/words/')
+    || pathname === '/api/settings'
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event
   if (request.method !== 'GET') return
@@ -39,7 +50,18 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // API：network-first，成功的 GET 缓存起来，离线时回退缓存数据。
+  // 词库/课文/设置：始终走网络，禁止写入 Cache，防止离线读到旧数据。
+  if (isLiveApi(url.pathname)) {
+    event.respondWith(
+      fetch(request).catch(() => new Response(JSON.stringify({ error: '当前离线，词库与课文需联网同步。' }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      })),
+    )
+    return
+  }
+
+  // 其余 API：network-first，成功的 GET 可缓存供离线（如 health）。
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
       fetch(request)

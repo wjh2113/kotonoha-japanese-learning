@@ -110,6 +110,16 @@ run('PostgreSQL persist integration', () => {
     expect(afterDelete.passages.some((item) => item.id === passageId)).toBe(false)
   })
 
+  it('stores passage books in passage_books table', async () => {
+    const bookId = `book-${suffix}`
+    const books = await db.replacePassageBooks([{ id: bookId, name: `课本${suffix}` }])
+    expect(books.some((book) => book.id === bookId && book.name.startsWith('课本'))).toBe(true)
+    const listed = await db.listPassages()
+    expect(listed.books.some((book) => book.id === bookId)).toBe(true)
+    expect(listed.passages.some((item) => item.id === '__kotonoha_books__')).toBe(false)
+    await db.replacePassageBooks(listed.books.filter((book) => book.id !== bookId))
+  })
+
   it('patches settings independently', async () => {
     const before = await db.getState()
     const next = await db.patchSettings({

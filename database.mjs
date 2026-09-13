@@ -108,9 +108,46 @@ export function createDatabase(connectionString) {
   if (!connectionString) throw new Error('DATABASE_URL is required')
   const pool = new Pool({ connectionString, max: 10, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 5_000 })
 
+  const migrateBooksMetaRow = async () => {
+    const meta = await pool.query('SELECT analysis FROM passages WHERE id = $1', [BOOKS_META_ID])
+    if (!meta.rows[0]) return
+    const books = Array.isArray(meta.rows[0].analysis?.books) ? meta.rows[0].analysis.books : []
+    const existing = await pool.query('SELECT COUNT(*)::int AS count FROM passage_books')
+    if ((existing.rows[0]?.count || 0) === 0 && books.length) {
+      for (const [index, book] of books.entries()) {
+        const id = text(book?.id).slice(0, 40)
+        const name = text(book?.name).slice(0, 80)
+        if (!id || !name || id === BOOKS_META_ID) continue
+        await pool.query(
+          `INSERT INTO passage_books (id, name, sort_order)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, sort_order = EXCLUDED.sort_order`,
+          [id, name, index],
+        )
+      }
+    }
+    await pool.query('DELETE FROM passages WHERE id = $1', [BOOKS_META_ID])
+  }
+
   const initialize = async () => {
     const schema = await fs.readFile(path.join(dirname, 'db', 'schema.sql'), 'utf8')
     await pool.query(schema)
+    await migrateBooksMetaRow()
+  }
+
+  const listPassageBooks = async () => {
+    const result = await pool.query('SELECT id, name FROM passage_books ORDER BY sort_order, created_at, id')
+    return result.rows.map((row) => ({ id: row.id, name: row.name }))
+  }
+
+  const writePassageBooks = async (client, books) => {
+    await client.query('DELETE FROM passage_books')
+    for (const [index, book] of books.entries()) {
+      await client.query(
+        'INSERT INTO passage_books (id, name, sort_order) VALUES ($1, $2, $3)',
+        [book.id, book.name, index],
+      )
+    }
   }
 
   const health = async () => {
@@ -365,26 +402,24 @@ export function createDatabase(connectionString) {
   }
 
   const listPassages = async () => {
-    const result = await pool.query('SELECT id, title, source_text, analysis, created_at FROM passages ORDER BY sort_order, created_at, id')
-    const meta = result.rows.find((row) => row.id === BOOKS_META_ID)
-    const books = Array.isArray(meta?.analysis?.books)
-      ? meta.analysis.books
-        .map((book) => ({ id: text(book?.id).slice(0, 40), name: text(book?.name).slice(0, 80) }))
-        .filter((book) => book.id && book.name)
-        .slice(0, 40)
-      : []
-    const passages = result.rows.filter((row) => row.id !== BOOKS_META_ID).map((row) => ({
-      id: row.id,
-      title: row.title,
-      sourceText: row.source_text,
-      sentences: Array.isArray(row.analysis?.sentences) ? row.analysis.sentences : [],
-      bookId: row.analysis?.bookId || '',
-      bookName: row.analysis?.bookName || '',
-      progress: row.analysis?.progress && typeof row.analysis.progress === 'object' ? row.analysis.progress : {},
-      status: row.analysis?.status === 'processing' || row.analysis?.status === 'error' ? row.analysis.status : 'ready',
-      statusText: row.analysis?.statusText || '',
-      createdAt: row.created_at.getTime(),
-    }))
+    const [result, books] = await Promise.all([
+      pool.query('SELECT id, title, source_text, analysis, created_at FROM passages ORDER BY sort_order, created_at, id'),
+      listPassageBooks(),
+    ])
+    const passages = result.rows
+      .filter((row) => row.id !== BOOKS_META_ID)
+      .map((row) => ({
+        id: row.id,
+        title: row.title,
+        sourceText: row.source_text,
+        sentences: Array.isArray(row.analysis?.sentences) ? row.analysis.sentences : [],
+        bookId: row.analysis?.bookId || '',
+        bookName: row.analysis?.bookName || '',
+        progress: row.analysis?.progress && typeof row.analysis.progress === 'object' ? row.analysis.progress : {},
+        status: row.analysis?.status === 'processing' || row.analysis?.status === 'error' ? row.analysis.status : 'ready',
+        statusText: row.analysis?.statusText || '',
+        createdAt: row.created_at.getTime(),
+      }))
     return { passages, books }
   }
 
@@ -406,14 +441,14 @@ export function createDatabase(connectionString) {
     }
   }
 
-  /** Upsert passages + books meta; delete orphans instead of wiping the table. */
+  /** Upsert passages + books table; delete orphans instead of wiping the table. */
   const replacePassages = async (input) => {
     const passages = validatePassages(input)
     const books = normalizePassageBooks(input, passages)
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
-      const keepIds = [BOOKS_META_ID]
+      const keepIds = []
       for (const [index, passage] of passages.entries()) {
         keepIds.push(text(passage.id))
         await client.query(
@@ -428,16 +463,8 @@ export function createDatabase(connectionString) {
             JSON.stringify(passageAnalysisPayload(passage)), index, timestamp(passage.createdAt)],
         )
       }
-      await client.query(
-        `INSERT INTO passages (id, title, source_text, analysis, sort_order, created_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())
-         ON CONFLICT (id) DO UPDATE SET
-           title = EXCLUDED.title,
-           analysis = EXCLUDED.analysis,
-           sort_order = EXCLUDED.sort_order`,
-        [BOOKS_META_ID, '课本分组', '', JSON.stringify({ books, sentences: [] }), passages.length],
-      )
-      await client.query('DELETE FROM passages WHERE NOT (id = ANY($1::text[]))', [keepIds])
+      await writePassageBooks(client, books)
+      await client.query('DELETE FROM passages WHERE id = $1 OR NOT (id = ANY($2::text[]))', [BOOKS_META_ID, keepIds])
       await client.query('COMMIT')
       return listPassages()
     } catch (error) {
@@ -484,13 +511,19 @@ export function createDatabase(connectionString) {
 
   const replacePassageBooks = async (booksInput) => {
     const books = normalizePassageBooks({ books: booksInput }, [])
-    await pool.query(
-      `INSERT INTO passages (id, title, source_text, analysis, sort_order, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
-       ON CONFLICT (id) DO UPDATE SET analysis = EXCLUDED.analysis`,
-      [BOOKS_META_ID, '课本分组', '', JSON.stringify({ books, sentences: [] }), 0],
-    )
-    return (await listPassages()).books
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await writePassageBooks(client, books)
+      await client.query('DELETE FROM passages WHERE id = $1', [BOOKS_META_ID])
+      await client.query('COMMIT')
+      return books
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
   }
 
   const deletePassage = async (id) => {

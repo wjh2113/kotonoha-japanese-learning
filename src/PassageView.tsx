@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import {
   BookOpen, Bot, CheckCircle2, ChevronLeft, ChevronRight, Circle, Copy, Eye, FileText, Headphones, LoaderCircle, Mic, Pause, Play,
-  RefreshCw, Repeat, ScrollText, SquarePen, Trash2, TriangleAlert, UploadCloud, Volume2, X,
+  RefreshCw, Repeat, ScrollText, SquarePen, Trash2, UploadCloud, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, readApiJson } from './api'
 import { readPassageSource } from './docx'
@@ -12,11 +12,11 @@ import {
   recoverInterruptedIngest, sentenceNeedsAnalysis,
 } from './passage'
 import { PassageIntensive } from './PassageIntensive'
-import { usePronunciationPractice } from './pronunciation-practice'
+import { PronunciationPractice } from './PronunciationPractice'
 import { SettingsContext } from './settings-context'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
 import type { Passage, PassageBook, PassageSentence } from './types'
-import { normalizeJapanese, pronunciationScoreFor, uid } from './utils'
+import { uid } from './utils'
 
 type Mode = 'source' | 'intensive' | 'shadow'
 
@@ -831,10 +831,13 @@ export function PassageView() {
                     <h3 className="jp shadow-target">{sentence.text}</h3>
                     {sentence.reading && <p className="jp shadow-reading">{sentence.reading}</p>}
                     {hasChineseTranslation(sentence.translation) && <p className="translation">{sentence.translation}</p>}
-                    <SentencePronunciation
-                      sentence={sentence}
-                      onScore={(score) => patchPassage(passage.id, { progress: recordSentenceScore(passage.progress, sentence.id, score) })}
+                    <PronunciationPractice
+                      variant="shadow"
+                      referenceText={sentence.text}
+                      referenceReading={sentence.reading}
+                      tokens={sentence.tokens}
                       resetKey={`${sentence.id}-${shadowRetry}`}
+                      onScore={(score) => patchPassage(passage.id, { progress: recordSentenceScore(passage.progress, sentence.id, score) })}
                     />
                     <div className="shadow-footer">
                       <button type="button" className="secondary-button" onClick={() => setShadowRetry((n) => n + 1)}>
@@ -1040,101 +1043,4 @@ export function PassageView() {
   )
 }
 
-function SentencePronunciation({ sentence, onScore, compact, resetKey = 0 }: {
-  sentence: PassageSentence
-  onScore?: (score: number) => void
-  compact?: boolean
-  resetKey?: number | string
-}) {
-  const [transcript, setTranscript] = useState('')
-  const [score, setScore] = useState<number | null>(null)
-  const practice = usePronunciationPractice((text) => {
-    const next = pronunciationScoreFor(text, sentence.text, sentence.reading)
-    setTranscript(text)
-    setScore(next)
-    onScore?.(next)
-  }, sentence.id)
 
-  useEffect(() => {
-    setTranscript('')
-    setScore(null)
-  }, [sentence.id, resetKey])
-
-  const recordButton = (
-    <button
-      type="button"
-      className={`inline-record ${compact ? 'compact' : ''} ${practice.recording ? 'recording' : ''}`}
-      disabled={practice.evaluating}
-      onClick={() => {
-        if (practice.recording) practice.stop()
-        else { setScore(null); setTranscript(''); practice.start() }
-      }}
-      aria-label={practice.evaluating ? '正在分析' : practice.recording ? '结束跟读' : '开始跟读'}
-    >
-      {practice.evaluating ? <span className="spinner" /> : practice.recording ? <Pause size={compact ? 15 : 22} strokeWidth={1.6} /> : <Mic size={compact ? 15 : 22} strokeWidth={1.6} />}
-      {!compact && practice.evaluating && <span>正在分析…</span>}
-    </button>
-  )
-
-  if (compact) {
-    return (
-      <div className="inline-practice compact">
-        {recordButton}
-        {practice.error && <div className="speech-error">{practice.error}</div>}
-        {score !== null && (
-          <div className={`inline-score ${score >= 80 ? 'great' : score >= 55 ? 'okay' : 'retry'}`}>
-            <b>{score}<small>分</small></b>
-            <span>{score >= 80 ? '跟读很接近课文' : score >= 55 ? '已经听得出大意了' : '请再慢一点、按课文朗读'}<small>识别结果：{transcript}</small></span>
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <div className="inline-practice shadow-practice">
-      <div className="shadow-mic-wrap">
-        <div className="shadow-wave" aria-hidden>
-          {Array.from({ length: 10 }, (_, i) => <i key={`l${i}`} style={{ height: `${8 + ((i * 7) % 18)}px` }} />)}
-        </div>
-        {recordButton}
-        <div className="shadow-wave" aria-hidden>
-          {Array.from({ length: 10 }, (_, i) => <i key={`r${i}`} style={{ height: `${8 + ((i * 5) % 18)}px` }} />)}
-        </div>
-      </div>
-      <p className="shadow-hint">{practice.recording ? '正在聆听，说完再点结束' : '点击麦克风开始跟读'}</p>
-      {practice.error && <div className="speech-error">{practice.error}</div>}
-      {score !== null && (
-        <>
-          <div className="shadow-metrics">
-            <div><b>{score}</b><small>发音准确度</small></div>
-            <div><b>{Math.min(100, score + 5)}</b><small>流利度</small></div>
-            <div><b>{Math.max(0, score - 5)}</b><small>音调</small></div>
-          </div>
-          <div className="shadow-overall">
-            <span>整体评分</span>
-            <div className="shadow-overall-bar"><i style={{ width: `${score}%` }} /></div>
-            <b>{score} / 100</b>
-          </div>
-          <div className="shadow-tokens">
-            {(sentence.tokens.length ? sentence.tokens : [{ surface: sentence.text, reading: sentence.reading, meaning: '' }]).map((token, index) => {
-              const spoken = normalizeJapanese(transcript)
-              const target = normalizeJapanese(token.surface)
-              const ok = !spoken || !target || spoken.includes(target) || score >= 70
-              return (
-                <article key={`${token.surface}-${index}`} className={ok ? 'ok' : 'warn'}>
-                  <b className="jp">{token.surface}</b>
-                  <span>
-                    {ok
-                      ? <><CheckCircle2 size={14} strokeWidth={1.6} />发音正确</>
-                      : <><TriangleAlert size={14} strokeWidth={1.6} />发音稍有偏差，建议再练</>}
-                  </span>
-                </article>
-              )
-            })}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
