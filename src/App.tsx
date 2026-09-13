@@ -194,6 +194,9 @@ function App() {
     if (persistPaused.current) return
     if (skipNextUnitsPersist.current) {
       skipNextUnitsPersist.current = false
+      // Keep any in-flight debounce timer, but refresh the snapshot so a stale
+      // pre-delete payload cannot resurrect removed words via PUT /api/state.
+      pendingPersist.current = { units, settings }
       return
     }
     pendingPersist.current = { units, settings }
@@ -323,13 +326,16 @@ function App() {
 
   const deleteWord = (word: Word) => {
     const owner = units.find((item) => item.words.some((entry) => entry.id === word.id))
+    const nextUnits = units.map((item) => ({
+      ...item,
+      words: item.words.filter((entry) => entry.id !== word.id),
+    }))
     const remaining = (owner?.words || []).filter((entry) => entry.id !== word.id)
     const nextSelected = selectedId === word.id ? (remaining[0]?.id || '') : selectedId
     skipNextUnitsPersist.current = true
-    setUnits((current) => current.map((item) => ({
-      ...item,
-      words: item.words.filter((entry) => entry.id !== word.id),
-    })))
+    // Pin the post-delete snapshot so any debounced PUT cannot resurrect this word.
+    pendingPersist.current = { units: nextUnits, settings }
+    setUnits(nextUnits)
     if (selectedId === word.id) setSelectedId(nextSelected)
     void (async () => {
       try {
@@ -337,12 +343,13 @@ function App() {
         if (!response.ok) throw new Error('DELETE_WORD_FAILED')
         setToast(`已删除「${word.term}」`)
       } catch {
-        // Roll back optimistic removal if the API rejects.
         if (owner) {
           skipNextUnitsPersist.current = true
-          setUnits((current) => current.map((item) => item.id === owner.id
+          const restored = nextUnits.map((item) => item.id === owner.id
             ? { ...item, words: [...item.words, word] }
-            : item))
+            : item)
+          pendingPersist.current = { units: restored, settings }
+          setUnits(restored)
           if (selectedId === nextSelected && nextSelected !== word.id) setSelectedId(word.id)
         }
         setToast('删除失败，请稍后重试')
