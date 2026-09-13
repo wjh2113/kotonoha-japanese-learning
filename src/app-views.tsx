@@ -855,14 +855,19 @@ export function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit
     setAnswers({})
   }, [unit.id])
   const current = questions[index]
+  // Rebuild options only when the question changes — not when onAnswer mutates
+  // unit.words (listening/meaning stats), which would reshuffle mid-question.
   useEffect(() => {
-    if (!current) return
-    setOptions(buildQuizOptions(current, unit.words, sharedDistractors(), kind || 'meaning'))
-  }, [current, unit.words, kind])
+    if (!current || !kind) return
+    setOptions(buildQuizOptions(current, unit.words, sharedDistractors(), kind))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- unit.words updates on answer must not reshuffle
+  }, [current?.id, kind])
   useEffect(() => {
     if (kind !== 'listening' || !current || answers[current.id]) return
     void speakJapanese(current.term, voiceGender)
-  }, [kind, current, answers, voiceGender])
+    // Speak once per unanswered question; answers/unit updates must not reshuffle audio.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, current?.id, voiceGender])
   const choose = (id: string) => {
     if (!current || !kind || answers[current.id]) return
     setAnswers({ ...answers, [current.id]: id })
