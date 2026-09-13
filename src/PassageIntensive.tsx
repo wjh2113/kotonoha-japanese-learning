@@ -30,6 +30,7 @@ export function PassageIntensive({
   passage, voiceGender, sentenceIndex, playing, onIndex, onPlaying, onDictation, onBack,
 }: Props) {
   const [starredOnly, setStarredOnly] = useState(false)
+  const [showSource, setShowSource] = useState(true)
   const [starred, setStarred] = useState<Record<string, boolean>>({})
   const [proof, setProof] = useState(false)
   const [drafts, setDrafts] = useState<Record<string, string>>(() => {
@@ -138,9 +139,14 @@ export function PassageIntensive({
           <input type="checkbox" checked={starredOnly} onChange={(event) => setStarredOnly(event.target.checked)} />
           仅显示标记的句子
         </label>
+        <label className="intensive-check">
+          <input type="checkbox" checked={showSource} onChange={(event) => setShowSource(event.target.checked)} />
+          显示左侧原文
+        </label>
       </div>
 
-      <div className="intensive-dual">
+      <div className={`intensive-dual ${showSource ? '' : 'source-hidden'}`}>
+        {showSource && (
         <section className="intensive-col">
           <header>
             <b><FileText size={15} strokeWidth={1.6} />逐句原文</b>
@@ -151,8 +157,9 @@ export function PassageIntensive({
               const item = passage.sentences[index]
               if (!item) return null
               const active = index === sentenceIndex
+              const marked = Boolean(starred[item.id])
               return (
-                <div key={item.id} className={`intensive-line ${active ? 'active' : ''} ${playing && active ? 'speaking' : ''}`}>
+                <div key={item.id} className={`intensive-line ${active ? 'active' : ''} ${playing && active ? 'speaking' : ''} ${marked ? 'marked' : ''}`}>
                   <em>{index + 1}</em>
                   <button type="button" className="intensive-line-play" onClick={() => playOne(index)} aria-label="播放这句">
                     {playing && active ? <Pause size={14} strokeWidth={1.6} /> : <Play size={14} strokeWidth={1.6} />}
@@ -162,11 +169,12 @@ export function PassageIntensive({
                   </button>
                   <button
                     type="button"
-                    className={`intensive-star ${starred[item.id] ? 'on' : ''}`}
+                    className={`intensive-star ${marked ? 'on' : ''}`}
                     onClick={() => setStarred((current) => ({ ...current, [item.id]: !current[item.id] }))}
-                    aria-label="标记句子"
+                    aria-label={marked ? '取消标记' : '标记句子'}
+                    title={marked ? '已标记' : '点击标记'}
                   >
-                    <Star size={14} strokeWidth={1.6} />
+                    <Star size={16} strokeWidth={2} fill={marked ? 'currentColor' : 'none'} />
                   </button>
                 </div>
               )
@@ -180,6 +188,7 @@ export function PassageIntensive({
             </button>
           </footer>
         </section>
+        )}
 
         <section className="intensive-col">
           <header>
@@ -195,8 +204,9 @@ export function PassageIntensive({
               const match: MatchKind = proof
                 ? (typed.trim() ? lineMatch(typed, item) : 'empty')
                 : (typed.trim() ? 'filled' : null)
+              const marked = Boolean(starred[item.id])
               return (
-                <div key={item.id} className={`intensive-input-row ${active ? 'active' : ''} ${match || ''}`}>
+                <div key={item.id} className={`intensive-input-row ${active ? 'active' : ''} ${match || ''} ${marked ? 'marked' : ''}`}>
                   <em>{index + 1}</em>
                   <button type="button" className="intensive-line-play" onClick={() => playOne(index)} aria-label="播放这句">
                     <Play size={14} strokeWidth={1.6} />
@@ -223,6 +233,17 @@ export function PassageIntensive({
                       <small className="intensive-answer-hint bad">未填写 · 原文：<span className="jp">{item.text}</span></small>
                     )}
                   </div>
+                  {!showSource && (
+                    <button
+                      type="button"
+                      className={`intensive-star ${marked ? 'on' : ''}`}
+                      onClick={() => setStarred((current) => ({ ...current, [item.id]: !current[item.id] }))}
+                      aria-label={marked ? '取消标记' : '标记句子'}
+                      title={marked ? '已标记' : '点击标记'}
+                    >
+                      <Star size={16} strokeWidth={2} fill={marked ? 'currentColor' : 'none'} />
+                    </button>
+                  )}
                   {match === 'exact' && <CheckCircle2 size={16} strokeWidth={1.6} className="intensive-check-icon" />}
                   {match === 'close' && <Check size={16} strokeWidth={1.6} className="intensive-check-icon soft" />}
                   {(match === 'miss' || match === 'empty') && <X size={16} strokeWidth={1.6} className="intensive-check-icon bad" />}

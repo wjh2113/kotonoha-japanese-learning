@@ -1559,9 +1559,28 @@ body { background: var(--cream); color: var(--ink); }
   margin: 0; font-size: 22px; display: flex; align-items: center; gap: 8px; color: var(--ink);
 }
 .intensive-heading p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
-.intensive-toolbar { display: flex; flex-wrap: wrap; gap: 12px 16px; }
+.intensive-toolbar { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; }
 .intensive-dual {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start;
+}
+.intensive-dual.source-hidden { grid-template-columns: minmax(0, 1fr); }
+.intensive-star {
+  width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid #d5d9cc;
+  background: #f4f6ef; color: #9aa190; cursor: pointer; margin-left: auto;
+  display: inline-grid; place-items: center; flex: 0 0 auto;
+  transition: color .15s ease, background .15s ease, border-color .15s ease, transform .15s ease;
+}
+.intensive-star:hover { color: #d4a017; border-color: #e6c56a; background: #fff8e6; }
+.intensive-star.on {
+  color: #fff; background: #e2a12b; border-color: #e2a12b;
+  box-shadow: 0 2px 8px rgba(226, 161, 43, .35);
+}
+.intensive-line.marked, .intensive-input-row.marked {
+  background: color-mix(in srgb, #fff4d6 70%, transparent);
+}
+.shadow-hint { margin: 10px 0 0; text-align: center; color: var(--muted); font-size: 13px; font-weight: 600; }
+.shadow-analyzing-note {
+  display: block; margin-top: 6px; text-align: center; color: var(--red-dark); font-size: 12px; font-weight: 700;
 }
 .intensive-col {
   background: var(--paper); border: 1px solid var(--line); border-radius: 18px;
@@ -1594,8 +1613,6 @@ body { background: var(--cream); color: var(--ink); }
 }
 .intensive-line-text .jp { font-size: 16px; line-height: 1.7; color: var(--ink); }
 .intensive-line-text small { color: var(--muted); font-size: 13px; }
-.intensive-star { border: 0; background: transparent; color: #c8cbbf; cursor: pointer; margin-left: auto; }
-.intensive-star.on { color: #d4a017; }
 .intensive-input-row { align-items: flex-start; }
 .intensive-input-row input {
   flex: 1; min-height: 42px; border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font-size: 14px; width: 100%; box-sizing: border-box;

@@ -69,7 +69,7 @@ export function PronunciationPractice({
       {variant === 'inline' && (
         <span>{practice.evaluating ? '正在分析…' : practice.recording ? '结束录音' : '开始朗读'}</span>
       )}
-      {variant === 'shadow' && practice.evaluating && <span>正在分析…</span>}
+      {variant === 'shadow' && practice.evaluating && <span>正在解析语音…</span>}
     </button>
   )
 
@@ -108,7 +108,14 @@ export function PronunciationPractice({
             {Array.from({ length: 10 }, (_, i) => <i key={`r${i}`} style={{ height: `${8 + ((i * 5) % 18)}px` }} />)}
           </div>
         </div>
-        <p className="shadow-hint">{practice.recording ? '正在聆听，说完再点结束' : '点击麦克风开始跟读'}</p>
+        <p className="shadow-hint">
+          {practice.evaluating
+            ? '正在解析语音，请稍候…'
+            : practice.recording
+              ? '正在聆听，说完再点结束'
+              : '点击麦克风开始跟读'}
+        </p>
+        {variant === 'shadow' && practice.evaluating && <span className="shadow-analyzing-note">识别中，完成后会给出评分</span>}
         {practice.error && <div className="speech-error">{practice.error}</div>}
         {score !== null && (
           <>
