@@ -123,17 +123,29 @@ app.get('/api/tts', rateLimit(60_000, 90), async (req, res) => {
   const q = String(req.query.q || '').trim().slice(0, 120)
   if (!q) return res.status(400).json({ error: '缺少朗读文本。' })
   if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(q)) return res.status(400).json({ error: '仅支持日语朗读。' })
+  const sources = [
+    `https://fanyi.baidu.com/gettts?lan=jp&text=${encodeURIComponent(q)}&spd=3&source=web`,
+    `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(q)}&le=jap`,
+  ]
   try {
-    const upstream = await fetch(`https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=ja&q=${encodeURIComponent(q)}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; KotonohaTTS/1.0)' },
-    })
-    if (!upstream.ok) return res.status(502).json({ error: '朗读服务暂不可用。' })
-    const buf = Buffer.from(await upstream.arrayBuffer())
-    if (!buf.length) return res.status(502).json({ error: '朗读服务暂不可用。' })
-    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg')
-    res.setHeader('Cache-Control', 'public, max-age=86400')
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.send(buf)
+    for (const url of sources) {
+      try {
+        const upstream = await fetch(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; KotonohaTTS/1.0)' },
+          signal: AbortSignal.timeout(8000),
+        })
+        if (!upstream.ok) continue
+        const buf = Buffer.from(await upstream.arrayBuffer())
+        if (buf.length < 200) continue
+        res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg')
+        res.setHeader('Cache-Control', 'public, max-age=86400')
+        res.setHeader('Access-Control-Allow-Origin', '*')
+        return res.send(buf)
+      } catch {
+        // try next source
+      }
+    }
+    return res.status(502).json({ error: '朗读服务暂不可用。' })
   } catch (error) {
     console.error(error)
     res.status(502).json({ error: '朗读服务暂不可用。' })
