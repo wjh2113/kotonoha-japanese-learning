@@ -55,7 +55,14 @@ export function htmlToPassageText(html: string) {
           .filter((cell) => ['td', 'th'].includes(cell.tagName.toLowerCase()))
           .map((cell) => cleanText(cell.textContent))
           .filter(Boolean)
-        if (cells.length) add(cells.join(' '))
+        if (!cells.length) return
+        // 原文/翻译对照表保留 Tab，便于 parsePassageTable；普通排版表仍用空格拼成一句。
+        const bilingual = cells.length >= 2 && (
+          /^(原文|日文|日语|中文解释|中文|翻译|译文)$/i.test(cells[0])
+          || /^(原文|日文|日语|中文解释|中文|翻译|译文)$/i.test(cells[1])
+          || (/[\u3040-\u30ff]/.test(cells[0]) && !/[\u3040-\u30ff]/.test(cells[1]) && /[\u4e00-\u9fff]/.test(cells[1]))
+        )
+        add(cells.join(bilingual ? '\t' : ' '))
       })
       return
     }
@@ -104,11 +111,11 @@ export async function readPassageSource(file: File) {
   if (extension === 'docx' || file.type.includes('wordprocessingml')) {
     return extractDocxPassage(file)
   }
-  if (['txt', 'text'].includes(extension) || file.type.startsWith('text/')) {
+  if (['txt', 'text', 'md', 'markdown'].includes(extension) || file.type.startsWith('text/') || file.type === 'text/markdown') {
     if (file.size > 1024 * 1024) throw new Error('文本文件请控制在 1MB 以内。')
     return { text: await file.text(), images: [] as Blob[] }
   }
-  throw new Error('课文支持 Word、图片，或直接粘贴正文。')
+  throw new Error('课文支持 Markdown 手册、Word、图片，或直接粘贴正文。')
 }
 
 export async function readVocabularyFile(file: File) {

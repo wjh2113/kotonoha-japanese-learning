@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { extractPassageVocab, unusedPassageVocab, isTransientPassage, listPassageBooks, mergeAnalyzedSentences, passageNeedsAnalysis, passageProgressSummary, parsePassageTable, recordSentenceScore, recoverInterruptedIngest } from './passage'
+import { extractPassageVocab, unusedPassageVocab, isTransientPassage, listPassageBooks, mergeAnalyzedSentences, passageNeedsAnalysis, passageProgressSummary, parsePassageHandbook, parsePassageTable, recordSentenceScore, recoverInterruptedIngest } from './passage'
 import type { Passage } from './types'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 describe('parsePassageTable', () => {
   it('parses 原文/中文解释/语法考点 rows with a header', () => {
@@ -22,6 +24,19 @@ describe('parsePassageTable', () => {
     expect(parsed!.sourceText).toBe('学校で友達に会いました。\nとても嬉しかったです。\n駅へ行きます。')
   })
 
+  it('parses markdown pipe tables', () => {
+    const md = [
+      '| 原文 | 中文解释 |',
+      '| --- | --- |',
+      '| 店員：いらっしゃいませ。 | 店员：欢迎光临。 |',
+    ].join('\n')
+    const parsed = parsePassageTable(md)
+    expect(parsed!.sentences[0]).toMatchObject({
+      text: '店員：いらっしゃいませ。',
+      translation: '店员：欢迎光临。',
+    })
+  })
+
   it('parses without a header positionally', () => {
     const parsed = parsePassageTable('桜が咲きました。\t樱花开了。')
     expect(parsed!.sentences[0]).toMatchObject({ text: '桜が咲きました。', translation: '樱花开了。' })
@@ -33,6 +48,26 @@ describe('parsePassageTable', () => {
 
   it('returns null when no translation column has Chinese', () => {
     expect(parsePassageTable('桜が咲きました。\tsakura ga sakimashita')).toBeNull()
+  })
+})
+
+describe('parsePassageHandbook', () => {
+  it('splits 课文整理 markdown into multiple lessons', () => {
+    const md = readFileSync(resolve(process.cwd(), 'public/templates/课文导入模版.md'), 'utf8')
+    const parsed = parsePassageHandbook(md)
+    expect(parsed).not.toBeNull()
+    expect(parsed!.documentTitle).toMatch(/第009课/)
+    expect(parsed!.lessons).toHaveLength(2)
+    expect(parsed!.lessons[0].title).toMatch(/课文1/)
+    expect(parsed!.lessons[0].sentences.length).toBeGreaterThanOrEqual(5)
+    expect(parsed!.lessons[0].sentences[0]).toMatchObject({
+      text: '店員：いらっしゃいませ。',
+    })
+    expect(parsed!.lessons[0].sentences[0].translation).toMatch(/欢迎光临/)
+    expect(parsed!.lessons[0].learningGoal).toBeTruthy()
+    expect(parsed!.lessons[0].sentences.at(-1)!.grammar.length).toBeGreaterThanOrEqual(1)
+    expect(parsed!.lessons[1].title).toMatch(/课文2/)
+    expect(parsed!.lessons[1].sentences.length).toBeGreaterThanOrEqual(8)
   })
 })
 

@@ -138,18 +138,36 @@ function parseGrammarCell(cell: string): PassageSentence['grammar'] {
     .filter((point) => point.name)
 }
 
+function splitPassageColumns(line: string) {
+  const trimmed = String(line || '').trim()
+  if (!trimmed) return [] as string[]
+  // Markdown table: | 原文 | 中文解释 |
+  if (trimmed.startsWith('|')) {
+    return trimmed
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((col) => col.trim())
+  }
+  return trimmed.split(/\t|,|，/).map((col) => col.trim())
+}
+
+function isMarkdownSeparatorRow(cols: string[]) {
+  return cols.length >= 2 && cols.every((col) => /^:?-{3,}:?$/.test(col.replace(/\s/g, '')))
+}
+
 /**
- * 解析用户整理的课文表格：每行「原文 [TAB/逗号] 中文解释 [语法考点]」，
+ * 解析用户整理的课文表格：每行「原文 [TAB/逗号/|] 中文解释 [语法考点]」，
  * 语法考点也可以单独成行（原文列为空，或以「【语法】」「语法：」开头），跟在每段课文后面。
  * 不是表格（没有任何多列行）时返回 null，走原来的纯文本流程。
  */
 export function parsePassageTable(raw: string): { sourceText: string; sentences: PassageSentence[] } | null {
   const lines = String(raw || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
   if (!lines.length) return null
-  const rows = lines.map((line) => line.split(/\t|,|，/).map((col) => col.trim()))
+  const rows = lines.map(splitPassageColumns).filter((row) => row.length && !isMarkdownSeparatorRow(row))
   let header: { text: number; translation: number; grammar: number } | null = null
   const first = rows[0]
-  if (first.length >= 2) {
+  if (first?.length >= 2) {
     const find = (pattern: RegExp) => first.findIndex((col) => pattern.test(col))
     const text = find(PASSAGE_TABLE_HEADER.text)
     const translation = find(PASSAGE_TABLE_HEADER.translation)
@@ -192,6 +210,161 @@ export function parsePassageTable(raw: string): { sourceText: string; sentences:
   // 至少一句带中文翻译才认可是用户整理的表格，否则回退到纯文本流程。
   if (!sentences.some((sentence) => hasChineseTranslation(sentence.translation))) return null
   return { sourceText: sentences.map((sentence) => sentence.text).join('\n'), sentences }
+}
+
+export type PassageLessonDraft = {
+  title: string
+  learningGoal?: string
+  sourceText: string
+  sentences: PassageSentence[]
+}
+
+export type ParsedPassageImport = {
+  documentTitle: string
+  lessons: PassageLessonDraft[]
+}
+
+function stripMarkdownHeading(line: string) {
+  return String(line || '').replace(/^#{1,6}\s+/, '').replace(/\*+/g, '').trim()
+}
+
+function looksLikePassageHandbook(raw: string) {
+  const text = String(raw || '')
+  if (/^#{1,3}\s*课文\s*\d+/m.test(text) || /^#{1,3}\s*.*会話/m.test(text)) return true
+  if (/【课文整理】/.test(text) && /\|\s*原文\s*\|/.test(text)) return true
+  if (/^#{1,3}\s+/m.test(text) && /\|\s*原文\s*\|/.test(text) && /\|\s*中文解释\s*\|/.test(text)) return true
+  return false
+}
+
+function parseHandbookGrammarBullets(block: string): PassageSentence['grammar'] {
+  const points: PassageSentence['grammar'] = []
+  for (const line of String(block || '').split(/\r?\n/)) {
+    const bullet = line.trim().match(/^[-*・]\s+(.+)$/) || line.trim().match(/^\d+[\.、]\s*(.+)$/)
+    if (!bullet) continue
+    points.push(...parseGrammarCell(bullet[1]))
+  }
+  return points.slice(0, 12)
+}
+
+function parseHandbookLessonBody(title: string, body: string): PassageLessonDraft | null {
+  const lines = String(body || '').replace(/\r\n/g, '\n').split('\n')
+  let learningGoal = ''
+  const tableLines: string[] = []
+  let inTable = false
+  let grammarBlock = ''
+  let inGrammar = false
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    if (!line) continue
+    if (/^#{1,6}\s+/.test(line)) continue
+    if (/^学习目标\s*[：:]/.test(line)) {
+      learningGoal = line.replace(/^学习目标\s*[：:]\s*/, '').trim()
+      inGrammar = false
+      continue
+    }
+    if (/^\*{0,2}语法考点\*{0,2}\s*$/.test(line) || /^#{1,6}\s*语法考点/.test(line)) {
+      inGrammar = true
+      inTable = false
+      continue
+    }
+    if (line.startsWith('|')) {
+      inTable = true
+      inGrammar = false
+      tableLines.push(line)
+      continue
+    }
+    if (inTable && !line.startsWith('|')) inTable = false
+    if (inGrammar) {
+      grammarBlock += `${line}\n`
+      continue
+    }
+  }
+
+  const table = parsePassageTable(tableLines.join('\n'))
+  if (!table?.sentences.length) return null
+  const grammar = parseHandbookGrammarBullets(grammarBlock)
+  if (grammar.length) {
+    const last = table.sentences[table.sentences.length - 1]
+    const seen = new Set(last.grammar.map((point) => point.name))
+    last.grammar = [...last.grammar, ...grammar.filter((point) => !seen.has(point.name))].slice(0, 12)
+  }
+  return {
+    title: title.slice(0, 80) || '课文',
+    learningGoal: learningGoal.slice(0, 200) || undefined,
+    sourceText: table.sourceText,
+    sentences: table.sentences,
+  }
+}
+
+/**
+ * 解析「课文整理」Markdown 手册：
+ * # 标题
+ * ## 课文1：…
+ * 学习目标：…
+ * | 原文 | 中文解释 |
+ * **语法考点**
+ * - …
+ * 一篇文件可含多课，每课拆成独立 Passage。
+ */
+export function parsePassageHandbook(raw: string): ParsedPassageImport | null {
+  const text = String(raw || '').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').trim()
+  if (!text || !looksLikePassageHandbook(text)) return null
+
+  const lines = text.split('\n')
+  let documentTitle = ''
+  const sections: Array<{ title: string; body: string }> = []
+  let current: { title: string; body: string } | null = null
+
+  for (const line of lines) {
+    const heading = line.match(/^(#{1,3})\s+(.+)$/)
+    if (heading) {
+      const level = heading[1].length
+      const title = stripMarkdownHeading(heading[2])
+      if (level === 1 && !documentTitle) {
+        documentTitle = title.replace(/^【课文整理】\s*/, '').trim() || title
+        continue
+      }
+      if (level <= 2) {
+        if (current) sections.push(current)
+        current = { title, body: '' }
+        continue
+      }
+    }
+    if (current) current.body += `${line}\n`
+    else if (!documentTitle && line.trim() && !line.trim().startsWith('|')) {
+      // fall through: preamble without H1
+    }
+  }
+  if (current) sections.push(current)
+
+  const lessons = (sections.length
+    ? sections
+    : [{ title: documentTitle || '课文', body: text }]
+  )
+    .map((section) => parseHandbookLessonBody(section.title, section.body))
+    .filter((item): item is PassageLessonDraft => Boolean(item))
+
+  if (!lessons.length) {
+    // 整篇只有一张表、没有「课文N」二级标题时
+    const fallback = parseHandbookLessonBody(documentTitle || '课文', text)
+    if (!fallback) return null
+    return { documentTitle: documentTitle || fallback.title, lessons: [fallback] }
+  }
+
+  return { documentTitle: documentTitle || lessons[0].title, lessons }
+}
+
+/** 手册 Markdown → 多课；否则单表 TSV；都不是则 null（走纯文本拆句）。 */
+export function parsePassageImport(raw: string): ParsedPassageImport | null {
+  const handbook = parsePassageHandbook(raw)
+  if (handbook?.lessons.length) return handbook
+  const table = parsePassageTable(raw)
+  if (!table) return null
+  return {
+    documentTitle: '',
+    lessons: [{ title: '课文', sourceText: table.sourceText, sentences: table.sentences }],
+  }
 }
 
 export function unusedPassageVocab(passage: Passage, existingTerms: string[]) {

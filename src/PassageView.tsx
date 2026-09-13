@@ -9,7 +9,7 @@ import { extractDocxPassage, htmlToPassageText, readPassageSource } from './docx
 import { PASSAGE_OCR_PLACEHOLDER, isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import {
   chunkItems, extractPassageVocab, hasChineseTranslation, isPrimarilyChineseLine, isTransientPassage, mergeAnalyzedSentences, mergePassageBooks,
-  normalizePassageSentence, passageProgressSummary, parsePassageTable, recordSentenceDictation, recordSentenceScore,
+  normalizePassageSentence, passageProgressSummary, parsePassageImport, recordSentenceDictation, recordSentenceScore,
   recoverInterruptedIngest, sentenceNeedsAnalysis, unusedPassageVocab,
 } from './passage'
 import { PassageIntensive } from './PassageIntensive'
@@ -403,18 +403,46 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
       if (!sourceText || looksLikeErrorDocument(sourceText)) {
         throw new Error(ocrFailures[0] || '没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
       }
-      // 用户整理的表格（原文/中文解释/语法考点）直接用，翻译不再调用大模型。
-      const table = parsePassageTable(sourceText)
-      const sentences = table ? table.sentences : fallbackPassage(sourceText).sentences
+      // 手册 Markdown / 表格（原文/中文解释/语法考点）直接用，翻译不再调用大模型。
+      const imported = parsePassageImport(sourceText)
+      const lesson = imported?.lessons[0]
+      const sentences = lesson ? lesson.sentences : fallbackPassage(sourceText).sentences
       if (!sentences.length) throw new Error('没有识别到可拆分的日语句子，请检查图片是否清晰。')
+      const current = passagesRef.current.find((item) => item.id === passageId)
+      const nextTitle = current && current.title !== '课文'
+        ? current.title
+        : passageTitle(lesson?.title || current?.title)
       // Sync ref before analyze so fillPassage never sees a stale empty stub.
       patchPassage(passageId, {
-        sourceText: table ? table.sourceText : sourceText,
+        title: nextTitle,
+        sourceText: lesson ? lesson.sourceText : sourceText,
         sentences,
         status: 'processing',
-        statusText: table ? '表格内容已导入，正在补全读音…' : `正在生成整句翻译 0/${sentences.length}`,
+        statusText: lesson ? '手册/表格已导入，正在补全读音…' : `正在生成整句翻译 0/${sentences.length}`,
       })
       if (ocrFailures.length) setNotice(`有 ${ocrFailures.length} 张图片识别失败，已用其余内容继续。`)
+      // 图片 OCR 后若识别出多课手册，补建其余课文
+      if (imported && imported.lessons.length > 1) {
+        const book = books.find((item) => item.id === draftBookId)
+        for (const extra of [...imported.lessons.slice(1)].reverse()) {
+          const stub = {
+            id: uid(),
+            title: passageTitle(extra.title),
+            sourceText: extra.sourceText,
+            createdAt: Date.now(),
+            status: 'processing' as const,
+            statusText: '手册内容已导入，正在补全读音…',
+            bookId: book?.id || current?.bookId || '',
+            bookName: book?.name || current?.bookName || '',
+            sentences: extra.sentences,
+          }
+          persistEnabled.current = true
+          commitPassages([stub, ...passagesRef.current.filter((item) => item.id !== stub.id)].slice(0, 50))
+          ingestingIds.current.add(stub.id)
+          void fillPassage(stub.id)
+        }
+        setNotice(`已从手册拆出 ${imported.lessons.length} 篇课文，正在后台补全读音。`)
+      }
       await fillPassage(passageId)
     } catch (reason) {
       if (!ingestingIds.current.has(passageId)) return
@@ -437,6 +465,47 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     }
     const book = books.find((item) => item.id === draftBookId)
     const sourceText = isPassagePlaceholder(text) ? '' : text.trim()
+    // 无图片时：手册可直接拆成多课（带翻译），跳过 OCR
+    if (!images.length && sourceText) {
+      const imported = parsePassageImport(sourceText)
+      if (imported?.lessons.length) {
+        const overrideTitle = String(title || '').trim()
+        // 倒序加入，使「课文1」排在列表最前并被选中
+        const lessons = [...imported.lessons].reverse()
+        let selected = ''
+        for (const [index, lesson] of lessons.entries()) {
+          const isLast = index === lessons.length - 1
+          const stub = {
+            id: uid(),
+            title: passageTitle(overrideTitle && imported.lessons.length === 1 ? overrideTitle : lesson.title),
+            sourceText: lesson.sourceText,
+            createdAt: Date.now(),
+            status: 'processing' as const,
+            statusText: '手册/表格已导入，正在补全读音…',
+            bookId: book?.id || '',
+            bookName: book?.name || '',
+            sentences: lesson.sentences,
+          }
+          persistEnabled.current = true
+          commitPassages([stub, ...passagesRef.current.filter((item) => item.id !== stub.id)].slice(0, 50))
+          selected = stub.id
+          ingestingIds.current.add(stub.id)
+          void fillPassage(stub.id)
+          if (isLast) {
+            setSelectedId(stub.id)
+            setMode('source')
+            setUploadOpen(false)
+            setRaw('')
+            setDraftTitle('')
+          }
+        }
+        if (imported.lessons.length > 1) {
+          setNotice(`已导入 ${imported.lessons.length} 篇课文（${imported.documentTitle || '手册'}），正在后台补全读音。`)
+        }
+        if (selected) setSelectedId(selected)
+        return
+      }
+    }
     const stub = {
       ...fallbackPassage(sourceText),
       title: passageTitle(title),
@@ -607,13 +676,14 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     const sourceText = (sourceEditing ? sourceDraft : passage.sourceText).trim()
     if (!sourceText || looksLikeErrorDocument(sourceText)) { setNotice('没有原文可以重新解析。'); return }
     setSourceEditing(false)
-    const table = parsePassageTable(sourceText)
+    const imported = parsePassageImport(sourceText)
+    const lesson = imported?.lessons[0]
     patchPassage(passage.id, {
-      sourceText: table ? table.sourceText : sourceText,
-      sentences: table ? table.sentences : fallbackPassage(sourceText).sentences,
+      sourceText: lesson ? lesson.sourceText : sourceText,
+      sentences: lesson ? lesson.sentences : fallbackPassage(sourceText).sentences,
       progress: {},
       status: 'processing',
-      statusText: table ? '表格内容已导入，正在补全读音…' : '正在按原文重新翻译…',
+      statusText: lesson ? '手册/表格已导入，正在补全读音…' : '正在按原文重新翻译…',
     })
     setSentenceIndex(0)
     setMode('source')
@@ -1085,9 +1155,15 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
             <span className="modal-icon"><FileText /></span>
             <span className="eyebrow">PASSAGE IMPORT</span>
             <h2>添加课文</h2>
-            <p>粘贴后会马上出现在课文库，翻译在后台完成，不用盯着弹窗等。</p>
+            <p>推荐上传「课文整理」Markdown 手册；也可粘贴正文、Word，或拍教材照片。翻译已整理好的表格不再调 AI。</p>
+            <div className="import-template-row">
+              <a className="secondary-button import-template-link" href="/templates/课文导入模版.md" download="课文导入模版.md">
+                下载导入模版
+              </a>
+              <small>与「课文整理」同结构：多课标题 + 原文/中文表 + 语法考点</small>
+            </div>
             <label className="passage-add-title">课文标题
-              <input value={draftTitle} maxLength={80} onChange={(event) => setDraftTitle(event.target.value)} placeholder="例如：第一课 自己紹介（可不填，由 AI 归纳）" disabled={Boolean(busy)} />
+              <input value={draftTitle} maxLength={80} onChange={(event) => setDraftTitle(event.target.value)} placeholder="例如：第一课 自己紹介（可不填；手册会按「课文N」自动拆篇）" disabled={Boolean(busy)} />
             </label>
             <label className="passage-add-title">课本/分组
               <span className="passage-book-row">
@@ -1103,10 +1179,10 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => { event.preventDefault(); if (!busy) void readUpload(event.dataTransfer.files[0]) }}
             >
-              <input type="file" accept="image/jpeg,image/png,image/webp,image/*,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.txt,text/plain" hidden disabled={Boolean(busy)} onChange={(event) => { void readUpload(event.target.files?.[0]); event.target.value = '' }} />
+              <input type="file" accept="image/jpeg,image/png,image/webp,image/*,.docx,.md,.markdown,.txt,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden disabled={Boolean(busy)} onChange={(event) => { void readUpload(event.target.files?.[0]); event.target.value = '' }} />
               {busy ? <span className="spinner dark" /> : <UploadCloud />}
               <b>{busy || '拖入、点击或直接粘贴'}</b>
-              <span>支持截图 Ctrl+V、Word / JPG / PNG；Word 内嵌图片也会识别</span>
+              <span>支持 .md 手册、截图 Ctrl+V、Word / JPG / PNG</span>
             </label>
             <div className="or"><span />或粘贴课文<span /></div>
             <textarea
@@ -1114,10 +1190,10 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
               value={raw}
               onChange={(event) => setRaw(event.target.value)}
               onPaste={(event) => { void pasteClipboard(event, false) }}
-              placeholder={'在这里粘贴日语课文，例如：昨日、学校で日本語を勉強しました。\n\n也支持表格（从 Excel 直接复制）：\n原文\t中文解释\t语法考点\n桜が咲きました。\t樱花开了。\t〜が：提示主语\n【语法】〜たい：表示愿望（语法行跟在每段后面）'}
+              placeholder={'推荐粘贴「课文整理」Markdown，例如：\n## 课文1：电器店问路\n| 原文 | 中文解释 |\n| --- | --- |\n| 店員：いらっしゃいませ。 | 店员：欢迎光临。 |\n\n也支持 Excel 复制的 TSV：\n原文\t中文解释\t语法考点'}
               disabled={Boolean(busy)}
             />
-            <small className="format-hint"><FileText size={14} />表格导入时，你提供的翻译和语法考点直接使用、不再调用 AI；只有缺失的读音/逐词注释会自动补全。</small>
+            <small className="format-hint"><FileText size={14} />手册/表格里的翻译与语法考点直接使用；仅补全缺失的读音与逐词注释。</small>
             <button className="primary-button modal-submit" disabled={Boolean(busy) || ingesting.current || !raw.trim()} onClick={() => {
               if (ingesting.current || !raw.trim()) return
               ingesting.current = true
