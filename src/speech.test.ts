@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@capacitor/core', () => ({
+  Capacitor: {
+    isNativePlatform: () => false,
+  },
+}))
+
+vi.mock('./api', () => ({
+  apiUrl: (path: string) => path,
+}))
+
 type FakeVoice = { lang: string; name: string; voiceURI: string }
 
 function installSpeechMock(voices: FakeVoice[] = [{ lang: 'ja-JP', name: 'Kyoko', voiceURI: 'kyoko' }]) {
@@ -14,7 +24,8 @@ function installSpeechMock(voices: FakeVoice[] = [{ lang: 'ja-JP', name: 'Kyoko'
       speechSynthesis.speaking = true
       queueMicrotask(() => {
         speechSynthesis.speaking = false
-        utterance.onend?.(new Event('end') as SpeechSynthesisEvent)
+        utterance.onstart?.(new Event('start') as SpeechSynthesisEvent)
+        queueMicrotask(() => utterance.onend?.(new Event('end') as SpeechSynthesisEvent))
       })
     }),
     cancel: vi.fn(() => {
@@ -30,6 +41,24 @@ function installSpeechMock(voices: FakeVoice[] = [{ lang: 'ja-JP', name: 'Kyoko'
       speechSynthesis,
       setTimeout: globalThis.setTimeout.bind(globalThis),
       clearTimeout: globalThis.clearTimeout.bind(globalThis),
+      matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+      Audio: class {
+        preload = ''
+        currentTime = 0
+        paused = true
+        volume = 1
+        onended: (() => void) | null = null
+        onerror: (() => void) | null = null
+        src = ''
+        play() {
+          this.paused = false
+          queueMicrotask(() => this.onended?.())
+          return Promise.resolve()
+        }
+        pause() { this.paused = true }
+        load() {}
+        removeAttribute() {}
+      },
     },
     configurable: true,
   })
@@ -65,7 +94,6 @@ describe('speakJapanese mobile gesture safety', () => {
 
   it('calls speechSynthesis.speak before awaiting voice loading', async () => {
     const { speechSynthesis, spoken } = installSpeechMock([])
-    // Empty getVoices initially — old bug awaited voiceschanged and broke gesture.
     speechSynthesis.getVoices.mockImplementation(() => [])
     speechSynthesis.addEventListener.mockImplementation((event: string, handler: () => void) => {
       if (event === 'voiceschanged') {

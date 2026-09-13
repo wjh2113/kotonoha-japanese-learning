@@ -386,7 +386,11 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
   const selectWord = (word: Word) => {
     onSelect(word.id)
     if (word.term) void speakJapanese(word.term, voiceGender)
-    if (practiceOnly) setSheetOpen(true)
+  }
+
+  const openWordSheet = (word: Word) => {
+    onSelect(word.id)
+    setSheetOpen(true)
   }
 
   return (
@@ -411,7 +415,7 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
       <section className="study-heading">
         <div>
           <h1><BookOpen size={22} strokeWidth={1.6} />单词学习</h1>
-          <p>从列表选择单词，右侧查看词卡并跟读。</p>
+          <p>{practiceOnly ? '点单词朗读；点右侧箭头查看词卡。' : '从列表选择单词，右侧查看词卡并跟读。'}</p>
         </div>
         <div className="study-mastery-meta">
           <span>共 {unit.words.length} 个单词</span>
@@ -446,6 +450,7 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
                   active={selectedWord?.id === word.id}
                   list={layout === 'list'}
                   onClick={() => selectWord(word)}
+                  onOpenDetail={practiceOnly ? () => openWordSheet(word) : undefined}
                   onToggleStar={() => onToggleStar(word)}
                   onDelete={practiceOnly ? undefined : () => setPendingDelete(word)}
                 />
@@ -497,8 +502,10 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
   )
 }
 
-function WordCard({ word, active, list = false, onClick, onDelete, onToggleStar }: {
-  word: Word; active: boolean; list?: boolean; onClick: () => void; onDelete?: () => void
+function WordCard({ word, active, list = false, onClick, onOpenDetail, onDelete, onToggleStar }: {
+  word: Word; active: boolean; list?: boolean; onClick: () => void
+  onOpenDetail?: () => void
+  onDelete?: () => void
   onToggleStar?: () => void
 }) {
   const dots = masteryDots(word)
@@ -546,7 +553,19 @@ function WordCard({ word, active, list = false, onClick, onDelete, onToggleStar 
               <Trash2 size={15} strokeWidth={1.7} />
             </button>
           )}
-          <ChevronRight className="word-row-chevron" size={16} strokeWidth={1.6} aria-hidden />
+          {onOpenDetail ? (
+            <button
+              type="button"
+              className="word-row-open"
+              aria-label={`查看 ${word.term}`}
+              title="查看词卡"
+              onClick={(event) => { event.stopPropagation(); onOpenDetail() }}
+            >
+              <ChevronRight size={18} strokeWidth={1.8} />
+            </button>
+          ) : (
+            <ChevronRight className="word-row-chevron" size={16} strokeWidth={1.6} aria-hidden />
+          )}
         </>
       ) : (
         <>
@@ -573,6 +592,17 @@ function WordCard({ word, active, list = false, onClick, onDelete, onToggleStar 
               onClick={(event) => { event.stopPropagation(); onDelete() }}
             >
               <Trash2 size={14} strokeWidth={1.7} />
+            </button>
+          )}
+          {onOpenDetail && (
+            <button
+              type="button"
+              className="word-card-open"
+              aria-label={`查看 ${word.term}`}
+              title="查看词卡"
+              onClick={(event) => { event.stopPropagation(); onOpenDetail() }}
+            >
+              <ChevronRight size={16} strokeWidth={1.8} />
             </button>
           )}
           <b className="jp word-term">{word.term}</b>

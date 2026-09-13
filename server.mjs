@@ -118,6 +118,28 @@ app.get('/api/health', async (_req, res) => {
   }
 })
 
+/** Public Japanese TTS audio (rate-limited). Used by mobile/WebView where speechSynthesis is silent. */
+app.get('/api/tts', rateLimit(60_000, 90), async (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 120)
+  if (!q) return res.status(400).json({ error: '缺少朗读文本。' })
+  if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(q)) return res.status(400).json({ error: '仅支持日语朗读。' })
+  try {
+    const upstream = await fetch(`https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=ja&q=${encodeURIComponent(q)}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; KotonohaTTS/1.0)' },
+    })
+    if (!upstream.ok) return res.status(502).json({ error: '朗读服务暂不可用。' })
+    const buf = Buffer.from(await upstream.arrayBuffer())
+    if (!buf.length) return res.status(502).json({ error: '朗读服务暂不可用。' })
+    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg')
+    res.setHeader('Cache-Control', 'public, max-age=86400')
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.send(buf)
+  } catch (error) {
+    console.error(error)
+    res.status(502).json({ error: '朗读服务暂不可用。' })
+  }
+})
+
 app.get('/api/auth/check', (req, res) => {
   if (!accessPassword) return res.json({ ok: true, required: false })
   const token = readBearer(req)
@@ -135,7 +157,7 @@ app.post('/api/auth/login', rateLimit(60_000, 8), (req, res) => {
 
 app.use('/api', (req, res, next) => {
   if (!accessPassword) return next()
-  if (req.path === '/health' || req.path === '/auth/check' || req.path === '/auth/login') return next()
+  if (req.path === '/health' || req.path === '/auth/check' || req.path === '/auth/login' || req.path === '/tts') return next()
   const token = readBearer(req)
   if (!token || !accessTokenValid(token)) {
     return res.status(401).json({ error: 'unauthorized', message: '请先输入访问密码' })
