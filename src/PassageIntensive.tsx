@@ -15,9 +15,9 @@ type Props = {
   onBack: () => void
 }
 
-type MatchKind = 'exact' | 'close' | 'miss' | 'empty' | null
+type MatchKind = 'exact' | 'close' | 'miss' | 'empty' | 'filled' | null
 
-function lineMatch(input: string, sentence: PassageSentence): Exclude<MatchKind, 'empty' | null> | null {
+function lineMatch(input: string, sentence: PassageSentence): 'exact' | 'close' | 'miss' | null {
   const typed = normalizeJapanese(input)
   if (!typed) return null
   const targets = [sentence.text, sentence.reading].map(normalizeJapanese).filter(Boolean)
