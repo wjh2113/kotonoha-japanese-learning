@@ -105,6 +105,8 @@ export type Passage = {
   title: string
   sourceText: string
   sentences: PassageSentence[]
+  /** Present on light list payloads when sentences are omitted. */
+  sentenceCount?: number
   createdAt: number
   bookId?: string
   bookName?: string

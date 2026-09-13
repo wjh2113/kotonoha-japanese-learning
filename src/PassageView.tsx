@@ -41,11 +41,14 @@ function hydrateProgress(value: unknown) {
 
 function hydratePassage(item: unknown): Passage | null {
   if (!item || typeof item !== 'object') return null
-  const record = item as Partial<Passage> & { sentences?: unknown[] }
+  const record = item as Partial<Passage> & { sentences?: unknown[]; sentenceCount?: number }
   const id = String(record.id || '').trim()
   if (!id) return null
   const sentences = Array.isArray(record.sentences) ? record.sentences : []
   const status = record.status === 'processing' || record.status === 'error' ? record.status : 'ready'
+  const sentenceCount = Number.isFinite(Number(record.sentenceCount))
+    ? Math.max(0, Number(record.sentenceCount))
+    : undefined
   return recoverInterruptedIngest({
     id,
     title: passageTitle(record.title),
@@ -56,6 +59,7 @@ function hydratePassage(item: unknown): Passage | null {
     progress: hydrateProgress(record.progress),
     status,
     statusText: String(record.statusText || ''),
+    ...(sentenceCount !== undefined ? { sentenceCount } : {}),
     sentences: sentences.map((sentence) => {
       const next = normalizePassageSentence(sentence, uid())
       return { ...next, id: next.id || uid() }
@@ -92,14 +96,30 @@ export function PassageView() {
   const deletedIds = useRef(new Set<string>())
   const ingesting = useRef(false)
   const analyzing = useRef(new Set<string>())
+  const analyzeControllers = useRef(new Map<string, AbortController[]>())
   const ingestingIds = useRef(new Set<string>())
   const resumed = useRef(false)
+  const detailLoading = useRef(new Set<string>())
   const passagesRef = useRef<Passage[]>([])
   const booksRef = useRef<PassageBook[]>([])
   const fillPassageRef = useRef<(id: string) => Promise<void>>(async () => undefined)
   const activeSentenceRef = useRef<HTMLLIElement | null>(null)
 
-  useEffect(() => () => stopSpeaking(), [])
+  const abortAnalyzeForPassage = (passageId: string) => {
+    const list = analyzeControllers.current.get(passageId)
+    if (!list?.length) return
+    for (const controller of list) controller.abort()
+    analyzeControllers.current.delete(passageId)
+  }
+
+  useEffect(() => () => {
+    stopSpeaking()
+    for (const list of analyzeControllers.current.values()) {
+      for (const controller of list) controller.abort()
+    }
+    analyzeControllers.current.clear()
+    analyzing.current.clear()
+  }, [])
 
   // Only follow the active line when the index changes — not on every render.
   // An inline callback ref would re-fire scrollIntoView after any state update and fight the wheel.
@@ -203,7 +223,10 @@ export function PassageView() {
     analyzing.current.add(passageId)
     try {
       const current = passagesRef.current.find((item) => item.id === passageId)
-      if (!current) return
+      if (!current) {
+        abortAnalyzeForPassage(passageId)
+        return
+      }
       if (isTransientPassage(current) || current.sentences.some((sentence) => isPassagePlaceholder(sentence.text))) {
         // Still being built by processIngest — wait for the next call with real source text.
         if (ingestingIds.current.has(passageId)) return
@@ -261,12 +284,18 @@ export function PassageView() {
       let chunkErrors = 0
       const chunks = chunkItems(work)
       for (let offset = 0; offset < chunks.length; offset += PASSAGE_ANALYZE_CONCURRENCY) {
-        if (!passagesRef.current.some((item) => item.id === passageId)) return
+        if (!analyzing.current.has(passageId) || !passagesRef.current.some((item) => item.id === passageId)) {
+          abortAnalyzeForPassage(passageId)
+          return
+        }
         const batch = chunks.slice(offset, offset + PASSAGE_ANALYZE_CONCURRENCY)
         patchPassage(passageId, { status: 'processing', statusText: progressLabel(finished) })
         const results = await Promise.all(batch.map(async (chunk) => {
           try {
             const controller = new AbortController()
+            const registered = analyzeControllers.current.get(passageId) || []
+            registered.push(controller)
+            analyzeControllers.current.set(passageId, registered)
             const timeout = window.setTimeout(() => controller.abort(), 100_000)
             try {
               const response = await apiFetch('/api/passage/analyze', {
@@ -280,14 +309,30 @@ export function PassageView() {
               return { ok: true as const, data, size: chunk.length }
             } finally {
               window.clearTimeout(timeout)
+              const list = analyzeControllers.current.get(passageId)
+              if (list) {
+                const next = list.filter((item) => item !== controller)
+                if (next.length) analyzeControllers.current.set(passageId, next)
+                else analyzeControllers.current.delete(passageId)
+              }
             }
           } catch (reason) {
-            console.error('passage analyze chunk failed:', reason)
-            return { ok: false as const, size: chunk.length }
+            const aborted = Boolean(reason && typeof reason === 'object' && 'name' in reason && (reason as { name?: string }).name === 'AbortError')
+            if (!aborted) console.error('passage analyze chunk failed:', reason)
+            return { ok: false as const, size: chunk.length, ...(aborted ? { aborted: true as const } : {}) }
           }
         }))
+        if (results.some((result) => 'aborted' in result && result.aborted)) {
+          if (!passagesRef.current.some((item) => item.id === passageId)) {
+            abortAnalyzeForPassage(passageId)
+            return
+          }
+        }
         let latest = passagesRef.current.find((item) => item.id === passageId)
-        if (!latest) return
+        if (!latest) {
+          abortAnalyzeForPassage(passageId)
+          return
+        }
         let sentences = latest.sentences
         let analyzedTitle = ''
         for (const result of results) {
@@ -307,7 +352,10 @@ export function PassageView() {
         })
       }
       const latest = passagesRef.current.find((item) => item.id === passageId)
-      if (!latest) return
+      if (!latest) {
+        abortAnalyzeForPassage(passageId)
+        return
+      }
       const missing = latest.sentences.filter((sentence) => !hasChineseTranslation(sentence.translation)).length
       patchPassage(passageId, {
         status: missing ? 'error' : 'ready',
@@ -360,6 +408,46 @@ export function PassageView() {
     })
     return () => { cancelled = true }
   }, [])
+
+  // Lazy-load full passage detail when the selected item only has a light list payload.
+  useEffect(() => {
+    if (!ready || !selectedId) return
+    const current = passagesRef.current.find((item) => item.id === selectedId)
+    if (!current) return
+    const status = current.status === 'processing' || current.status === 'error' ? current.status : 'ready'
+    const needsDetail = (!current.sentences || current.sentences.length === 0)
+      && (status === 'ready' || status === 'processing')
+      && !ingestingIds.current.has(current.id)
+      && !isTransientPassage(current)
+    if (!needsDetail) return
+    if (detailLoading.current.has(selectedId)) return
+    detailLoading.current.add(selectedId)
+    let cancelled = false
+    void (async () => {
+      try {
+        const response = await apiFetch(`/api/passages/${encodeURIComponent(selectedId)}`)
+        const data = await readApiJson<{ passage?: unknown; error?: string }>(response)
+        if (cancelled || !response.ok) return
+        const full = hydratePassage(data.passage)
+        if (!full || cancelled) return
+        commitPassages(passagesRef.current.map((item) => item.id === full.id ? {
+          ...item,
+          ...full,
+          // Keep any in-flight local progress if newer upserts are pending.
+          progress: dirtyUpserts.current.has(full.id) || dirtyProgress.current.has(full.id)
+            ? item.progress
+            : full.progress,
+        } : item))
+        if (full.sentences.some((sentence) => sentence.text && !isPassagePlaceholder(sentence.text) && sentenceNeedsAnalysis(sentence))) {
+          await fillPassageRef.current(full.id)
+        }
+      } catch { /* keep light row */ }
+      finally {
+        detailLoading.current.delete(selectedId)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [ready, selectedId])
 
   useEffect(() => {
     if (!ready || resumed.current) return
@@ -604,7 +692,7 @@ export function PassageView() {
           <small>
             {item.status === 'processing' ? (item.statusText || '处理中…')
               : item.status === 'error' ? (item.statusText || '处理失败')
-                : `${item.sentences.length} 句${progress.practiced ? ` · 已跟读 ${progress.practiced}/${progress.total}` : ''}`}
+                : `${item.sentences.length || item.sentenceCount || 0} 句${progress.practiced ? ` · 已跟读 ${progress.practiced}/${progress.total || item.sentenceCount || item.sentences.length}` : ''}`}
           </small>
         </span>
         <ChevronRight size={14} strokeWidth={1.6} className="passage-item-arrow" />

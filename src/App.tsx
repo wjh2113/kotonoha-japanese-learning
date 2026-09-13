@@ -8,9 +8,7 @@ import type { AppSettings, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fallbackUnitTheme, isPlaceholderTheme } from './theme'
 import { isPlaceholderMeaning, recordQuizAnswer } from './quiz'
 import {
-  AccessGate, AppHeader, ConfirmDeleteUnitModal, DesktopTopBar, ImportModal,
-  LibraryView, MobileTabBar, MobileTopBar, NewUnitModal, ReviewView, SettingsView, StudyView,
-  TestView, WordbookView,
+  AccessGate, AppHeader, DesktopTopBar, MobileTabBar, MobileTopBar,
 } from './app-views'
 import { getReviewState, scheduleReview, touchStudyStreak, uid } from './utils'
 import type { DictationMode } from './DictationView'
@@ -18,6 +16,15 @@ import type { DictationMode } from './DictationView'
 const PassageView = lazy(() => import('./PassageView').then((module) => ({ default: module.PassageView })))
 const DictationView = lazy(() => import('./DictationView').then((module) => ({ default: module.DictationView })))
 const ErrorBookView = lazy(() => import('./ErrorBookView').then((module) => ({ default: module.ErrorBookView })))
+const LibraryView = lazy(() => import('./app-views').then((module) => ({ default: module.LibraryView })))
+const StudyView = lazy(() => import('./app-views').then((module) => ({ default: module.StudyView })))
+const TestView = lazy(() => import('./app-views').then((module) => ({ default: module.TestView })))
+const WordbookView = lazy(() => import('./app-views').then((module) => ({ default: module.WordbookView })))
+const ReviewView = lazy(() => import('./app-views').then((module) => ({ default: module.ReviewView })))
+const SettingsView = lazy(() => import('./app-views').then((module) => ({ default: module.SettingsView })))
+const ImportModal = lazy(() => import('./app-views').then((module) => ({ default: module.ImportModal })))
+const NewUnitModal = lazy(() => import('./app-views').then((module) => ({ default: module.NewUnitModal })))
+const ConfirmDeleteUnitModal = lazy(() => import('./app-views').then((module) => ({ default: module.ConfirmDeleteUnitModal })))
 
 const STORAGE_KEY = 'kotonoha-units-v1'
 const SETTINGS_KEY = 'kotonoha-settings-v1'
@@ -131,9 +138,15 @@ function App() {
               const response = await apiFetch('/api/enrich-missing', { method: 'POST' })
               const data = await response.json()
               if (cancelled) return
-              if (Array.isArray(data.units) && data.units.length) setUnits(data.units)
-              if (data.settings) {
-                setSettings((current) => normalizeSettings({ ...data.settings, theme: current.theme || data.settings.theme }))
+              if (Array.isArray(data.words) && data.words.length) {
+                const byId = new Map((data.words as Word[]).map((word) => [word.id, word]))
+                setUnits((current) => current.map((unit) => ({
+                  ...unit,
+                  words: unit.words.map((word) => {
+                    const updated = byId.get(word.id)
+                    return updated ? { ...word, ...updated } : word
+                  }),
+                })))
               }
               if (!response.ok) break
               if (!data.remaining) break
@@ -209,7 +222,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ settings }),
       }).catch(() => undefined)
-    }, 250)
+    }, 2000)
     return () => window.clearTimeout(timer)
   }, [settings, databaseReady, auth])
 
@@ -260,7 +273,16 @@ function App() {
   const missingMeanings = units.reduce((sum, item) => sum + item.words.filter((word) => isPlaceholderMeaning(word.meaning)).length, 0)
 
   const bumpStreak = () => {
-    setSettings((current) => ({ ...current, ...touchStudyStreak(current) }))
+    setSettings((current) => {
+      const next = touchStudyStreak(current)
+      if (
+        (next.streakDays || 0) === (current.streakDays || 0)
+        && (next.lastStudyDate || '') === (current.lastStudyDate || '')
+      ) {
+        return current
+      }
+      return { ...current, ...next }
+    })
   }
 
   const updateWord = (wordId: string, changes: Partial<Word>, targetUnitId = unitId) => {
@@ -287,12 +309,31 @@ function App() {
 
   const addUnit = (name: string) => {
     const newUnit: Unit = { id: uid(), name, description: DEFAULT_UNIT_THEME, color: COLORS[units.length % COLORS.length], words: [] }
-    setUnits((current) => [...current, newUnit])
-    setUnitId(newUnit.id)
-    setImportUnitId(newUnit.id)
-    setNewUnitOpen(false)
-    setImportOpen(true)
-    setToast('单元已创建，请上传词汇')
+    void (async () => {
+      try {
+        const response = await apiFetch('/api/units', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: newUnit.id,
+            name: newUnit.name,
+            description: newUnit.description,
+            color: newUnit.color,
+            sortOrder: units.length,
+          }),
+        })
+        if (!response.ok) throw new Error('CREATE_UNIT_FAILED')
+        skipNextUnitsPersist.current = true
+        setUnits((current) => [...current, newUnit])
+        setUnitId(newUnit.id)
+        setImportUnitId(newUnit.id)
+        setNewUnitOpen(false)
+        setImportOpen(true)
+        setToast('单元已创建，请上传词汇')
+      } catch {
+        setToast('创建单元失败，请稍后重试')
+      }
+    })()
   }
 
   const requestDeleteUnit = (target: Unit) => {
@@ -309,13 +350,23 @@ function App() {
       setPendingDeleteUnit(null)
       return
     }
-    const remaining = units.filter((item) => item.id !== target.id)
-    const nextId = remaining[0]?.id || ''
-    setUnits(remaining)
-    if (unitId === target.id) setUnitId(nextId)
-    if (importUnitId === target.id) setImportUnitId(nextId)
-    setPendingDeleteUnit(null)
-    setToast(`已删除单元「${target.name}」及其中 ${target.words.length} 个单词`)
+    void (async () => {
+      try {
+        const response = await apiFetch(`/api/units/${encodeURIComponent(target.id)}`, { method: 'DELETE' })
+        if (!response.ok) throw new Error('DELETE_UNIT_FAILED')
+        const remaining = units.filter((item) => item.id !== target.id)
+        const nextId = remaining[0]?.id || ''
+        skipNextUnitsPersist.current = true
+        setUnits(remaining)
+        if (unitId === target.id) setUnitId(nextId)
+        if (importUnitId === target.id) setImportUnitId(nextId)
+        setPendingDeleteUnit(null)
+        setToast(`已删除单元「${target.name}」及其中 ${target.words.length} 个单词`)
+      } catch {
+        setToast('删除单元失败，请稍后重试')
+        setPendingDeleteUnit(null)
+      }
+    })()
   }
 
   const nav = (next: View) => {
@@ -340,16 +391,34 @@ function App() {
 
   const addImportedWords = (targetUnit: Unit, words: Word[], description?: string) => {
     const nextDescription = description?.trim()
-    setUnits((current) => current.map((item) => item.id === targetUnit.id ? {
-      ...item,
-      description: nextDescription || item.description,
-      words: [...item.words, ...words],
-    } : item))
-    if (nextDescription) themeRequested.current.add(targetUnit.id)
-    else themeRequested.current.delete(targetUnit.id)
-    if (words[0]) setSelectedId(words[0].id)
-    setImportOpen(false)
-    setToast(`已导入 ${words.length} 个单词到「${targetUnit.name}」`)
+    void (async () => {
+      try {
+        const response = await apiFetch(`/api/units/${encodeURIComponent(targetUnit.id)}/words`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ words, ...(nextDescription ? { description: nextDescription } : {}) }),
+        })
+        if (!response.ok) throw new Error('APPEND_WORDS_FAILED')
+        const data = await response.json() as { words?: Word[]; droppedCount?: number }
+        const saved = Array.isArray(data.words) ? data.words : words
+        skipNextUnitsPersist.current = true
+        setUnits((current) => current.map((item) => item.id === targetUnit.id ? {
+          ...item,
+          description: nextDescription || item.description,
+          words: [...item.words, ...saved],
+        } : item))
+        if (nextDescription) themeRequested.current.add(targetUnit.id)
+        else themeRequested.current.delete(targetUnit.id)
+        if (saved[0]) setSelectedId(saved[0].id)
+        setImportOpen(false)
+        const dropped = Number(data.droppedCount) || 0
+        setToast(dropped > 0
+          ? `已导入 ${saved.length} 个单词到「${targetUnit.name}」（跳过 ${dropped} 个）`
+          : `已导入 ${saved.length} 个单词到「${targetUnit.name}」`)
+      } catch {
+        setToast('导入单词失败，请稍后重试')
+      }
+    })()
   }
 
   const renameUnit = (targetId: string, name: string) => {
@@ -358,8 +427,21 @@ function App() {
       setToast('单元名称不能为空')
       return
     }
-    setUnits((current) => current.map((item) => item.id === targetId ? { ...item, name: next } : item))
-    setToast(`单元已重命名为「${next}」`)
+    void (async () => {
+      try {
+        const response = await apiFetch(`/api/units/${encodeURIComponent(targetId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: next }),
+        })
+        if (!response.ok) throw new Error('RENAME_UNIT_FAILED')
+        skipNextUnitsPersist.current = true
+        setUnits((current) => current.map((item) => item.id === targetId ? { ...item, name: next } : item))
+        setToast(`单元已重命名为「${next}」`)
+      } catch {
+        setToast('重命名失败，请稍后重试')
+      }
+    })()
   }
 
   const openImport = (targetUnitId = unitId) => {
@@ -461,9 +543,11 @@ function App() {
       </div>
       <MobileTabBar view={view} reviewCount={reviewCount} onView={nav} />
 
-      {importOpen && importUnit && <ImportModal unit={importUnit} onClose={() => setImportOpen(false)} onImported={(words, description) => addImportedWords(importUnit, words, description)} />}
-      {newUnitOpen && <NewUnitModal onClose={() => setNewUnitOpen(false)} onCreate={addUnit} />}
-      {pendingDeleteUnit && <ConfirmDeleteUnitModal unit={pendingDeleteUnit} onlyUnit={units.length <= 1} onClose={() => setPendingDeleteUnit(null)} onConfirm={() => deleteUnit(pendingDeleteUnit)} />}
+      <Suspense fallback={null}>
+        {importOpen && importUnit && <ImportModal unit={importUnit} onClose={() => setImportOpen(false)} onImported={(words, description) => addImportedWords(importUnit, words, description)} />}
+        {newUnitOpen && <NewUnitModal onClose={() => setNewUnitOpen(false)} onCreate={addUnit} />}
+        {pendingDeleteUnit && <ConfirmDeleteUnitModal unit={pendingDeleteUnit} onlyUnit={units.length <= 1} onClose={() => setPendingDeleteUnit(null)} onConfirm={() => deleteUnit(pendingDeleteUnit)} />}
+      </Suspense>
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
       {mobileNav && <button className="mobile-overlay" onClick={() => setMobileNav(false)} aria-label="关闭菜单" />}
     </div>

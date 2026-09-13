@@ -41,8 +41,23 @@ function safeEqualStr(left, right) {
   return crypto.timingSafeEqual(sha256buf(left), sha256buf(right))
 }
 
-function accessToken() {
-  return crypto.createHmac('sha256', accessPassword).update('kotonoha-access-v1').digest('hex')
+const ACCESS_TOKEN_TTL_SEC = 7 * 24 * 3600
+
+function issueAccessToken() {
+  const expiresAt = Math.floor(Date.now() / 1000) + ACCESS_TOKEN_TTL_SEC
+  const hmac = crypto.createHmac('sha256', accessPassword).update(`kotonoha-access-v2:${expiresAt}`).digest('hex')
+  return `${expiresAt}.${hmac}`
+}
+
+function accessTokenValid(token) {
+  if (!token || typeof token !== 'string') return false
+  const dot = token.indexOf('.')
+  if (dot <= 0) return false
+  const expiresAt = Number(token.slice(0, dot))
+  const sig = token.slice(dot + 1)
+  if (!Number.isFinite(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000) || !sig) return false
+  const expected = crypto.createHmac('sha256', accessPassword).update(`kotonoha-access-v2:${expiresAt}`).digest('hex')
+  return safeEqualStr(sig, expected)
 }
 
 function readBearer(req) {
@@ -54,16 +69,26 @@ function readBearer(req) {
 
 function rateLimit(windowMs, max) {
   const hits = new Map()
+  let requestCount = 0
   return (req, res, next) => {
     const ip = req.ip || req.socket.remoteAddress || 'unknown'
     const key = `${req.path}:${ip}`
     const now = Date.now()
-    const recent = (hits.get(key) || []).filter((time) => now - time < windowMs)
+    requestCount += 1
+    let recent = (hits.get(key) || []).filter((time) => now - time < windowMs)
+    if (!recent.length) hits.delete(key)
     if (recent.length >= max) {
       return res.status(429).json({ error: '请求过于频繁，请稍后再试。' })
     }
     recent.push(now)
     hits.set(key, recent)
+    if (requestCount % 100 === 0) {
+      for (const [entryKey, times] of hits) {
+        const kept = times.filter((time) => now - time < windowMs)
+        if (!kept.length) hits.delete(entryKey)
+        else hits.set(entryKey, kept)
+      }
+    }
     next()
   }
 }
@@ -87,7 +112,7 @@ app.get('/api/health', async (_req, res) => {
 app.get('/api/auth/check', (req, res) => {
   if (!accessPassword) return res.json({ ok: true, required: false })
   const token = readBearer(req)
-  res.json({ ok: Boolean(token && safeEqualStr(token, accessToken())), required: true })
+  res.json({ ok: Boolean(token && accessTokenValid(token)), required: true })
 })
 
 app.post('/api/auth/login', rateLimit(60_000, 8), (req, res) => {
@@ -96,14 +121,14 @@ app.post('/api/auth/login', rateLimit(60_000, 8), (req, res) => {
   if (!password || !safeEqualStr(password, accessPassword)) {
     return res.status(401).json({ error: 'invalid_password', message: '密码错误' })
   }
-  res.json({ ok: true, token: accessToken(), required: true })
+  res.json({ ok: true, token: issueAccessToken(), required: true })
 })
 
 app.use('/api', (req, res, next) => {
   if (!accessPassword) return next()
   if (req.path === '/health' || req.path === '/auth/check' || req.path === '/auth/login') return next()
   const token = readBearer(req)
-  if (!token || !safeEqualStr(token, accessToken())) {
+  if (!token || !accessTokenValid(token)) {
     return res.status(401).json({ error: 'unauthorized', message: '请先输入访问密码' })
   }
   next()
@@ -145,6 +170,67 @@ app.patch('/api/words/:id', async (req, res) => {
     if (error.message === 'WORD_NOT_FOUND') return res.status(404).json({ error: '单词不存在。' })
     if (error.message === 'INVALID_WORD') return res.status(400).json({ error: '单词数据无效。' })
     res.status(500).json({ error: '单词保存失败。' })
+  }
+})
+
+app.post('/api/units', async (req, res) => {
+  try {
+    const body = req.body || {}
+    const unit = await database.createUnit({
+      id: body.id,
+      name: body.name,
+      description: body.description,
+      color: body.color,
+      sortOrder: body.sortOrder,
+    })
+    res.json({ unit })
+  } catch (error) {
+    console.error(error)
+    res.status(error.message === 'INVALID_UNIT' ? 400 : 500).json({ error: '创建单元失败。' })
+  }
+})
+
+app.patch('/api/units/:id', async (req, res) => {
+  try {
+    const unit = await database.patchUnit(req.params.id, req.body || {})
+    res.json({ unit })
+  } catch (error) {
+    console.error(error)
+    if (error.message === 'UNIT_NOT_FOUND') return res.status(404).json({ error: '单元不存在。' })
+    res.status(error.message === 'INVALID_UNIT' ? 400 : 500).json({ error: '更新单元失败。' })
+  }
+})
+
+app.delete('/api/units/:id', async (req, res) => {
+  try {
+    res.json(await database.deleteUnit(req.params.id))
+  } catch (error) {
+    console.error(error)
+    if (error.message === 'LAST_UNIT') return res.status(400).json({ error: '至少需要保留一个单元。' })
+    if (error.message === 'UNIT_NOT_FOUND') return res.status(404).json({ error: '单元不存在。' })
+    res.status(error.message === 'INVALID_UNIT' ? 400 : 500).json({ error: '删除单元失败。' })
+  }
+})
+
+app.post('/api/units/:id/words', async (req, res) => {
+  try {
+    const body = req.body || {}
+    const description = typeof body.description === 'string' ? body.description.trim() : undefined
+    if (description !== undefined) {
+      await database.patchUnit(req.params.id, { description })
+    }
+    const result = await database.appendWords(req.params.id, Array.isArray(body.words) ? body.words : [])
+    res.json({
+      words: result.words,
+      droppedCount: result.droppedCount,
+      dropped: result.dropped,
+      ...(description !== undefined ? { description } : {}),
+    })
+  } catch (error) {
+    console.error(error)
+    if (error.message === 'UNIT_NOT_FOUND') return res.status(404).json({ error: '单元不存在。' })
+    if (error.message === 'INVALID_UNIT') return res.status(400).json({ error: '单元无效。' })
+    res.status(500).json({ error: '导入单词失败。' })
   }
 })
 
@@ -340,7 +426,7 @@ async function rewriteIncompleteRow(row) {
     return null
   }
   const meaning = String(lex.meaning || row.meaning || '').trim()
-  await database.updateWordLexicon(row.id, {
+  const word = await database.updateWordLexicon(row.id, {
     term: lex.term,
     reading: lex.reading || row.reading,
     meaning: isPlaceholderMeaning(meaning) ? '待补充释义' : meaning,
@@ -349,22 +435,28 @@ async function rewriteIncompleteRow(row) {
     exampleReading: '',
     translation: `学习“${lex.term}”这个词。`,
   })
-  return { ...row, term: lex.term, reading: lex.reading || row.reading, meaning: isPlaceholderMeaning(meaning) ? '' : meaning }
+  return {
+    ...row,
+    term: lex.term,
+    reading: lex.reading || row.reading,
+    meaning: isPlaceholderMeaning(meaning) ? '' : meaning,
+    word,
+  }
 }
 
 async function persistEnrichedRow(row, extra, fallback) {
   const term = String(extra.term || fallback.term || row.term).trim()
   if (!looksLikeVocabularyTerm(term)) {
     await database.deleteWord(row.id)
-    return true
+    return { filled: true, word: null }
   }
   if (await database.unitHasTerm(row.unitId, term, row.id)) {
     await database.deleteWord(row.id)
-    return true
+    return { filled: true, word: null }
   }
   const meaning = String(extra.meaning || fallback.meaning || '').trim()
-  if (isPlaceholderMeaning(meaning)) return false
-  await database.updateWordLexicon(row.id, {
+  if (isPlaceholderMeaning(meaning)) return { filled: false, word: null }
+  const word = await database.updateWordLexicon(row.id, {
     term,
     reading: extra.reading || fallback.reading || row.reading,
     meaning,
@@ -373,27 +465,31 @@ async function persistEnrichedRow(row, extra, fallback) {
     exampleReading: extra.exampleReading,
     translation: extra.translation || `学习“${term}”这个词。`,
   })
-  return true
+  return { filled: true, word }
 }
 
 async function enrichRowsWithModel(rows, unitName) {
   const payload = rows.map((row) => ({ term: row.term, reading: row.reading || undefined }))
   const { parsed } = await enrichWordsWithModel(payload, unitName)
   let filled = 0
+  const words = []
   for (const [index, row] of rows.entries()) {
     const extra = parsed.words[index] || {}
-    if (await persistEnrichedRow(row, extra, extractUploadedLexeme(row.term, row.reading))) filled += 1
+    const result = await persistEnrichedRow(row, extra, extractUploadedLexeme(row.term, row.reading))
+    if (result.filled) filled += 1
+    if (result.word) words.push(result.word)
   }
-  return filled
+  return { filled, words }
 }
 
 async function enrichIncompleteBatch() {
   backfillRunning = true
   try {
     const rows = (await database.listIncompleteWords(40)).filter((row) => !skippedIncompleteIds.has(row.id))
-    if (!rows.length) return { filled: 0, remaining: await database.countIncompleteWords() }
+    if (!rows.length) return { filled: 0, remaining: await database.countIncompleteWords(), words: [] }
     const chunk = rows.filter((row) => row.unitId === rows[0].unitId).slice(0, 8)
     let filled = 0
+    const updatedById = new Map()
     const pending = []
     for (const row of chunk) {
       const rewritten = await rewriteIncompleteRow(row)
@@ -401,6 +497,7 @@ async function enrichIncompleteBatch() {
         filled += 1
         continue
       }
+      if (rewritten.word) updatedById.set(rewritten.word.id, rewritten.word)
       if (rewritten.meaning && !isPlaceholderMeaning(rewritten.meaning)) {
         filled += 1
         continue
@@ -409,14 +506,16 @@ async function enrichIncompleteBatch() {
     }
     if (pending.length) {
       try {
-        filled += await enrichRowsWithModel(pending, chunk[0].unitName)
+        const modelResult = await enrichRowsWithModel(pending, chunk[0].unitName)
+        filled += modelResult.filled
+        for (const word of modelResult.words) updatedById.set(word.id, word)
       } catch (error) {
         // One failed batch must not explode into N single-word calls (token storm).
         console.error('Incomplete-word backfill batch failed; deferring chunk:', error.message || error)
         for (const row of pending) skippedIncompleteIds.add(row.id)
       }
     }
-    return { filled, remaining: await database.countIncompleteWords() }
+    return { filled, remaining: await database.countIncompleteWords(), words: [...updatedById.values()] }
   } finally {
     backfillRunning = false
   }
@@ -458,12 +557,15 @@ app.post('/api/enrich-missing', rateLimit(60_000, 8), async (_req, res) => {
   try {
     const remainingBefore = await database.countIncompleteWords()
     if (!remainingBefore) {
-      const state = await database.getState()
-      return res.json({ filled: 0, remaining: 0, running: false, units: state.units, settings: state.settings })
+      return res.json({ filled: 0, remaining: 0, running: false, words: [] })
     }
     const result = await enqueueIncompleteBatch()
-    const state = await database.getState()
-    res.json({ ...result, running: backfillRunning, units: state.units, settings: state.settings })
+    res.json({
+      filled: result.filled,
+      remaining: result.remaining,
+      running: backfillRunning,
+      words: Array.isArray(result.words) ? result.words : [],
+    })
   } catch (error) {
     console.error(error)
     res.status(publicStatus(error)).json({ error: clientGatewayMessage(error, '补全已上传单词失败。', '补全已上传单词失败。') })
@@ -514,12 +616,24 @@ app.post('/api/transcribe', rateLimit(60_000, 12), async (req, res) => {
   }
 })
 
-app.get('/api/passages', async (_req, res) => {
+app.get('/api/passages', async (req, res) => {
   try {
-    res.json(await database.listPassages())
+    const lightParam = req.query.light
+    const light = lightParam === undefined || lightParam === '1' || lightParam === 'true'
+    res.json(await database.listPassages({ light }))
   } catch (error) {
     console.error(error)
     res.status(500).json({ error: '读取课文失败。' })
+  }
+})
+
+app.get('/api/passages/:id', async (req, res) => {
+  try {
+    res.json({ passage: await database.getPassage(req.params.id) })
+  } catch (error) {
+    console.error(error)
+    if (error.message === 'PASSAGE_NOT_FOUND') return res.status(404).json({ error: '课文不存在。' })
+    res.status(error.message === 'INVALID_PASSAGE' ? 400 : 500).json({ error: '读取课文失败。' })
   }
 })
 

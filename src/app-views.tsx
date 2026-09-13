@@ -264,7 +264,7 @@ export function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onRena
   return (
     <div className="page hub-page">
       <section className="hub-hero">
-        <div><span className="eyebrow">VOCABULARY LIBRARY</span><h1>我的词库</h1><p>按单元管理词汇，并从 Word、TXT、CSV 或 JSON 批量导入。</p></div>
+        <div><span className="eyebrow">VOCABULARY LIBRARY</span><h1>我的词库</h1><p>按单元管理词汇，并从「词汇手册」Excel 模版批量导入。</p></div>
         <div className="hero-actions"><button className="secondary-button" onClick={onNewUnit}><Plus size={17} />新建单元</button><button className="primary-button" onClick={() => onImport(unitId)}><UploadCloud size={17} />上传到当前单元</button></div>
       </section>
       <div className="metric-row"><div><LibraryBig /><span><b>{units.length}</b><small>学习单元</small></span></div><div><BookOpen /><span><b>{total}</b><small>全部单词</small></span></div><div><CheckCircle2 /><span><b>{mastered}</b><small>已经掌握</small></span></div></div>

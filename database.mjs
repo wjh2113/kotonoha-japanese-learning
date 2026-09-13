@@ -174,18 +174,7 @@ export function createDatabase(connectionString) {
     createdAt: row.created_at.getTime(),
   })
 
-  const wordUpsertSql = `INSERT INTO words (
-      id, unit_id, term, reading, meaning, part_of_speech, example, example_reading, translation,
-      mastered, starred, review_stage, last_reviewed_at, next_review_at,
-      listening_wrong, meaning_wrong, listening_correct, meaning_correct,
-      wrong_book, dictation_misses, error_reviewed,
-      romaji, pronunciation_note, memory_tip, synonyms, similar_words, notes,
-      sort_order, created_at
-    ) VALUES (
-      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-      $22,$23,$24,$25,$26,$27,$28,COALESCE($29,NOW())
-    )
-    ON CONFLICT (id) DO UPDATE SET
+  const wordUpsertConflictSql = `ON CONFLICT (id) DO UPDATE SET
       unit_id = EXCLUDED.unit_id,
       term = EXCLUDED.term,
       reading = EXCLUDED.reading,
@@ -213,6 +202,52 @@ export function createDatabase(connectionString) {
       similar_words = EXCLUDED.similar_words,
       notes = EXCLUDED.notes,
       sort_order = EXCLUDED.sort_order`
+
+  const wordUpsertSql = `INSERT INTO words (
+      id, unit_id, term, reading, meaning, part_of_speech, example, example_reading, translation,
+      mastered, starred, review_stage, last_reviewed_at, next_review_at,
+      listening_wrong, meaning_wrong, listening_correct, meaning_correct,
+      wrong_book, dictation_misses, error_reviewed,
+      romaji, pronunciation_note, memory_tip, synonyms, similar_words, notes,
+      sort_order, created_at
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
+      $22,$23,$24,$25,$26,$27,$28,COALESCE($29,NOW())
+    )
+    ${wordUpsertConflictSql}`
+
+  const WORD_PARAM_COUNT = 29
+
+  /** Multi-row INSERT ... ON CONFLICT DO UPDATE; each row is buildWordParams result. */
+  const upsertWordsBatch = async (client, rows) => {
+    const chunkSize = 40
+    for (let offset = 0; offset < rows.length; offset += chunkSize) {
+      const chunk = rows.slice(offset, offset + chunkSize)
+      const values = []
+      const params = []
+      for (const [rowIndex, row] of chunk.entries()) {
+        const placeholders = []
+        for (let col = 0; col < WORD_PARAM_COUNT; col += 1) {
+          const paramIndex = rowIndex * WORD_PARAM_COUNT + col + 1
+          placeholders.push(col === WORD_PARAM_COUNT - 1 ? `COALESCE($${paramIndex},NOW())` : `$${paramIndex}`)
+          params.push(row[col])
+        }
+        values.push(`(${placeholders.join(',')})`)
+      }
+      await client.query(
+        `INSERT INTO words (
+          id, unit_id, term, reading, meaning, part_of_speech, example, example_reading, translation,
+          mastered, starred, review_stage, last_reviewed_at, next_review_at,
+          listening_wrong, meaning_wrong, listening_correct, meaning_correct,
+          wrong_book, dictation_misses, error_reviewed,
+          romaji, pronunciation_note, memory_tip, synonyms, similar_words, notes,
+          sort_order, created_at
+        ) VALUES ${values.join(',')}
+        ${wordUpsertConflictSql}`,
+        params,
+      )
+    }
+  }
 
   const buildWordParams = (word, unitId, wordIndex, term, reading, lex) => {
     const meaning = text(word.meaning)
@@ -325,10 +360,12 @@ export function createDatabase(connectionString) {
         )
         const prepared = prepareUnitWords(unit.words)
         dropped.push(...prepared.dropped.map((item) => ({ ...item, unitId })))
+        const wordRows = []
         for (const [wordIndex, entry] of prepared.kept.entries()) {
           keepWordIds.push(text(entry.word.id))
-          await client.query(wordUpsertSql, buildWordParams(entry.word, unitId, wordIndex, entry.term, entry.reading, entry.lex))
+          wordRows.push(buildWordParams(entry.word, unitId, wordIndex, entry.term, entry.reading, entry.lex))
         }
+        if (wordRows.length) await upsertWordsBatch(client, wordRows)
       }
       if (keepWordIds.length) {
         await client.query('DELETE FROM words WHERE NOT (id = ANY($1::text[]))', [keepWordIds])
@@ -401,26 +438,56 @@ export function createDatabase(connectionString) {
     return mapWordRow(next.rows[0])
   }
 
-  const listPassages = async () => {
+  const mapPassageRow = (row, { light = false } = {}) => {
+    const analysis = row.analysis && typeof row.analysis === 'object' ? row.analysis : {}
+    const sentences = Array.isArray(analysis.sentences) ? analysis.sentences : []
+    const status = analysis.status === 'processing' || analysis.status === 'error' ? analysis.status : 'ready'
+    const base = {
+      id: row.id,
+      title: row.title,
+      bookId: analysis.bookId || '',
+      bookName: analysis.bookName || '',
+      progress: analysis.progress && typeof analysis.progress === 'object' ? analysis.progress : {},
+      status,
+      statusText: analysis.statusText || '',
+      createdAt: row.created_at.getTime(),
+    }
+    if (light) {
+      return {
+        ...base,
+        sourceText: '',
+        sentences: [],
+        sentenceCount: sentences.length,
+      }
+    }
+    return {
+      ...base,
+      sourceText: row.source_text,
+      sentences,
+      sentenceCount: sentences.length,
+    }
+  }
+
+  const listPassages = async ({ light = false } = {}) => {
     const [result, books] = await Promise.all([
       pool.query('SELECT id, title, source_text, analysis, created_at FROM passages ORDER BY sort_order, created_at, id'),
       listPassageBooks(),
     ])
     const passages = result.rows
       .filter((row) => row.id !== BOOKS_META_ID)
-      .map((row) => ({
-        id: row.id,
-        title: row.title,
-        sourceText: row.source_text,
-        sentences: Array.isArray(row.analysis?.sentences) ? row.analysis.sentences : [],
-        bookId: row.analysis?.bookId || '',
-        bookName: row.analysis?.bookName || '',
-        progress: row.analysis?.progress && typeof row.analysis.progress === 'object' ? row.analysis.progress : {},
-        status: row.analysis?.status === 'processing' || row.analysis?.status === 'error' ? row.analysis.status : 'ready',
-        statusText: row.analysis?.statusText || '',
-        createdAt: row.created_at.getTime(),
-      }))
+      .map((row) => mapPassageRow(row, { light }))
     return { passages, books }
+  }
+
+  const getPassage = async (id) => {
+    const passageId = text(id)
+    if (!passageId || passageId === BOOKS_META_ID) throw new Error('INVALID_PASSAGE')
+    const result = await pool.query(
+      'SELECT id, title, source_text, analysis, created_at FROM passages WHERE id = $1',
+      [passageId],
+    )
+    if (!result.rows[0]) throw new Error('PASSAGE_NOT_FOUND')
+    return mapPassageRow(result.rows[0], { light: false })
   }
 
   const passageAnalysisPayload = (passage) => {
@@ -466,7 +533,7 @@ export function createDatabase(connectionString) {
       await writePassageBooks(client, books)
       await client.query('DELETE FROM passages WHERE id = $1 OR NOT (id = ANY($2::text[]))', [BOOKS_META_ID, keepIds])
       await client.query('COMMIT')
-      return listPassages()
+      return listPassages({ light: false })
     } catch (error) {
       await client.query('ROLLBACK')
       throw error
@@ -490,8 +557,7 @@ export function createDatabase(connectionString) {
         JSON.stringify(passageAnalysisPayload(passage)), sortOrder,
         timestamp(passage.createdAt) || existing.rows[0]?.created_at || null],
     )
-    const listed = await listPassages()
-    return listed.passages.find((item) => item.id === text(passage.id)) || null
+    return getPassage(text(passage.id))
   }
 
   const patchPassageProgress = async (id, progress) => {
@@ -505,8 +571,7 @@ export function createDatabase(connectionString) {
       'UPDATE passages SET analysis = $2::jsonb WHERE id = $1',
       [passageId, JSON.stringify({ ...analysis, progress: nextProgress })],
     )
-    const listed = await listPassages()
-    return listed.passages.find((item) => item.id === passageId) || null
+    return getPassage(passageId)
   }
 
   const replacePassageBooks = async (booksInput) => {
@@ -533,6 +598,27 @@ export function createDatabase(connectionString) {
     if (!result.rows[0]) throw new Error('PASSAGE_NOT_FOUND')
     return { id: passageId }
   }
+
+  /** Clear units/words/passages/books; keep app_settings. */
+  const wipeLearningData = async () => {
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('DELETE FROM words')
+      await client.query('DELETE FROM units')
+      await client.query('DELETE FROM passages')
+      await client.query('DELETE FROM passage_books')
+      await client.query('DELETE FROM passages WHERE id = $1', [BOOKS_META_ID]).catch(() => {})
+      await client.query('COMMIT')
+      return { ok: true }
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
+  }
+
 
   const listIncompleteWords = async (limit = 20) => {
     const result = await pool.query(
@@ -568,12 +654,13 @@ export function createDatabase(connectionString) {
   }
 
   const updateWordLexicon = async (id, fields) => {
-    await pool.query(
+    const result = await pool.query(
       `UPDATE words
        SET term = COALESCE(NULLIF($2, ''), term),
            reading = $3, meaning = $4, part_of_speech = $5, example = $6,
            example_reading = $7, translation = $8
-       WHERE id = $1`,
+       WHERE id = $1
+       RETURNING *`,
       [
         text(id),
         text(fields.term).slice(0, 40),
@@ -585,6 +672,7 @@ export function createDatabase(connectionString) {
         text(fields.translation).slice(0, 200),
       ],
     )
+    return result.rows[0] ? mapWordRow(result.rows[0]) : null
   }
 
   const unitHasTerm = async (unitId, term, excludeId) => {
@@ -599,5 +687,113 @@ export function createDatabase(connectionString) {
     await pool.query('DELETE FROM words WHERE id = $1', [text(id)])
   }
 
-  return { initialize, health, getState, replaceState, patchSettings, patchWord, listIncompleteWords, countIncompleteWords, updateWordLexicon, unitHasTerm, deleteWord, listPassages, replacePassages, upsertPassage, patchPassageProgress, replacePassageBooks, deletePassage, close: () => pool.end() }
+  const createUnit = async ({ id, name, description, color, sortOrder } = {}) => {
+    const unitId = text(id)
+    const unitName = text(name)
+    if (!unitId || !unitName) throw new Error('INVALID_UNIT')
+    let order = Number.isInteger(sortOrder) ? sortOrder : null
+    if (order === null) {
+      const max = await pool.query('SELECT COALESCE(MAX(sort_order), -1)::int AS max FROM units')
+      order = (max.rows[0]?.max ?? -1) + 1
+    }
+    await pool.query(
+      `INSERT INTO units (id, name, description, color, sort_order)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (id) DO UPDATE SET
+         name = EXCLUDED.name,
+         description = EXCLUDED.description,
+         color = EXCLUDED.color,
+         sort_order = EXCLUDED.sort_order`,
+      [unitId, unitName, text(description), text(color, '#e6533f'), order],
+    )
+    return {
+      id: unitId,
+      name: unitName,
+      description: text(description),
+      color: text(color, '#e6533f'),
+      words: [],
+    }
+  }
+
+  const patchUnit = async (id, fields = {}) => {
+    const unitId = text(id)
+    if (!unitId) throw new Error('INVALID_UNIT')
+    const existing = await pool.query('SELECT id, name, description, color FROM units WHERE id = $1', [unitId])
+    if (!existing.rows[0]) throw new Error('UNIT_NOT_FOUND')
+    const row = existing.rows[0]
+    const name = fields.name !== undefined ? text(fields.name) : row.name
+    if (!name) throw new Error('INVALID_UNIT')
+    const description = fields.description !== undefined ? text(fields.description) : row.description
+    const color = fields.color !== undefined ? text(fields.color, row.color) : row.color
+    await pool.query(
+      'UPDATE units SET name = $2, description = $3, color = $4 WHERE id = $1',
+      [unitId, name, description, color],
+    )
+    return { id: unitId, name, description, color }
+  }
+
+  const deleteUnit = async (id) => {
+    const unitId = text(id)
+    if (!unitId) throw new Error('INVALID_UNIT')
+    const count = await pool.query('SELECT COUNT(*)::int AS count FROM units')
+    if ((count.rows[0]?.count || 0) <= 1) throw new Error('LAST_UNIT')
+    const result = await pool.query('DELETE FROM units WHERE id = $1 RETURNING id', [unitId])
+    if (!result.rows[0]) throw new Error('UNIT_NOT_FOUND')
+    return { id: unitId }
+  }
+
+  const appendWords = async (unitId, words = []) => {
+    const id = text(unitId)
+    if (!id) throw new Error('INVALID_UNIT')
+    const unit = await pool.query('SELECT id FROM units WHERE id = $1', [id])
+    if (!unit.rows[0]) throw new Error('UNIT_NOT_FOUND')
+    const prepared = prepareUnitWords(words)
+    const max = await pool.query('SELECT COALESCE(MAX(sort_order), -1)::int AS max FROM words WHERE unit_id = $1', [id])
+    let sortOrder = (max.rows[0]?.max ?? -1) + 1
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      const wordRows = []
+      for (const entry of prepared.kept) {
+        wordRows.push(buildWordParams(entry.word, id, sortOrder, entry.term, entry.reading, entry.lex))
+        sortOrder += 1
+      }
+      if (wordRows.length) await upsertWordsBatch(client, wordRows)
+      await client.query('COMMIT')
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
+    const keptIds = prepared.kept.map((entry) => text(entry.word.id))
+    let saved = []
+    if (keptIds.length) {
+      const result = await pool.query(
+        `SELECT id, unit_id, term, reading, meaning, part_of_speech, example, example_reading,
+          translation, mastered, starred, review_stage, last_reviewed_at, next_review_at,
+          listening_wrong, meaning_wrong, listening_correct, meaning_correct,
+          wrong_book, dictation_misses, error_reviewed,
+          romaji, pronunciation_note, memory_tip, synonyms, similar_words, notes, created_at
+         FROM words WHERE unit_id = $1 AND id = ANY($2::text[])
+         ORDER BY sort_order, created_at, id`,
+        [id, keptIds],
+      )
+      saved = result.rows.map(mapWordRow)
+    }
+    return {
+      words: saved,
+      droppedCount: prepared.dropped.length,
+      dropped: prepared.dropped,
+    }
+  }
+
+  return {
+    initialize, health, getState, replaceState, patchSettings, patchWord,
+    listIncompleteWords, countIncompleteWords, updateWordLexicon, unitHasTerm, deleteWord,
+    createUnit, patchUnit, deleteUnit, appendWords,
+    listPassages, getPassage, replacePassages, upsertPassage, patchPassageProgress, replacePassageBooks, deletePassage,
+    wipeLearningData,
+    close: () => pool.end(),
+  }
 }
