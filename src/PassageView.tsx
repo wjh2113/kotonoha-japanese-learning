@@ -27,7 +27,15 @@ function passageTitle(value?: string, fallback = '课文') {
   return String(value || '').trim().slice(0, 80) || fallback
 }
 
-function renderPassageJp(item: PassageSentence, grammarTerms: string[]) {
+function isSpeakableJapanese(text: string) {
+  return /[\u3040-\u30ff\u3400-\u9fffー]/.test(text)
+}
+
+function renderPassageJp(
+  item: PassageSentence,
+  grammarTerms: string[],
+  onSpeakWord?: (text: string) => void,
+) {
   const tokens = Array.isArray(item.tokens) ? item.tokens : []
   if (tokens.length) {
     return tokens.map((token, index) => {
@@ -37,18 +45,57 @@ function renderPassageJp(item: PassageSentence, grammarTerms: string[]) {
       const showRuby = Boolean(reading && reading !== surface && /[\u4e00-\u9fff]/.test(surface))
       const hit = grammarTerms.some((term) => term && surface.includes(term))
       const body = showRuby ? <ruby>{surface}<rt>{reading}</rt></ruby> : surface
+      const speakText = (reading || surface).trim()
+      const canSpeak = Boolean(onSpeakWord && isSpeakableJapanese(speakText))
+      const className = [hit ? 'grammar-hit' : '', canSpeak ? 'passage-word-token' : '']
+        .filter(Boolean)
+        .join(' ')
+      if (canSpeak) {
+        return (
+          <button
+            key={`${item.id}-tk-${index}`}
+            type="button"
+            className={className}
+            aria-label={`朗读 ${surface}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              onSpeakWord!(speakText)
+            }}
+          >
+            {body}
+          </button>
+        )
+      }
       return (
-        <span key={`${item.id}-tk-${index}`} className={hit ? 'grammar-hit' : undefined}>
+        <span key={`${item.id}-tk-${index}`} className={className || undefined}>
           {body}
         </span>
       )
     })
   }
-  return highlightGrammarInText(item.reading || item.text, grammarTerms).map((part, partIndex) => (
-    part.hit
+  return highlightGrammarInText(item.reading || item.text, grammarTerms).map((part, partIndex) => {
+    const hitClass = part.hit ? 'grammar-hit' : ''
+    const canSpeak = Boolean(onSpeakWord && isSpeakableJapanese(part.text))
+    if (canSpeak) {
+      return (
+        <button
+          key={`${item.id}-t-${partIndex}`}
+          type="button"
+          className={[hitClass, 'passage-word-token'].filter(Boolean).join(' ')}
+          aria-label={`朗读 ${part.text}`}
+          onClick={(event) => {
+            event.stopPropagation()
+            onSpeakWord!(part.text)
+          }}
+        >
+          {part.text}
+        </button>
+      )
+    }
+    return part.hit
       ? <span key={`${item.id}-g-${partIndex}`} className="grammar-hit">{part.text}</span>
       : <span key={`${item.id}-t-${partIndex}`}>{part.text}</span>
-  ))
+  })
 }
 
 function hydrateProgress(value: unknown) {
@@ -1057,7 +1104,9 @@ export function PassageView() {
                       {!practiceOnly && <small>{sentenceIndex + 1} / {passage.sentences.length}</small>}
                     </header>
                     <h3 className="jp shadow-target">
-                      {renderPassageJp(sentence, [])}
+                      {renderPassageJp(sentence, [], (text) => {
+                        void speakJapanese(text, voiceGender)
+                      })}
                     </h3>
                     {hasChineseTranslation(sentence.translation) && (
                       <p className="translation shadow-translation">{sentence.translation}</p>
@@ -1166,15 +1215,28 @@ export function PassageView() {
                               className={`${active ? 'active' : ''} ${playingFull && active ? 'speaking' : ''}`}
                               ref={active ? activeSentenceRef : undefined}
                             >
-                              <button type="button" className="passage-bilingual-row" onClick={() => goSentence(index, true)}>
+                              <div
+                                className="passage-bilingual-row"
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => goSentence(index, true)}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault()
+                                    goSentence(index, true)
+                                  }
+                                }}
+                              >
                                 <em>{index + 1}</em>
                                 <span className="passage-bilingual-jp">
-                                  <span className="jp">{renderPassageJp(item, grammarTerms)}</span>
+                                  <span className="jp">{renderPassageJp(item, grammarTerms, (text) => {
+                                    void speakJapanese(text, voiceGender)
+                                  })}</span>
                                 </span>
                                 {hasChineseTranslation(item.translation) && (
                                   <span className="passage-bilingual-tr">{item.translation}</span>
                                 )}
-                              </button>
+                              </div>
                             </li>
                           )
                         })}

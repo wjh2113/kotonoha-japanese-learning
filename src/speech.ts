@@ -71,14 +71,8 @@ export function unlockSpeech() {
       // ignore
     }
   }
-  // Unlock HTMLAudioElement autoplay for subsequent word taps.
-  try {
-    const warm = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA')
-    warm.volume = 0.01
-    void warm.play().then(() => warm.pause()).catch(() => {})
-  } catch {
-    // ignore
-  }
+  // Do NOT play a warm Audio here — it steals the user-gesture on Android WebView
+  // and causes the real word TTS play() to be blocked.
 }
 
 export function selectJapaneseVoice(voices: SpeechSynthesisVoice[], voiceGender: VoiceGender) {
@@ -140,25 +134,41 @@ function ttsAudioUrl(text: string) {
 }
 
 async function playAudioUrl(url: string, token: number) {
-  const audio = new Audio(url)
+  const audio = new Audio()
   audio.preload = 'auto'
   activeAudio = audio
+  // Assign src then play in the same turn so mobile WebViews keep the user gesture.
+  audio.src = url
   await new Promise<void>((resolve, reject) => {
+    let settled = false
     const finish = () => {
+      if (settled) return
+      settled = true
       audio.onended = null
       audio.onerror = null
+      audio.onplaying = null
       resolve()
     }
+    const fail = (reason: string) => {
+      if (settled) return
+      settled = true
+      audio.onended = null
+      audio.onerror = null
+      audio.onplaying = null
+      reject(new Error(reason))
+    }
     audio.onended = finish
-    audio.onerror = () => reject(new Error('audio-tts-failed'))
+    audio.onerror = () => fail('audio-tts-failed')
+    audio.onplaying = () => {
+      // Playback actually started — keep waiting for onended.
+    }
     const playPromise = audio.play()
     if (playPromise && typeof playPromise.then === 'function') {
-      playPromise.catch(reject)
+      playPromise.catch(() => fail('audio-tts-blocked'))
     }
-    // Guard against stalled playback.
     window.setTimeout(() => {
       if (token !== audioToken) return
-      if (audio.paused && audio.currentTime === 0) reject(new Error('audio-tts-timeout'))
+      if (audio.paused && audio.currentTime === 0) fail('audio-tts-timeout')
     }, 8000)
   })
   if (token !== audioToken) return

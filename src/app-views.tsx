@@ -385,7 +385,8 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
 
   const selectWord = (word: Word) => {
     onSelect(word.id)
-    if (word.term) void speakJapanese(word.term, voiceGender)
+    const speakText = String(word.reading || word.term || '').trim()
+    if (speakText) void speakJapanese(speakText, voiceGender)
   }
 
   const openWordSheet = (word: Word) => {
@@ -620,7 +621,10 @@ function VolumeButton({ word, small = false, sentence = false }: { word: Word; s
   const { voiceGender } = useContext(SettingsContext)
   const speak = async (event: React.MouseEvent) => {
     event.stopPropagation()
-    await speakJapanese(sentence ? word.example : word.term, voiceGender, {
+    const text = sentence
+      ? word.example
+      : String(word.reading || word.term || '').trim()
+    await speakJapanese(text, voiceGender, {
       sentence,
       onStart: () => setSpeaking(true),
       onEnd: () => setSpeaking(false),
@@ -1058,9 +1062,9 @@ export function WordbookView({
     return `${y}/${m}/${d}`
   }
 
-  const speakTerm = (event: React.MouseEvent, term: string) => {
-    event.stopPropagation()
-    if (term) void speakJapanese(term, voiceGender)
+  const speakTerm = (term: string, reading?: string) => {
+    const speakText = String(reading || term || '').trim()
+    if (speakText) void speakJapanese(speakText, voiceGender)
   }
 
   return (
@@ -1093,13 +1097,17 @@ export function WordbookView({
             <article
               key={word.id}
               className="wordbook-row"
-              onClick={() => setSelectedId(word.id)}
+              onClick={() => {
+                setSelectedId(word.id)
+                speakTerm(word.term, word.reading)
+              }}
               role="button"
               tabIndex={0}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault()
                   setSelectedId(word.id)
+                  speakTerm(word.term, word.reading)
                 }
               }}
             >
@@ -1107,7 +1115,10 @@ export function WordbookView({
                 type="button"
                 className="wordbook-speak"
                 aria-label={`朗读 ${word.term}`}
-                onClick={(event) => speakTerm(event, word.term)}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  speakTerm(word.term, word.reading)
+                }}
               >
                 <Volume2 size={18} strokeWidth={1.7} />
               </button>
