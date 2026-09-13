@@ -701,8 +701,7 @@ export function PassageView() {
                       <b><Bot size={15} strokeWidth={1.6} />AI 发音评估</b>
                       <small>{sentenceIndex + 1} / {passage.sentences.length}</small>
                     </header>
-                    <h3 className="jp shadow-target">{sentence.text}</h3>
-                    {sentence.reading && <p className="jp shadow-reading">{sentence.reading}</p>}
+                    <h3 className="jp shadow-target">{sentence.reading || sentence.text}</h3>
                     {hasChineseTranslation(sentence.translation) && <p className="translation">{sentence.translation}</p>}
                     <PronunciationPractice
                       variant="shadow"
@@ -710,7 +709,12 @@ export function PassageView() {
                       referenceReading={sentence.reading}
                       tokens={sentence.tokens}
                       resetKey={`${sentence.id}-${shadowRetry}`}
-                      onScore={(score) => patchPassage(passage.id, { progress: recordSentenceScore(passage.progress, sentence.id, score) })}
+                      initialScore={passage.progress?.[sentence.id]?.lastScore}
+                      bestScore={passage.progress?.[sentence.id]?.bestScore}
+                      onScore={(score) => {
+                        patchPassage(passage.id, { progress: recordSentenceScore(passage.progress, sentence.id, score) })
+                        void flushPersist()
+                      }}
                     />
                     <div className="shadow-footer">
                       <button type="button" className="secondary-button" onClick={() => setShadowRetry((n) => n + 1)}>
