@@ -306,6 +306,32 @@ export function PassageView() {
         setSelectedId((current) => merged.some((item) => item.id === current) ? current : (merged[0]?.id || ''))
         cacheLocal()
         setReady(true)
+        // Prefetch full details so offline TTS has sentences, not just light list rows.
+        void (async () => {
+          const light = passagesRef.current.filter((item) => (
+            !isTransientPassage(item)
+            && (!item.sentences || item.sentences.length === 0)
+            && ((item.sentenceCount || 0) > 0 || item.status === 'ready')
+          ))
+          for (const item of light.slice(0, MAX_PASSAGES)) {
+            if (cancelled) return
+            try {
+              const detail = await apiFetch(`/api/passages/${encodeURIComponent(item.id)}`)
+              const payload = await readApiJson<{ passage?: unknown }>(detail)
+              if (!detail.ok) continue
+              const full = hydratePassage(payload.passage)
+              if (!full) continue
+              commitPassages(passagesRef.current.map((row) => row.id === full.id ? {
+                ...row,
+                ...full,
+                progress: dirtyUpserts.current.has(full.id) || dirtyProgress.current.has(full.id)
+                  ? row.progress
+                  : full.progress,
+              } : row))
+            } catch { /* skip one */ }
+          }
+          if (!cancelled) cacheLocal()
+        })()
       } catch {
         if (cancelled) return
         persistEnabled.current = true
