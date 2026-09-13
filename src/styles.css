@@ -1519,7 +1519,7 @@ body { background: var(--cream); color: var(--ink); }
 }
 .study-design .word-card.word-row {
   display: grid;
-  grid-template-columns: minmax(96px, 1.1fr) auto minmax(0, 1.4fr) auto auto auto;
+  grid-template-columns: minmax(96px, 1.1fr) auto minmax(0, 1.4fr) auto auto auto auto;
   align-items: center;
   gap: 10px 12px;
   min-height: 56px;
@@ -2396,4 +2396,45 @@ body { background: var(--cream); color: var(--ink); }
     padding-bottom: 16px;
   }
   .wordbook-sheet-handle { display: none; }
+}
+
+.study-design .word-row-star,
+.study-design .word-card-star {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #b0b6aa;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.study-design .word-row-star.on,
+.study-design .word-card-star.on {
+  color: var(--red);
+  background: var(--accent-wash);
+}
+.study-design .word-card-star {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+}
+.study-design .word-card:has(.word-card-star):has(.word-card-delete) .word-card-delete {
+  left: auto;
+  right: 40px;
+}
+.wordbook-marked.on {
+  background: #eef5ea;
+  border-color: #c7dcc9;
+  color: #2f6a45;
+}
+@media (max-width: 860px) {
+  .study-design.practice-only .content-columns { display: block; }
+  .study-design .word-card.word-row {
+    grid-template-columns: minmax(72px, 1fr) auto minmax(0, 1.1fr) auto auto;
+  }
+  .study-design .word-row-chevron { display: none; }
 }

@@ -374,6 +374,7 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
   const [layout, setLayout] = useState<'grid' | 'list'>('list')
   const [filter, setFilter] = useState<'all' | 'learning' | 'mastered'>('all')
   const [pendingDelete, setPendingDelete] = useState<Word | null>(null)
+  const [sheetOpen, setSheetOpen] = useState(false)
   const filtered = unit.words.filter((word) => {
     const matches = `${word.term}${word.reading}${word.meaning}`.toLowerCase().includes(search.toLowerCase())
     return matches && (filter === 'all' || (filter === 'mastered' ? word.mastered : !word.mastered))
@@ -385,10 +386,11 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
   const selectWord = (word: Word) => {
     onSelect(word.id)
     if (word.term) void speakJapanese(word.term, voiceGender)
+    if (practiceOnly) setSheetOpen(true)
   }
 
   return (
-    <div className="page study-page study-design">
+    <div className={`page study-page study-design${practiceOnly ? ' practice-only' : ''}`}>
       <div className="study-topbar">
         <label className="study-unit-chip">
           <BookOpen size={16} strokeWidth={1.6} />
@@ -444,29 +446,42 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
                   active={selectedWord?.id === word.id}
                   list={layout === 'list'}
                   onClick={() => selectWord(word)}
+                  onToggleStar={() => onToggleStar(word)}
                   onDelete={practiceOnly ? undefined : () => setPendingDelete(word)}
                 />
               ))}
             </div>
           ) : <EmptyState onImport={onImport} practiceOnly={practiceOnly} />}
         </section>
-        <aside className="detail-column">
-          {selectedWord ? <WordDetail
-            word={selectedWord}
-            onEdit={(changes) => onEdit(selectedWord, changes)}
-            onToggleStar={onToggleStar}
-            position={selectedIndex >= 0 ? selectedIndex + 1 : 0} total={filtered.length}
-            onPrevious={() => {
-              if (selectedIndex <= 0) return
-              selectWord(filtered[selectedIndex - 1])
-            }}
-            onNext={() => {
-              if (selectedIndex < 0 || selectedIndex >= filtered.length - 1) return
-              selectWord(filtered[selectedIndex + 1])
-            }}
-          /> : <EmptyDetail onImport={onImport} practiceOnly={practiceOnly} />}
-        </aside>
+        {!practiceOnly && (
+          <aside className="detail-column">
+            {selectedWord ? <WordDetail
+              word={selectedWord}
+              onEdit={(changes) => onEdit(selectedWord, changes)}
+              onToggleStar={onToggleStar}
+              practiceOnly={practiceOnly}
+              position={selectedIndex >= 0 ? selectedIndex + 1 : 0} total={filtered.length}
+              onPrevious={() => {
+                if (selectedIndex <= 0) return
+                selectWord(filtered[selectedIndex - 1])
+              }}
+              onNext={() => {
+                if (selectedIndex < 0 || selectedIndex >= filtered.length - 1) return
+                selectWord(filtered[selectedIndex + 1])
+              }}
+            /> : <EmptyDetail onImport={onImport} practiceOnly={practiceOnly} />}
+          </aside>
+        )}
       </div>
+      {practiceOnly && sheetOpen && selectedWord && (
+        <WordCardSheet
+          word={selectedWord}
+          unitName={unit.name}
+          onClose={() => setSheetOpen(false)}
+          onUpdate={(changes) => onEdit(selectedWord, changes)}
+          onToggleStar={() => onToggleStar(selectedWord)}
+        />
+      )}
       {!practiceOnly && pendingDelete && (
         <ConfirmDeleteWordModal
           word={pendingDelete}
@@ -482,14 +497,15 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
   )
 }
 
-function WordCard({ word, active, list = false, onClick, onDelete }: {
+function WordCard({ word, active, list = false, onClick, onDelete, onToggleStar }: {
   word: Word; active: boolean; list?: boolean; onClick: () => void; onDelete?: () => void
+  onToggleStar?: () => void
 }) {
   const dots = masteryDots(word)
   const pos = word.partOfSpeech.split('・')[0]
   return (
     <div
-      className={`word-card ${list ? 'word-row' : ''} ${active ? 'active' : ''}`}
+      className={`word-card ${list ? 'word-row' : ''} ${active ? 'active' : ''} ${word.starred ? 'is-starred' : ''}`}
       onClick={onClick}
       role="button"
       tabIndex={0}
@@ -508,6 +524,17 @@ function WordCard({ word, active, list = false, onClick, onDelete }: {
           <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
             {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
           </span>
+          {onToggleStar && (
+            <button
+              type="button"
+              className={`word-row-star ${word.starred ? 'on' : ''}`}
+              aria-label={word.starred ? '移出生词本' : '加入生词本'}
+              title={word.starred ? '移出生词本' : '加入生词本'}
+              onClick={(event) => { event.stopPropagation(); onToggleStar() }}
+            >
+              <BookMarked size={15} strokeWidth={1.7} />
+            </button>
+          )}
           {onDelete && (
             <button
               type="button"
@@ -526,6 +553,17 @@ function WordCard({ word, active, list = false, onClick, onDelete }: {
           <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
             {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
           </span>
+          {onToggleStar && (
+            <button
+              type="button"
+              className={`word-card-star ${word.starred ? 'on' : ''}`}
+              aria-label={word.starred ? '移出生词本' : '加入生词本'}
+              title={word.starred ? '移出生词本' : '加入生词本'}
+              onClick={(event) => { event.stopPropagation(); onToggleStar() }}
+            >
+              <BookMarked size={14} strokeWidth={1.7} />
+            </button>
+          )}
           {onDelete && (
             <button
               type="button"
@@ -561,9 +599,10 @@ function VolumeButton({ word, small = false, sentence = false }: { word: Word; s
   return <button className={`volume-button ${small ? 'small' : ''} ${speaking ? 'speaking' : ''}`} onClick={speak} aria-label="朗读">{speaking ? <Pause size={small ? 14 : 19} /> : <Volume2 size={small ? 14 : 19} />}</button>
 }
 
-function WordDetail({ word, onEdit, onToggleStar, position, total, onPrevious, onNext }: {
+function WordDetail({ word, onEdit, onToggleStar, position, total, onPrevious, onNext, practiceOnly = false }: {
   word: Word; onEdit: (changes: Partial<Word>) => void; onToggleStar: (word: Word) => void
   position: number; total: number; onPrevious: () => void; onNext: () => void
+  practiceOnly?: boolean
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(word)
@@ -624,7 +663,9 @@ function WordDetail({ word, onEdit, onToggleStar, position, total, onPrevious, o
         >
           <BookMarked size={17} strokeWidth={1.6} />
         </button>
-        <button onClick={() => setEditing((open) => !open)} aria-label={editing ? '取消编辑' : '编辑词卡'}><SquarePen size={17} strokeWidth={1.6} /></button>
+        {!practiceOnly && (
+          <button onClick={() => setEditing((open) => !open)} aria-label={editing ? '取消编辑' : '编辑词卡'}><SquarePen size={17} strokeWidth={1.6} /></button>
+        )}
       </div>
       <div className="detail-main-word">
         <h2 className="jp">{editing ? draft.term : word.term}</h2>
@@ -1012,14 +1053,18 @@ export function WordbookView({
       )}
 
       {selected && (
-        <WordbookSheet
+        <WordCardSheet
           word={selected.word}
           unitName={selected.unit.name}
           onClose={() => setSelectedId(null)}
           onUpdate={(changes) => onUpdate(selected.word.id, selected.unit.id, changes)}
-          onRemove={() => {
-            onRemove(selected.word.id, selected.unit.id)
-            setSelectedId(null)
+          onToggleStar={() => {
+            if (selected.word.starred) {
+              onRemove(selected.word.id, selected.unit.id)
+              setSelectedId(null)
+            } else {
+              onUpdate(selected.word.id, selected.unit.id, { starred: true })
+            }
           }}
         />
       )}
@@ -1027,18 +1072,18 @@ export function WordbookView({
   )
 }
 
-function WordbookSheet({
+function WordCardSheet({
   word,
   unitName,
   onClose,
   onUpdate,
-  onRemove,
+  onToggleStar,
 }: {
   word: Word
   unitName: string
   onClose: () => void
   onUpdate: (changes: Partial<Word>) => void
-  onRemove: () => void
+  onToggleStar: () => void
 }) {
   const { voiceGender } = useContext(SettingsContext)
   const [notesDraft, setNotesDraft] = useState(word.notes || '')
@@ -1130,8 +1175,9 @@ function WordbookSheet({
         </div>
 
         <footer className="wordbook-sheet-actions">
-          <button type="button" className="wordbook-marked" onClick={onRemove}>
-            <BookMarked size={16} strokeWidth={1.7} />已标记
+          <button type="button" className={`wordbook-marked ${word.starred ? 'on' : ''}`} onClick={onToggleStar}>
+            <BookMarked size={16} strokeWidth={1.7} />
+            {word.starred ? '已标记' : '加入生词本'}
           </button>
           <button
             type="button"
