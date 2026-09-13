@@ -49,7 +49,7 @@ function hydratePassage(item: unknown): Passage | null {
   const sentenceCount = Number.isFinite(Number(record.sentenceCount))
     ? Math.max(0, Number(record.sentenceCount))
     : undefined
-  return recoverInterruptedIngest({
+  const hydrated: Passage = {
     id,
     title: passageTitle(record.title),
     sourceText: String(record.sourceText || ''),
@@ -64,7 +64,10 @@ function hydratePassage(item: unknown): Passage | null {
       const next = normalizePassageSentence(sentence, uid())
       return { ...next, id: next.id || uid() }
     }).filter((sentence) => sentence.text),
-  })
+  }
+  // Light list rows omit sentences/sourceText — do not treat them as failed OCR ingest.
+  if (!hydrated.sentences.length && (hydrated.sentenceCount || 0) > 0) return hydrated
+  return recoverInterruptedIngest(hydrated)
 }
 
 export function PassageView() {
@@ -232,7 +235,7 @@ export function PassageView() {
         if (ingestingIds.current.has(passageId)) return
         patchPassage(passageId, {
           status: 'error',
-          statusText: '课文识别未完成，请重新上传或粘贴原文。',
+          statusText: '课文识别未完成，请重新上传课文手册。',
           sourceText: looksLikeErrorDocument(current.sourceText) ? '' : current.sourceText,
           sentences: current.sentences.filter((sentence) => !isPassagePlaceholder(sentence.text)),
           title: looksLikeErrorDocument(current.title) ? '课文' : current.title,
@@ -240,7 +243,9 @@ export function PassageView() {
         return
       }
       if (!current.sentences.length) {
-        patchPassage(passageId, { status: 'error', statusText: '还没有可解析的句子，请重新上传或粘贴原文。' })
+        // Light list payload still loading detail — wait instead of marking as failed.
+        if ((current.sentenceCount || 0) > 0 || detailLoading.current.has(passageId)) return
+        patchPassage(passageId, { status: 'error', statusText: '还没有可解析的句子，请重新上传课文手册。' })
         return
       }
       const pending = current.sentences.filter(sentenceNeedsAnalysis)
@@ -416,7 +421,7 @@ export function PassageView() {
     if (!current) return
     const status = current.status === 'processing' || current.status === 'error' ? current.status : 'ready'
     const needsDetail = (!current.sentences || current.sentences.length === 0)
-      && (status === 'ready' || status === 'processing')
+      && ((current.sentenceCount || 0) > 0 || status === 'ready' || status === 'processing' || status === 'error')
       && !ingestingIds.current.has(current.id)
       && !isTransientPassage(current)
     if (!needsDetail) return

@@ -306,7 +306,7 @@ export function DictationView({
         <div className="wide-empty">
           <Keyboard />
           <h2>{errorReview ? '错词本里暂时没有可听写的词' : '这个单元还没有可听写的单词'}</h2>
-          <p>{errorReview ? '听写写错过的词会自动收进来，也可以先去词库导入带读音的词卡。' : '请先导入带读音的日语词卡，再开始听写。'}</p>
+          <p>{errorReview ? '听写写错过的词会自动收进来，也可以先去「单词学习」导入带读音的词卡。' : '请先到「单词学习」导入带读音的日语词卡，再开始听写。'}</p>
         </div>
       </div>
     )
