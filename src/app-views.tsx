@@ -113,6 +113,7 @@ export function AppHeader({ open, view, starredCount, errorBookCount, reviewCoun
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'home', label: '首页', icon: <Home size={18} strokeWidth={1.6} /> },
     { id: 'study', label: '单词学习', icon: <BookOpen size={18} strokeWidth={1.6} /> },
+    { id: 'library', label: '词库', icon: <LibraryBig size={18} strokeWidth={1.6} /> },
     { id: 'passage', label: '课文学习', icon: <FileText size={18} strokeWidth={1.6} /> },
     { id: 'test', label: '测试', icon: <GraduationCap size={18} strokeWidth={1.6} /> },
     { id: 'dictation', label: '听写', icon: <Keyboard size={18} strokeWidth={1.6} /> },
@@ -157,10 +158,12 @@ export function AppHeader({ open, view, starredCount, errorBookCount, reviewCoun
   )
 }
 
-export function DesktopTopBar({ settings, onView, onSettingsChange, sidebarCollapsed, onToggleSidebar }: {
+export function DesktopTopBar({ settings, onView, onSettingsChange, sidebarCollapsed, onToggleSidebar, reviewCount = 0 }: {
   settings: AppSettings; onView: (view: View) => void; onSettingsChange: (settings: AppSettings) => void
-  sidebarCollapsed: boolean; onToggleSidebar: () => void
+  sidebarCollapsed: boolean; onToggleSidebar: () => void; reviewCount?: number
 }) {
+  const streak = settings.streakDays || 0
+  const statusLine = streak > 0 ? `连续 ${streak} 天` : (reviewCount > 0 ? `${reviewCount} 词待复习` : '今日开始学习')
   return (
     <header className="desktop-topbar">
       <div className="topbar-left">
@@ -178,7 +181,16 @@ export function DesktopTopBar({ settings, onView, onSettingsChange, sidebarColla
         </button>
       </div>
       <div className="topbar-right">
-        <button type="button" className="icon-button" aria-label="通知"><Bell size={18} strokeWidth={1.6} /></button>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label={reviewCount > 0 ? `待复习 ${reviewCount} 词` : '复习'}
+          title={reviewCount > 0 ? `${reviewCount} 词待复习` : '去复习'}
+          onClick={() => onView('review')}
+        >
+          <Bell size={18} strokeWidth={1.6} />
+          {reviewCount > 0 && <em className="topbar-badge">{reviewCount > 99 ? '99+' : reviewCount}</em>}
+        </button>
         <div className="topbar-user">
           <AvatarThemeMenu
             settings={settings}
@@ -188,7 +200,7 @@ export function DesktopTopBar({ settings, onView, onSettingsChange, sidebarColla
           />
           <div>
             <b>{settings.displayName || '小林同学'}</b>
-            <small>N3 · 学习中</small>
+            <small>{statusLine}</small>
           </div>
         </div>
       </div>
@@ -200,8 +212,8 @@ const VIEW_TITLES: Record<View, string> = {
   home: '首页', library: '词库', study: '单词学习', passage: '课文学习', test: '测试', dictation: '听写', wordbook: '生词本', errorbook: '错词本', review: '复习', settings: '设置',
 }
 
-export function MobileTopBar({ view, settings, onView, onSettingsChange, onMenu }: {
-  view: View; settings: AppSettings; onView: (view: View) => void; onSettingsChange: (settings: AppSettings) => void; onMenu: () => void
+export function MobileTopBar({ view, settings, onView, onSettingsChange, onMenu, reviewCount = 0 }: {
+  view: View; settings: AppSettings; onView: (view: View) => void; onSettingsChange: (settings: AppSettings) => void; onMenu: () => void; reviewCount?: number
 }) {
   return (
     <header className="mobile-topbar home-topbar">
@@ -210,7 +222,15 @@ export function MobileTopBar({ view, settings, onView, onSettingsChange, onMenu 
         <Sprout size={18} />
         <b>{VIEW_TITLES[view]}</b>
       </div>
-      <button type="button" className="icon-button" aria-label="通知"><Bell size={18} /></button>
+      <button
+        type="button"
+        className="icon-button"
+        aria-label={reviewCount > 0 ? `待复习 ${reviewCount} 词` : '复习'}
+        onClick={() => onView('review')}
+      >
+        <Bell size={18} />
+        {reviewCount > 0 && <em className="topbar-badge">{reviewCount > 99 ? '99+' : reviewCount}</em>}
+      </button>
       <AvatarThemeMenu
         settings={settings}
         onSettingsChange={onSettingsChange}

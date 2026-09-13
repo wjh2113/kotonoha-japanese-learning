@@ -27,25 +27,31 @@ function calendarMarks(words: Word[], year: number, month: number) {
   return marks
 }
 
+function reviewedToday(word: Word, now = new Date()) {
+  if (!word.lastReviewedAt) return false
+  return new Date(word.lastReviewedAt).toDateString() === now.toDateString()
+}
+
 export function HomeView({ units, unit, settings, onView }: Props) {
   const allWords = units.flatMap((item) => item.words)
+  const unitWords = unit?.words || []
+  const now = new Date()
+  // 待复习：全库口径；今日计划/已练：当前单元口径
   const dueCount = allWords.filter((word) => getReviewState(word).due).length
-  const unmastered = (unit?.words || []).filter((word) => !word.mastered)
-  const planTarget = Math.min(30, Math.max(unmastered.length || planFallback(unit), 1))
-  const todayMastered = (unit?.words || []).filter((word) => {
-    if (!word.lastReviewedAt) return false
-    const d = new Date(word.lastReviewedAt)
-    const now = new Date()
-    return d.toDateString() === now.toDateString()
-  }).length
-  const learned = unit?.words.filter((w) => w.mastered).length || 0
-  const total = unit?.words.length || 0
+  const unmasteredUnit = unitWords.filter((word) => !word.mastered)
+  const unitDue = unitWords.filter((word) => getReviewState(word).due).length
+  const planTarget = unitWords.length === 0
+    ? 0
+    : Math.min(30, Math.max(unmasteredUnit.length, unitDue, 1))
+  const todayDone = unitWords.filter((word) => reviewedToday(word, now)).length
+  const completed = Math.min(planTarget || todayDone, todayDone)
+
+  const learned = unitWords.filter((w) => w.mastered).length
+  const total = unitWords.length
   const percent = Math.round(learned / Math.max(total, 1) * 100)
   const remaining = Math.max(0, total - learned)
   const streak = settings.streakDays || 0
-  const completed = Math.min(planTarget, todayMastered)
 
-  const now = new Date()
   const year = now.getFullYear()
   const month = now.getMonth()
   const marks = calendarMarks(allWords, year, month)
@@ -57,16 +63,22 @@ export function HomeView({ units, unit, settings, onView }: Props) {
   ]
 
   const dueToday = dueCount
-  const plannedSoon = allWords.filter((w) => {
+  const upcomingWeek = allWords.filter((w) => {
     const s = getReviewState(w)
     return !s.due && s.daysUntil !== null && s.daysUntil > 0 && s.daysUntil <= 7
   }).length
   const masteredCount = allWords.filter((w) => w.mastered).length
-  const notDue = Math.max(0, allWords.length - dueToday - plannedSoon - masteredCount + allWords.filter((w) => w.mastered && getReviewState(w).due).length)
+  const notScheduled = allWords.filter((w) => {
+    if (w.mastered) return false
+    const s = getReviewState(w)
+    if (s.due) return false
+    if (s.daysUntil !== null && s.daysUntil > 0 && s.daysUntil <= 7) return false
+    return true
+  }).length
 
   const unitIndex = Math.max(1, units.findIndex((item) => item.id === unit?.id) + 1)
   const unitTitle = unit ? `第${unitIndex}单元 ${unit.name}` : '未选择单元'
-  const unitTheme = unit ? (unit.description || '继续巩固本单元') : '请先创建单元'
+  const unitTheme = unit ? (unit.description || '继续巩固本单元') : '请先到词库创建单元'
 
   return (
     <div className="page home-page">
@@ -95,15 +107,15 @@ export function HomeView({ units, unit, settings, onView }: Props) {
           <div>
             <strong>{planTarget} <i>词</i></strong>
             <b>今日计划</b>
-            <em>目标学习量</em>
+            <em>当前单元待学</em>
           </div>
         </article>
         <article>
           <span className="home-stat-icon done"><CheckCircle2 size={18} strokeWidth={1.6} /></span>
           <div>
             <strong>{completed} <i>词</i></strong>
-            <b>已完成</b>
-            <em>今日已学习</em>
+            <b>今日已练</b>
+            <em>本单元今日复习过</em>
           </div>
         </article>
         <article className="review-stat">
@@ -111,7 +123,7 @@ export function HomeView({ units, unit, settings, onView }: Props) {
           <div>
             <strong>{dueCount} <i>词</i></strong>
             <b>待复习</b>
-            <em>已到期提醒</em>
+            <em>全库已到期</em>
           </div>
         </article>
         <article>
@@ -170,7 +182,7 @@ export function HomeView({ units, unit, settings, onView }: Props) {
                 <div className="continue-bar"><i style={{ width: `${percent}%` }} /></div>
                 <b>{percent}%</b>
               </div>
-              <small>已学 {learned} / {total} 词 · 预计还需 {remaining} 词</small>
+              <small>本单元已学 {learned} / {total} 词 · 预计还需 {remaining} 词</small>
             </div>
           </div>
         </section>
@@ -193,52 +205,26 @@ export function HomeView({ units, unit, settings, onView }: Props) {
               </div>
             </div>
             <ul className="home-cal-legend">
-              <li><i className="due" /><span>今日复习</span><b>{dueToday}</b></li>
-              <li><i className="done" /><span>已完成</span><b>{masteredCount}</b></li>
-              <li><i className="planned" /><span>待复习</span><b>{plannedSoon}</b></li>
-              <li><i className="none" /><span>未到期</span><b>{Math.max(0, notDue)}</b></li>
+              <li><i className="due" /><span>已到期</span><b>{dueToday}</b></li>
+              <li><i className="done" /><span>已掌握</span><b>{masteredCount}</b></li>
+              <li><i className="planned" /><span>7天内</span><b>{upcomingWeek}</b></li>
+              <li><i className="none" /><span>未排期</span><b>{notScheduled}</b></li>
             </ul>
           </div>
-          <p className="home-srs-tip">
-            <Leaf size={14} strokeWidth={1.6} />
-            <span>复习是记忆的最佳方式 · 坚持 SRS（{REVIEW_INTERVAL_DAYS.join('/')} 天），让记忆更牢固！</span>
-          </p>
+          <p className="home-srs-tip"><Leaf size={14} strokeWidth={1.6} />复习是记忆的最佳方式 · 坚持 SRS（{REVIEW_INTERVAL_DAYS.join('/')} 天），让记忆更牢固！</p>
         </section>
       </div>
 
-      <section className="home-shortcuts">
-        <h2><Zap size={15} strokeWidth={1.6} />快捷入口</h2>
+      <section className="home-card home-shortcuts">
+        <h2>快捷入口</h2>
         <div className="home-shortcut-grid">
-          <button type="button" onClick={() => onView('study')}>
-            <span className="sc-vocab"><BookOpen size={18} strokeWidth={1.6} /></span>
-            <b>单词学习</b>
-            <small>背单词 · 记词义 · 练发音</small>
-            <ChevronRight size={14} />
-          </button>
-          <button type="button" onClick={() => onView('passage')}>
-            <span className="sc-passage"><FileText size={18} strokeWidth={1.6} /></span>
-            <b>课文学习</b>
-            <small>精读课文 · 语法解析 · 例句</small>
-            <ChevronRight size={14} />
-          </button>
-          <button type="button" onClick={() => onView('test')}>
-            <span className="sc-test"><ClipboardList size={18} strokeWidth={1.6} /></span>
-            <b>测试</b>
-            <small>巩固知识 · 检验成果</small>
-            <ChevronRight size={14} />
-          </button>
-          <button type="button" onClick={() => onView('dictation')}>
-            <span className="sc-dict"><Headphones size={18} strokeWidth={1.6} /></span>
-            <b>听写</b>
-            <small>听音写词 · 提升听力</small>
-            <ChevronRight size={14} />
-          </button>
+          <button type="button" onClick={() => onView('study')}><Zap size={18} /><span>单词学习</span><small>背单词 · 记词义 · 练发音</small></button>
+          <button type="button" onClick={() => onView('library')}><BookOpen size={18} /><span>词库</span><small>管理单元 · 导入手册</small></button>
+          <button type="button" onClick={() => onView('passage')}><FileText size={18} /><span>课文学习</span><small>精读课文 · 语法解析 · 例句</small></button>
+          <button type="button" onClick={() => onView('test')}><Target size={18} /><span>测试</span><small>巩固知识 · 检验成果</small></button>
+          <button type="button" onClick={() => onView('dictation')}><Headphones size={18} /><span>听写</span><small>听音写词 · 提升听力</small></button>
         </div>
       </section>
     </div>
   )
-}
-
-function planFallback(unit?: Unit) {
-  return unit?.words.length ? Math.min(30, unit.words.length) : 30
 }

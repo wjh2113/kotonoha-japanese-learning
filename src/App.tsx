@@ -8,7 +8,9 @@ import type { AppSettings, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fallbackUnitTheme, isPlaceholderTheme } from './theme'
 import { isPlaceholderMeaning, recordQuizAnswer } from './quiz'
 import {
-  AccessGate, AppHeader, DesktopTopBar, MobileTabBar, MobileTopBar,
+  AccessGate, AppHeader, ConfirmDeleteUnitModal, DesktopTopBar, ImportModal,
+  LibraryView, MobileTabBar, MobileTopBar, NewUnitModal, ReviewView, SettingsView, StudyView,
+  TestView, WordbookView,
 } from './app-views'
 import { getReviewState, scheduleReview, touchStudyStreak, uid } from './utils'
 import type { DictationMode } from './DictationView'
@@ -16,15 +18,6 @@ import type { DictationMode } from './DictationView'
 const PassageView = lazy(() => import('./PassageView').then((module) => ({ default: module.PassageView })))
 const DictationView = lazy(() => import('./DictationView').then((module) => ({ default: module.DictationView })))
 const ErrorBookView = lazy(() => import('./ErrorBookView').then((module) => ({ default: module.ErrorBookView })))
-const LibraryView = lazy(() => import('./app-views').then((module) => ({ default: module.LibraryView })))
-const StudyView = lazy(() => import('./app-views').then((module) => ({ default: module.StudyView })))
-const TestView = lazy(() => import('./app-views').then((module) => ({ default: module.TestView })))
-const WordbookView = lazy(() => import('./app-views').then((module) => ({ default: module.WordbookView })))
-const ReviewView = lazy(() => import('./app-views').then((module) => ({ default: module.ReviewView })))
-const SettingsView = lazy(() => import('./app-views').then((module) => ({ default: module.SettingsView })))
-const ImportModal = lazy(() => import('./app-views').then((module) => ({ default: module.ImportModal })))
-const NewUnitModal = lazy(() => import('./app-views').then((module) => ({ default: module.NewUnitModal })))
-const ConfirmDeleteUnitModal = lazy(() => import('./app-views').then((module) => ({ default: module.ConfirmDeleteUnitModal })))
 
 const STORAGE_KEY = 'kotonoha-units-v1'
 const SETTINGS_KEY = 'kotonoha-settings-v1'
@@ -479,13 +472,13 @@ function App() {
         <DesktopTopBar
           settings={settings} onView={nav} onSettingsChange={setSettings}
           sidebarCollapsed={sidebarCollapsed} onToggleSidebar={toggleSidebarCollapsed}
+          reviewCount={reviewCount}
         />
-        <MobileTopBar view={view} settings={settings} onView={nav} onSettingsChange={setSettings} onMenu={() => setMobileNav((current) => !current)} />
+        <MobileTopBar view={view} settings={settings} onView={nav} onSettingsChange={setSettings} onMenu={() => setMobileNav((current) => !current)} reviewCount={reviewCount} />
         {missingMeanings > 0 && (
           <div className="enrich-banner">正在补全全部单词释义，还剩 {missingMeanings} 个。补完后测试会覆盖整个单元。</div>
         )}
         <main className="main">
-          <Suspense fallback={<div className="wide-empty compact"><b>加载中…</b></div>}>
           {view === 'home' && <HomeView units={units} unit={unit} settings={settings} onView={nav} />}
           {view === 'library' && <LibraryView units={units} unitId={unitId} onUnit={setUnitId} onImport={openImport} onNewUnit={() => setNewUnitOpen(true)} onRenameUnit={renameUnit} onDeleteUnit={requestDeleteUnit} />}
           {view === 'study' && unit && (
@@ -502,52 +495,57 @@ function App() {
           )}
           {view === 'test' && unit && <TestView unit={unit} units={units} onUnit={setUnitId} onBack={() => setView('study')} onAnswer={(word, kind, correct) => updateWord(word.id, recordQuizAnswer(word, kind, correct))} />}
           {view === 'dictation' && unit && (
-            <DictationView
-              key={`${dictationMode}-${dictationSeed.length}-${dictationSeed[0]?.id || unit.id}`}
-              unit={unit} units={units} mode={dictationMode} seedWords={dictationSeed}
-              autoStart={dictationMode === 'errors' && dictationSeed.length > 0}
-              onUnit={setUnitId}
-              onBack={() => setView(dictationMode === 'errors' ? 'errorbook' : 'study')}
-              onCorrect={(word) => updateWordById(word.id, (live) => ({
-                ...recordQuizAnswer(live, 'listening', true),
-                mastered: live.mastered,
-                ...(dictationMode === 'errors' ? { errorReviewed: true } : {}),
-              }))}
-              onMiss={(word) => updateWordById(word.id, (live) => ({
-                ...recordQuizAnswer(live, 'listening', false),
-                wrongBook: true,
-                dictationMisses: Math.min(99, (live.dictationMisses || 0) + 1),
-                ...(dictationMode === 'errors' ? { errorReviewed: true } : {}),
-              }))}
-              onMaster={(word) => updateWordById(word.id, (live) => ({ mastered: true, ...scheduleReview(live, true) }))}
-              onOpenErrorBook={() => nav('errorbook')}
-              onOpenTest={() => nav('test')}
-              onOpenStudy={() => nav('study')}
-            />
+            <Suspense fallback={<div className="wide-empty compact"><b>加载中…</b></div>}>
+              <DictationView
+                key={`${dictationMode}-${dictationSeed.length}-${dictationSeed[0]?.id || unit.id}`}
+                unit={unit} units={units} mode={dictationMode} seedWords={dictationSeed}
+                autoStart={dictationMode === 'errors' && dictationSeed.length > 0}
+                onUnit={setUnitId}
+                onBack={() => setView(dictationMode === 'errors' ? 'errorbook' : 'study')}
+                onCorrect={(word) => updateWordById(word.id, (live) => ({
+                  ...recordQuizAnswer(live, 'listening', true),
+                  mastered: live.mastered,
+                  ...(dictationMode === 'errors' ? { errorReviewed: true } : {}),
+                }))}
+                onMiss={(word) => updateWordById(word.id, (live) => ({
+                  ...recordQuizAnswer(live, 'listening', false),
+                  wrongBook: true,
+                  dictationMisses: Math.min(99, (live.dictationMisses || 0) + 1),
+                  ...(dictationMode === 'errors' ? { errorReviewed: true } : {}),
+                }))}
+                onMaster={(word) => updateWordById(word.id, (live) => ({ mastered: true, ...scheduleReview(live, true) }))}
+                onOpenErrorBook={() => nav('errorbook')}
+                onOpenTest={() => nav('test')}
+                onOpenStudy={() => nav('study')}
+              />
+            </Suspense>
           )}
           {view === 'wordbook' && <WordbookView units={units} onRemove={(wordId, targetUnitId) => { updateWord(wordId, { starred: false }, targetUnitId); setToast('已移出生词本') }} />}
           {view === 'errorbook' && (
-            <ErrorBookView
-              units={units}
-              onBack={() => nav('study')}
-              onStart={(words) => openDictation('errors', words)}
-              onRemove={(wordId, targetUnitId) => { updateWord(wordId, { wrongBook: false, dictationMisses: 0, errorReviewed: false }, targetUnitId); setToast('已移出错词本') }}
-              onMaster={(word, targetUnitId) => { updateWord(word.id, { mastered: true, ...scheduleReview(word, true) }, targetUnitId); setToast('已标记掌握') }}
-            />
+            <Suspense fallback={<div className="wide-empty compact"><b>加载中…</b></div>}>
+              <ErrorBookView
+                units={units}
+                onBack={() => nav('study')}
+                onStart={(words) => openDictation('errors', words)}
+                onRemove={(wordId, targetUnitId) => { updateWord(wordId, { wrongBook: false, dictationMisses: 0, errorReviewed: false }, targetUnitId); setToast('已移出错词本') }}
+                onMaster={(word, targetUnitId) => { updateWord(word.id, { mastered: true, ...scheduleReview(word, true) }, targetUnitId); setToast('已标记掌握') }}
+              />
+            </Suspense>
           )}
           {view === 'review' && <ReviewView units={units} onReview={(word, targetUnitId, remembered) => { updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId); setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒') }} />}
-          {view === 'passage' && <PassageView />}
+          {view === 'passage' && (
+            <Suspense fallback={<div className="wide-empty compact"><b>加载中…</b></div>}>
+              <PassageView />
+            </Suspense>
+          )}
           {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} starredCount={starredCount} errorBookCount={errorBookCount} onView={nav} />}
-          </Suspense>
         </main>
       </div>
       <MobileTabBar view={view} reviewCount={reviewCount} onView={nav} />
 
-      <Suspense fallback={null}>
-        {importOpen && importUnit && <ImportModal unit={importUnit} onClose={() => setImportOpen(false)} onImported={(words, description) => addImportedWords(importUnit, words, description)} />}
-        {newUnitOpen && <NewUnitModal onClose={() => setNewUnitOpen(false)} onCreate={addUnit} />}
-        {pendingDeleteUnit && <ConfirmDeleteUnitModal unit={pendingDeleteUnit} onlyUnit={units.length <= 1} onClose={() => setPendingDeleteUnit(null)} onConfirm={() => deleteUnit(pendingDeleteUnit)} />}
-      </Suspense>
+      {importOpen && importUnit && <ImportModal unit={importUnit} onClose={() => setImportOpen(false)} onImported={(words, description) => addImportedWords(importUnit, words, description)} />}
+      {newUnitOpen && <NewUnitModal onClose={() => setNewUnitOpen(false)} onCreate={addUnit} />}
+      {pendingDeleteUnit && <ConfirmDeleteUnitModal unit={pendingDeleteUnit} onlyUnit={units.length <= 1} onClose={() => setPendingDeleteUnit(null)} onConfirm={() => deleteUnit(pendingDeleteUnit)} />}
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
       {mobileNav && <button className="mobile-overlay" onClick={() => setMobileNav(false)} aria-label="关闭菜单" />}
     </div>

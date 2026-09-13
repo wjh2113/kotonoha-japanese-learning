@@ -114,8 +114,6 @@ export function PronunciationPractice({
           <>
             <div className="shadow-metrics">
               <div><b>{score}</b><small>发音准确度</small></div>
-              <div><b>{Math.min(100, score + 5)}</b><small>流利度</small></div>
-              <div><b>{Math.max(0, score - 5)}</b><small>音调</small></div>
             </div>
             <div className="shadow-overall">
               <span>整体评分</span>

@@ -439,6 +439,24 @@ export function createDatabase(connectionString) {
   }
 
   const mapPassageRow = (row, { light = false } = {}) => {
+    // Light list rows already project metadata in SQL — avoid parsing full analysis JSON.
+    if (light && row.sentence_count != null && row.analysis == null) {
+      const status = row.status === 'processing' || row.status === 'error' ? row.status : 'ready'
+      const progress = row.progress && typeof row.progress === 'object' ? row.progress : {}
+      return {
+        id: row.id,
+        title: row.title,
+        bookId: row.book_id || '',
+        bookName: row.book_name || '',
+        progress,
+        status,
+        statusText: row.status_text || '',
+        createdAt: row.created_at.getTime(),
+        sourceText: '',
+        sentences: [],
+        sentenceCount: Number(row.sentence_count) || 0,
+      }
+    }
     const analysis = row.analysis && typeof row.analysis === 'object' ? row.analysis : {}
     const sentences = Array.isArray(analysis.sentences) ? analysis.sentences : []
     const status = analysis.status === 'processing' || analysis.status === 'error' ? analysis.status : 'ready'
@@ -469,8 +487,23 @@ export function createDatabase(connectionString) {
   }
 
   const listPassages = async ({ light = false } = {}) => {
+    const passageSql = light
+      ? `SELECT id, title, created_at,
+            COALESCE(analysis->>'bookId', '') AS book_id,
+            COALESCE(analysis->>'bookName', '') AS book_name,
+            COALESCE(analysis->>'status', 'ready') AS status,
+            COALESCE(analysis->>'statusText', '') AS status_text,
+            COALESCE(analysis->'progress', '{}'::jsonb) AS progress,
+            CASE
+              WHEN jsonb_typeof(analysis->'sentences') = 'array'
+              THEN jsonb_array_length(analysis->'sentences')
+              ELSE 0
+            END AS sentence_count
+         FROM passages
+         ORDER BY sort_order, created_at, id`
+      : 'SELECT id, title, source_text, analysis, created_at FROM passages ORDER BY sort_order, created_at, id'
     const [result, books] = await Promise.all([
-      pool.query('SELECT id, title, source_text, analysis, created_at FROM passages ORDER BY sort_order, created_at, id'),
+      pool.query(passageSql),
       listPassageBooks(),
     ])
     const passages = result.rows

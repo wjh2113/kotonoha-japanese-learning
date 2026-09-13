@@ -687,40 +687,9 @@ app.put('/api/passage-books', async (req, res) => {
   }
 })
 
-app.post('/api/passage/ocr', rateLimit(60_000, 8), async (req, res) => {
-  const { imageBase64, mimeType = 'image/jpeg' } = req.body || {}
-  if (typeof imageBase64 !== 'string' || !imageBase64) return res.status(400).json({ error: '请上传课文图片。' })
-  if (imageBase64.length > 8_000_000) return res.status(413).json({ error: '图片过大，请压缩后重试。' })
-  try {
-    const { data } = await callGateway('/api/ai/chat', {
-      tenantId,
-      capability: process.env.LLM_GATEWAY_VISION_CAPABILITY || 'vision',
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'text', text: '你是日语教师。请识别这张课文/教材照片中的全部日语正文。只输出识别到的原文，保留换行，不要翻译，不要解释，不要Markdown。若几乎没有日语，只输出 EMPTY。' },
-          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
-        ],
-      }],
-      dataClass: 'internal',
-      fallback: true,
-      stream: false,
-      temperature: 0,
-      max_tokens: 2048,
-    }, 120000)
-    const text = String(data?.choices?.[0]?.message?.content || '').trim()
-      .replace(/^```(?:\w+)?\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim()
-    const empty = !text
-      || looksLikeErrorDocument(text)
-      || /^(EMPTY|empty|none|null|n\/a|（空字符串）|空字符串|无日语|没有日语)$/i.test(text)
-    if (empty) return res.status(422).json({ error: '没有识别到日语课文，请换更清晰的照片或直接粘贴文本。' })
-    res.json({ text })
-  } catch (error) {
-    console.error(error)
-    res.status(publicStatus(error)).json({ error: clientGatewayMessage(error, '图片识别超时。', '图片识别失败，请稍后重试。') })
-  }
+// Frontend now accepts Markdown/text only; OCR endpoint retired.
+app.post('/api/passage/ocr', (_req, res) => {
+  res.status(410).json({ error: '图片 OCR 已下线，请粘贴课文 Markdown/文本。' })
 })
 
 async function analyzePassageWithModel(sourceText, exactSentences) {

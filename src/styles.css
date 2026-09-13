@@ -1115,6 +1115,25 @@ body { background: var(--cream); color: var(--ink); }
   color: var(--muted); font-size: 12px; line-height: 1.2;
 }
 .topbar-right { display: flex; align-items: center; gap: 14px; }
+.icon-button { position: relative; }
+.topbar-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--red, #c45c48);
+  color: #fff;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+}
+
 .desktop-topbar .icon-button,
 .topbar-right .icon-button {
   width: 36px; height: 36px; border: 0; border-radius: 50%; background: transparent; color: #6d7368;
