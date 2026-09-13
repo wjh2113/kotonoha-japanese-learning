@@ -217,6 +217,22 @@ describe('interrupted passage ingest', () => {
   })
 })
 
+describe('grammar highlight', () => {
+  it('marks grammar examples and particles inside the source line', async () => {
+    const { grammarHighlightTerms, highlightGrammarInText } = await import('./passage')
+    const terms = grammarHighlightTerms([
+      { name: '～は～です', explanation: '私はリンです——名词谓语句表判断' },
+      { name: '～ですか', explanation: '佐藤さんですか——句末加疑问助词か' },
+      { name: '寒暄套话', explanation: 'どうぞよろしくおねがいします（请多关照）／こちらこそ（我才是）' },
+    ])
+    expect(terms).toEqual(expect.arrayContaining(['私はリンです', 'ですか', 'は', 'です', 'どうぞよろしくおねがいします', 'こちらこそ']))
+    const parts = highlightGrammarInText('リン：あのう、私はリンです。佐藤さんですか。', terms)
+    const hits = parts.filter((part) => part.hit).map((part) => part.text)
+    expect(hits.join('')).toContain('私はリンです')
+    expect(hits.some((item) => item.includes('ですか') || item === 'ですか')).toBe(true)
+  })
+})
+
 describe('chinese instructional lines in OCR', () => {
   it('skips primarily Chinese notes from analysis queue', async () => {
     const { isPrimarilyChineseLine, sentenceNeedsAnalysis } = await import('./passage')

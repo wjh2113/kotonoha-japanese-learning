@@ -1816,6 +1816,10 @@ body { background: var(--cream); color: var(--ink); }
 }
 .passage-bilingual-jp { display: grid; gap: 2px; min-width: 0; }
 .passage-bilingual-jp .jp { font-size: 17px; line-height: 1.7; color: var(--ink); }
+.passage-bilingual-jp .grammar-hit {
+  color: #c43c2c;
+  font-weight: 700;
+}
 .passage-furi { color: #a3a99a; font-size: 11px; }
 .passage-bilingual-tr { color: #8b9180; font-size: 14px; line-height: 1.6; padding-top: 2px; }
 .passage-grammar-block { margin-top: 8px; }

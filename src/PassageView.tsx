@@ -7,7 +7,7 @@ import { apiFetch, readApiJson } from './api'
 import { readPassageSource } from './docx'
 import { isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import {
-  hasChineseTranslation, isTransientPassage, mergePassageBooks,
+  grammarHighlightTerms, hasChineseTranslation, highlightGrammarInText, isTransientPassage, mergePassageBooks,
   normalizePassageSentence, MAX_PASSAGES, parsePassageHandbook, recordSentenceDictation, recordSentenceScore,
   recoverInterruptedIngest, sentenceNeedsAnalysis,
 } from './passage'
@@ -300,6 +300,13 @@ export function PassageView() {
   // Keep booksRef in sync when setBooks is used without commitBooks (legacy paths).
   useEffect(() => { booksRef.current = books }, [books])
 
+  // Upload modal defaults to the first textbook in the catalog.
+  useEffect(() => {
+    if (draftBookId) return
+    const firstBookId = books[0]?.id
+    if (firstBookId) setDraftBookId(firstBookId)
+  }, [books, draftBookId])
+
   const passage = passages.find((item) => item.id === selectedId) || passages[0]
   const sentence = passage?.sentences[sentenceIndex]
 
@@ -483,10 +490,11 @@ export function PassageView() {
   const deleteBook = (book: PassageBook) => {
     if (!window.confirm(`删除课本「${book.name}」？课文会回到未分组，不会被删。`)) return
     const affected = passagesRef.current.filter((item) => item.bookId === book.id).map((item) => item.id)
-    commitBooks(booksRef.current.filter((item) => item.id !== book.id))
+    const remaining = booksRef.current.filter((item) => item.id !== book.id)
+    commitBooks(remaining)
     commitPassages(passagesRef.current.map((item) => item.bookId === book.id ? { ...item, bookId: '', bookName: '' } : item))
     affected.forEach((id) => markUpsert(id))
-    if (draftBookId === book.id) setDraftBookId('')
+    if (draftBookId === book.id) setDraftBookId(remaining[0]?.id || '')
   }
 
   const movePassage = (bookId: string) => {
@@ -515,6 +523,13 @@ export function PassageView() {
       return true
     })
   })()
+  const grammarTerms = grammarHighlightTerms(grammarPoints)
+
+  const openUpload = () => {
+    const firstBookId = books[0]?.id
+    if (firstBookId) setDraftBookId((current) => current || firstBookId)
+    setUploadOpen(true)
+  }
 
   const selectPassage = (id: string) => {
     if (!id || id === selectedId) return
@@ -531,7 +546,7 @@ export function PassageView() {
           <p>在上方目录选择课文，可切换原文、精听与跟读。</p>
         </div>
         <div className="hero-actions">
-          <button className="primary-button" disabled={!ready} onClick={() => setUploadOpen(true)}><UploadCloud size={17} strokeWidth={1.6} />添加课文</button>
+          <button className="primary-button" disabled={!ready} onClick={openUpload}><UploadCloud size={17} strokeWidth={1.6} />添加课文</button>
         </div>
       </section>
 
@@ -594,7 +609,7 @@ export function PassageView() {
               {passage.status === 'processing' && Date.now() - (passage.createdAt || 0) > 120_000 && (
                 <div className="passage-status error">
                   识别时间过长，可删除后重试，或改粘贴正文。
-                  <button type="button" onClick={() => setUploadOpen(true)}>重新添加</button>
+                  <button type="button" onClick={openUpload}>重新添加</button>
                 </div>
               )}
 
@@ -781,7 +796,13 @@ export function PassageView() {
                               <button type="button" className="passage-bilingual-row" onClick={() => goSentence(index, true)}>
                                 <em>{index + 1}</em>
                                 <span className="passage-bilingual-jp">
-                                  <span className="jp">{item.text}</span>
+                                  <span className="jp">
+                                    {highlightGrammarInText(item.text, grammarTerms).map((part, partIndex) => (
+                                      part.hit
+                                        ? <span key={`${item.id}-g-${partIndex}`} className="grammar-hit">{part.text}</span>
+                                        : <span key={`${item.id}-t-${partIndex}`}>{part.text}</span>
+                                    ))}
+                                  </span>
                                   {item.reading && <small className="jp passage-furi">{item.reading}</small>}
                                 </span>
                                 {hasChineseTranslation(item.translation) && (
@@ -856,7 +877,7 @@ export function PassageView() {
           <ScrollText />
           <h2>还没有课文</h2>
           <p>请上传「课文整理」Markdown 手册（含原文、假名注音、中文解释）。系统按「课文N」拆篇入库，不调用模型。</p>
-          <button onClick={() => setUploadOpen(true)}>添加课文</button>
+          <button onClick={openUpload}>添加课文</button>
         </div>
       )}
 

@@ -173,6 +173,83 @@ function finalizePassageSentence(partial: Omit<PassageSentence, 'tokens'> & { to
   return { ...partial, reading, tokens }
 }
 
+const JP_CHUNK = /[\u3040-\u30ff\u4e00-\u9fffー]{2,40}/g
+
+function pushGrammarTerm(bucket: string[], value: string) {
+  const term = String(value || '').trim()
+  if (!term || term.length < 1 || term.length > 40) return
+  if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(term)) return
+  // Skip pure Chinese tip fragments.
+  if (!/[\u3040-\u30ff]/.test(term) && /[\u4e00-\u9fff]/.test(term) && !/[ぁ-んァ-ン]/.test(term)) {
+    // Allow kanji-only Japanese examples like 東京大学.
+    if (term.length < 2) return
+  }
+  bucket.push(term)
+}
+
+/** Collect searchable Japanese fragments from lesson grammar notes for red highlighting. */
+export function grammarHighlightTerms(points: Array<{ name?: string; pattern?: string; explanation?: string }>) {
+  const raw: string[] = []
+  for (const point of points || []) {
+    const name = String(point?.name || '').trim()
+    const pattern = String(point?.pattern || '').trim()
+    const explanation = String(point?.explanation || '').trim()
+    const blob = [pattern, name, explanation].filter(Boolean).join('\n')
+
+    // Example before —— : 「私はリンです——名词谓语句…」
+    const beforeDash = blob.split(/——/)[0] || ''
+    for (const part of beforeDash.split(/[：:／/;；、，,\n]+/)) {
+      const cleaned = part.replace(/[～〜]/g, '').trim()
+      pushGrammarTerm(raw, cleaned)
+    }
+
+    // Pattern slots: ～は～です / ～ですか → は, です, ですか
+    for (const field of [name, pattern]) {
+      for (const slot of String(field || '').split(/[～〜]+/)) {
+        const piece = slot.replace(/[：:].*$/, '').trim()
+        if (piece && piece.length <= 12) pushGrammarTerm(raw, piece)
+      }
+    }
+
+    // JP phrase before a Chinese parenthetical: どうぞよろしく…（请多关照）
+    for (const match of blob.matchAll(/([\u3040-\u30ff\u4e00-\u9fffー、。！？!?…\s]{2,40})（[^）]*[\u4e00-\u9fff]/g)) {
+      pushGrammarTerm(raw, match[1].replace(/\s+/g, ''))
+    }
+
+    for (const match of explanation.matchAll(JP_CHUNK)) pushGrammarTerm(raw, match[0])
+  }
+
+  const unique = [...new Set(raw)]
+  // Prefer longer phrases so「ですか」wins over「です」when overlapping left-to-right after sort.
+  return unique.sort((a, b) => b.length - a.length || a.localeCompare(b, 'ja'))
+}
+
+export function highlightGrammarInText(text: string, terms: string[]) {
+  const source = String(text || '')
+  if (!source || !terms.length) return [{ text: source, hit: false as const }]
+  const parts: Array<{ text: string; hit: boolean }> = []
+  let cursor = 0
+  while (cursor < source.length) {
+    let best: { term: string; at: number } | null = null
+    for (const term of terms) {
+      if (!term) continue
+      const at = source.indexOf(term, cursor)
+      if (at < 0) continue
+      if (!best || at < best.at || (at === best.at && term.length > best.term.length)) {
+        best = { term, at }
+      }
+    }
+    if (!best) {
+      parts.push({ text: source.slice(cursor), hit: false })
+      break
+    }
+    if (best.at > cursor) parts.push({ text: source.slice(cursor, best.at), hit: false })
+    parts.push({ text: best.term, hit: true })
+    cursor = best.at + best.term.length
+  }
+  return parts.filter((part) => part.text)
+}
+
 function parseGrammarCell(cell: string): PassageSentence['grammar'] {
   return String(cell || '')
     .split(/[；;\n]+/)
