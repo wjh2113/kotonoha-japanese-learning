@@ -112,12 +112,21 @@ run('PostgreSQL persist integration', () => {
 
   it('stores passage books in passage_books table', async () => {
     const bookId = `book-${suffix}`
-    const books = await db.replacePassageBooks([{ id: bookId, name: `课本${suffix}` }])
-    expect(books.some((book) => book.id === bookId && book.name.startsWith('课本'))).toBe(true)
+    const lessonId = `lesson-${suffix}`
+    const saved = await db.replacePassageBooks(
+      [{ id: bookId, name: `课本${suffix}` }],
+      [{ id: lessonId, bookId, name: `第001课` }],
+    )
+    expect(saved.books.some((book) => book.id === bookId && book.name.startsWith('课本'))).toBe(true)
+    expect(saved.lessons.some((lesson) => lesson.id === lessonId && lesson.name === '第001课')).toBe(true)
     const listed = await db.listPassages()
     expect(listed.books.some((book) => book.id === bookId)).toBe(true)
+    expect(listed.lessons.some((lesson) => lesson.id === lessonId)).toBe(true)
     expect(listed.passages.some((item) => item.id === '__kotonoha_books__')).toBe(false)
-    await db.replacePassageBooks(listed.books.filter((book) => book.id !== bookId))
+    await db.replacePassageBooks(
+      listed.books.filter((book) => book.id !== bookId),
+      listed.lessons.filter((lesson) => lesson.id !== lessonId),
+    )
   })
 
   it('patches settings independently', async () => {

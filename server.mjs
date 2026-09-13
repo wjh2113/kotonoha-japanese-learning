@@ -720,7 +720,12 @@ app.delete('/api/passages/:id', async (req, res) => {
 
 app.put('/api/passage-books', async (req, res) => {
   try {
-    res.json({ books: await database.replacePassageBooks(req.body?.books || req.body) })
+    const body = req.body || {}
+    const result = await database.replacePassageBooks(
+      body.books || body,
+      body.lessons !== undefined ? body.lessons : undefined,
+    )
+    res.json(result)
   } catch (error) {
     console.error(error)
     res.status(500).json({ error: '课本分组保存失败。' })

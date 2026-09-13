@@ -69,6 +69,31 @@ export function normalizePassageBooks(input, passages = []) {
   return [...map.entries()].map(([id, name]) => ({ id, name })).slice(0, 40)
 }
 
+export function normalizePassageLessons(input, passages = []) {
+  const map = new Map()
+  const rows = [
+    ...(Array.isArray(input?.lessons) ? input.lessons : []),
+    ...passages.map((passage) => ({
+      id: passage?.lessonId,
+      bookId: passage?.bookId,
+      name: passage?.lessonName,
+    })),
+  ]
+  for (const lesson of rows) {
+    const id = text(lesson?.id).slice(0, 40)
+    const name = text(lesson?.name).slice(0, 80)
+    if (!id || !name || id === BOOKS_META_ID) continue
+    const bookId = text(lesson?.bookId).slice(0, 40)
+    const prev = map.get(id)
+    map.set(id, {
+      id,
+      bookId: bookId || prev?.bookId || '',
+      name: name || prev?.name || '未命名课时',
+    })
+  }
+  return [...map.values()].slice(0, 120)
+}
+
 export function prepareUnitWords(words = []) {
   const seenIds = new Set()
   const seenKeys = new Set()
@@ -129,15 +154,57 @@ export function createDatabase(connectionString) {
     await pool.query('DELETE FROM passages WHERE id = $1', [BOOKS_META_ID])
   }
 
+  const migrateLessonsFromPassages = async () => {
+    const existing = await pool.query('SELECT COUNT(*)::int AS count FROM passage_lessons')
+    if ((existing.rows[0]?.count || 0) > 0) return
+    const result = await pool.query(
+      `SELECT analysis FROM passages WHERE id <> $1 AND analysis ? 'lessonId'`,
+      [BOOKS_META_ID],
+    )
+    const map = new Map()
+    for (const row of result.rows) {
+      const analysis = row.analysis && typeof row.analysis === 'object' ? row.analysis : {}
+      const id = text(analysis.lessonId).slice(0, 40)
+      const name = text(analysis.lessonName).slice(0, 80)
+      if (!id || !name) continue
+      const bookId = text(analysis.bookId).slice(0, 40)
+      const prev = map.get(id)
+      map.set(id, { id, bookId: bookId || prev?.bookId || '', name })
+    }
+    for (const [index, lesson] of [...map.values()].entries()) {
+      await pool.query(
+        `INSERT INTO passage_lessons (id, book_id, name, sort_order)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (id) DO UPDATE SET
+           book_id = EXCLUDED.book_id,
+           name = EXCLUDED.name,
+           sort_order = EXCLUDED.sort_order`,
+        [lesson.id, lesson.bookId, lesson.name, index],
+      )
+    }
+  }
+
   const initialize = async () => {
     const schema = await fs.readFile(path.join(dirname, 'db', 'schema.sql'), 'utf8')
     await pool.query(schema)
     await migrateBooksMetaRow()
+    await migrateLessonsFromPassages()
   }
 
   const listPassageBooks = async () => {
     const result = await pool.query('SELECT id, name FROM passage_books ORDER BY sort_order, created_at, id')
     return result.rows.map((row) => ({ id: row.id, name: row.name }))
+  }
+
+  const listPassageLessons = async () => {
+    const result = await pool.query(
+      'SELECT id, book_id, name FROM passage_lessons ORDER BY sort_order, created_at, id',
+    )
+    return result.rows.map((row) => ({
+      id: row.id,
+      bookId: row.book_id || '',
+      name: row.name,
+    }))
   }
 
   const writePassageBooks = async (client, books) => {
@@ -146,6 +213,16 @@ export function createDatabase(connectionString) {
       await client.query(
         'INSERT INTO passage_books (id, name, sort_order) VALUES ($1, $2, $3)',
         [book.id, book.name, index],
+      )
+    }
+  }
+
+  const writePassageLessons = async (client, lessons) => {
+    await client.query('DELETE FROM passage_lessons')
+    for (const [index, lesson] of lessons.entries()) {
+      await client.query(
+        'INSERT INTO passage_lessons (id, book_id, name, sort_order) VALUES ($1, $2, $3, $4)',
+        [lesson.id, lesson.bookId || '', lesson.name, index],
       )
     }
   }
@@ -448,6 +525,8 @@ export function createDatabase(connectionString) {
         title: row.title,
         bookId: row.book_id || '',
         bookName: row.book_name || '',
+        lessonId: row.lesson_id || '',
+        lessonName: row.lesson_name || '',
         progress,
         status,
         statusText: row.status_text || '',
@@ -465,6 +544,8 @@ export function createDatabase(connectionString) {
       title: row.title,
       bookId: analysis.bookId || '',
       bookName: analysis.bookName || '',
+      lessonId: analysis.lessonId || '',
+      lessonName: analysis.lessonName || '',
       progress: analysis.progress && typeof analysis.progress === 'object' ? analysis.progress : {},
       status,
       statusText: analysis.statusText || '',
@@ -491,6 +572,8 @@ export function createDatabase(connectionString) {
       ? `SELECT id, title, created_at,
             COALESCE(analysis->>'bookId', '') AS book_id,
             COALESCE(analysis->>'bookName', '') AS book_name,
+            COALESCE(analysis->>'lessonId', '') AS lesson_id,
+            COALESCE(analysis->>'lessonName', '') AS lesson_name,
             COALESCE(analysis->>'status', 'ready') AS status,
             COALESCE(analysis->>'statusText', '') AS status_text,
             COALESCE(analysis->'progress', '{}'::jsonb) AS progress,
@@ -502,14 +585,15 @@ export function createDatabase(connectionString) {
          FROM passages
          ORDER BY sort_order, created_at, id`
       : 'SELECT id, title, source_text, analysis, created_at FROM passages ORDER BY sort_order, created_at, id'
-    const [result, books] = await Promise.all([
+    const [result, books, lessons] = await Promise.all([
       pool.query(passageSql),
       listPassageBooks(),
+      listPassageLessons(),
     ])
     const passages = result.rows
       .filter((row) => row.id !== BOOKS_META_ID)
       .map((row) => mapPassageRow(row, { light }))
-    return { passages, books }
+    return { passages, books, lessons: normalizePassageLessons({ lessons }, passages) }
   }
 
   const getPassage = async (id) => {
@@ -554,16 +638,37 @@ export function createDatabase(connectionString) {
       sentences,
       bookId: text(passage.bookId).slice(0, 40),
       bookName: text(passage.bookName).slice(0, 80),
+      lessonId: text(passage.lessonId).slice(0, 40),
+      lessonName: text(passage.lessonName).slice(0, 80),
       progress,
       status: passage.status === 'processing' || passage.status === 'error' ? passage.status : 'ready',
       statusText: storeStatusText(passage.statusText),
     }
   }
 
-  /** Upsert passages + books table; delete orphans instead of wiping the table. */
+  const upsertLessonRow = async (clientOrPool, lesson) => {
+    const id = text(lesson?.id).slice(0, 40)
+    const name = text(lesson?.name).slice(0, 80)
+    if (!id || !name) return
+    const bookId = text(lesson?.bookId).slice(0, 40)
+    await clientOrPool.query(
+      `INSERT INTO passage_lessons (id, book_id, name, sort_order)
+       VALUES (
+         $1, $2, $3,
+         COALESCE((SELECT MAX(sort_order) + 1 FROM passage_lessons), 0)
+       )
+       ON CONFLICT (id) DO UPDATE SET
+         book_id = EXCLUDED.book_id,
+         name = EXCLUDED.name`,
+      [id, bookId, name],
+    )
+  }
+
+  /** Upsert passages + books/lessons tables; delete orphans instead of wiping the table. */
   const replacePassages = async (input) => {
     const passages = validatePassages(input)
     const books = normalizePassageBooks(input, passages)
+    const lessons = normalizePassageLessons(input, passages)
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
@@ -583,6 +688,7 @@ export function createDatabase(connectionString) {
         )
       }
       await writePassageBooks(client, books)
+      await writePassageLessons(client, lessons)
       await client.query('DELETE FROM passages WHERE id = $1 OR NOT (id = ANY($2::text[]))', [BOOKS_META_ID, keepIds])
       await client.query('COMMIT')
       return listPassages({ light: false })
@@ -609,6 +715,13 @@ export function createDatabase(connectionString) {
         JSON.stringify(passageAnalysisPayload(passage)), sortOrder,
         timestamp(passage.createdAt) || existing.rows[0]?.created_at || null],
     )
+    if (text(passage.lessonId) && text(passage.lessonName)) {
+      await upsertLessonRow(pool, {
+        id: passage.lessonId,
+        bookId: passage.bookId,
+        name: passage.lessonName,
+      })
+    }
     return getPassage(text(passage.id))
   }
 
@@ -626,15 +739,22 @@ export function createDatabase(connectionString) {
     return getPassage(passageId)
   }
 
-  const replacePassageBooks = async (booksInput) => {
+  const replacePassageBooks = async (booksInput, lessonsInput) => {
     const books = normalizePassageBooks({ books: booksInput }, [])
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
       await writePassageBooks(client, books)
+      let lessons
+      if (lessonsInput !== undefined) {
+        lessons = normalizePassageLessons({ lessons: lessonsInput }, [])
+        await writePassageLessons(client, lessons)
+      } else {
+        lessons = await listPassageLessons()
+      }
       await client.query('DELETE FROM passages WHERE id = $1', [BOOKS_META_ID])
       await client.query('COMMIT')
-      return books
+      return { books, lessons }
     } catch (error) {
       await client.query('ROLLBACK')
       throw error
@@ -659,6 +779,7 @@ export function createDatabase(connectionString) {
       await client.query('DELETE FROM words')
       await client.query('DELETE FROM units')
       await client.query('DELETE FROM passages')
+      await client.query('DELETE FROM passage_lessons')
       await client.query('DELETE FROM passage_books')
       await client.query('DELETE FROM passages WHERE id = $1', [BOOKS_META_ID]).catch(() => {})
       await client.query('COMMIT')

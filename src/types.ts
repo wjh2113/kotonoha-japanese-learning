@@ -41,6 +41,13 @@ export type PassageBook = {
   name: string
 }
 
+/** 课时，挂在课本下；上传 md 时由用户选择/填写（如「第007课」）。 */
+export type PassageLesson = {
+  id: string
+  bookId: string
+  name: string
+}
+
 export type View = 'home' | 'library' | 'study' | 'passage' | 'test' | 'dictation' | 'wordbook' | 'errorbook' | 'review' | 'settings'
 
 export type VoiceGender = 'female' | 'male'
@@ -110,6 +117,9 @@ export type Passage = {
   createdAt: number
   bookId?: string
   bookName?: string
+  /** 课时（第几课），章节是 Passage 本身（## 课文N）。 */
+  lessonId?: string
+  lessonName?: string
   progress?: Record<string, SentenceProgress>
   status?: PassageStatus
   statusText?: string

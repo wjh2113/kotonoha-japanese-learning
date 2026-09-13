@@ -91,4 +91,14 @@ CREATE TABLE IF NOT EXISTS passage_books (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS passage_lessons (
+  id TEXT PRIMARY KEY,
+  book_id TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS passage_lessons_book_idx ON passage_lessons(book_id, sort_order, created_at, id);
+
 INSERT INTO app_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;

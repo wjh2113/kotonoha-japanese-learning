@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chunkItems, extractPassageVocab, unusedPassageVocab, isTransientPassage, listPassageBooks, mergeAnalyzedSentences, MAX_PASSAGES, PASSAGE_ANALYZE_CHUNK, PASSAGE_ANALYZE_CONCURRENCY, passageNeedsAnalysis, passageProgressSummary, parsePassageHandbook, parsePassageTable, recordSentenceScore, recoverInterruptedIngest } from './passage'
+import { chunkItems, extractPassageVocab, unusedPassageVocab, isTransientPassage, listPassageBooks, mergeAnalyzedSentences, mergePassageLessons, MAX_PASSAGES, orderPassagesByCatalog, catalogOptionLabel, PASSAGE_ANALYZE_CHUNK, PASSAGE_ANALYZE_CONCURRENCY, passageNeedsAnalysis, passageProgressSummary, parsePassageHandbook, parsePassageTable, recordSentenceScore, recoverInterruptedIngest } from './passage'
 import type { Passage } from './types'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -148,6 +148,21 @@ describe('passage progress and books', () => {
     expect(listPassageBooks([passage, { ...passage, id: 'p2' }])).toEqual([
       { id: 'book-1', name: '大家的日语 第1册' },
     ])
+  })
+
+  it('orders passages by book → lesson → chapter', () => {
+    const a = { ...passage, id: 'a', bookId: 'b1', bookName: '册1', lessonId: 'l2', lessonName: '第002课', title: '课文1' }
+    const b = { ...passage, id: 'b', bookId: 'b1', bookName: '册1', lessonId: 'l1', lessonName: '第001课', title: '课文2' }
+    const c = { ...passage, id: 'c', bookId: 'b1', bookName: '册1', lessonId: 'l1', lessonName: '第001课', title: '课文1' }
+    const d = { ...passage, id: 'd', bookId: '', title: '散篇' }
+    const ordered = orderPassagesByCatalog(
+      [{ id: 'b1' }],
+      [{ id: 'l1', bookId: 'b1' }, { id: 'l2', bookId: 'b1' }],
+      [a, b, c, d],
+    )
+    expect(ordered.map((item) => item.id)).toEqual(['b', 'c', 'a', 'd'])
+    expect(catalogOptionLabel(c)).toContain('第001课')
+    expect(mergePassageLessons([], [c])[0]).toEqual({ id: 'l1', bookId: 'b1', name: '第001课' })
   })
 })
 

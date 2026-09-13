@@ -439,13 +439,13 @@ function parseHandbookLessonBody(title: string, body: string): PassageLessonDraf
 
 /**
  * 解析「课文整理」Markdown 手册：
- * # 标题
- * ## 课文1：…
+ * # 课时（如第007课）
+ * ## 章节（课文1 / 课文2 …）
  * 学习目标：…
  * | 原文 | 假名注音 | 中文解释 |
  * **语法考点**
  * - …
- * 一篇文件可含多课，每课拆成独立 Passage。上传内容原样入库，不调用模型。
+ * 一篇文件可含多章节，每章节拆成独立 Passage。上传内容原样入库，不调用模型。
  */
 export function parsePassageHandbook(raw: string): ParsedPassageImport | null {
   const text = String(raw || '').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').trim()
@@ -576,9 +576,61 @@ export function listPassageBooks(passages: Passage[]) {
   return [...books.entries()].map(([id, name]) => ({ id, name }))
 }
 
+export function listPassageLessons(passages: Passage[]): Array<{ id: string; bookId: string; name: string }> {
+  const map = new Map<string, { id: string; bookId: string; name: string }>()
+  for (const passage of passages) {
+    const id = String(passage.lessonId || '').trim()
+    const name = String(passage.lessonName || '').trim()
+    if (!id || !name) continue
+    const bookId = String(passage.bookId || '').trim()
+    const prev = map.get(id)
+    map.set(id, {
+      id,
+      bookId: bookId || prev?.bookId || '',
+      name: name || prev?.name || '未命名课时',
+    })
+  }
+  return [...map.values()]
+}
+
 export function passagesInBook(passages: Passage[], bookId: string) {
   if (!bookId) return passages.filter((item) => !item.bookId)
   return passages.filter((item) => item.bookId === bookId)
+}
+
+/** 课本 → 课时 → 章节 排序，供目录与「下一课」使用。 */
+export function orderPassagesByCatalog(
+  books: Array<{ id: string }>,
+  lessons: Array<{ id: string; bookId: string }>,
+  passages: Passage[],
+) {
+  const seen = new Set<string>()
+  const ordered: Passage[] = []
+  const push = (items: Passage[]) => {
+    for (const item of items) {
+      if (seen.has(item.id)) continue
+      seen.add(item.id)
+      ordered.push(item)
+    }
+  }
+
+  for (const book of books) {
+    const bookLessons = lessons.filter((lesson) => lesson.bookId === book.id)
+    for (const lesson of bookLessons) {
+      push(passages.filter((item) => item.bookId === book.id && item.lessonId === lesson.id))
+    }
+    push(passages.filter((item) => item.bookId === book.id && !item.lessonId))
+  }
+  push(passages.filter((item) => !item.bookId))
+  return ordered
+}
+
+export function catalogOptionLabel(passage: Passage) {
+  const lesson = String(passage.lessonName || '').trim()
+  const title = String(passage.title || '').trim() || '课文'
+  const count = passage.sentences?.length || passage.sentenceCount || 0
+  const head = lesson ? `${lesson} · ${title}` : title
+  return `${head}（${count} 句）`
 }
 
 export function sentencePractice(passage: Passage, sentence: PassageSentence) {
@@ -594,4 +646,30 @@ export function mergePassageBooks(books: { id: string; name: string }[], passage
   }
   for (const book of listPassageBooks(passages)) map.set(book.id, book.name)
   return [...map.entries()].map(([id, name]) => ({ id, name }))
+}
+
+export function mergePassageLessons(
+  lessons: Array<{ id: string; bookId: string; name: string }>,
+  passages: Passage[],
+) {
+  const map = new Map<string, { id: string; bookId: string; name: string }>()
+  for (const lesson of lessons) {
+    const id = String(lesson.id || '').trim()
+    const name = String(lesson.name || '').trim()
+    if (!id || !name) continue
+    map.set(id, {
+      id,
+      bookId: String(lesson.bookId || '').trim(),
+      name,
+    })
+  }
+  for (const lesson of listPassageLessons(passages)) {
+    const prev = map.get(lesson.id)
+    map.set(lesson.id, {
+      id: lesson.id,
+      bookId: lesson.bookId || prev?.bookId || '',
+      name: lesson.name || prev?.name || '未命名课时',
+    })
+  }
+  return [...map.values()]
 }

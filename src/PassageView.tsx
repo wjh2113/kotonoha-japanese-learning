@@ -7,15 +7,16 @@ import { apiFetch, readApiJson } from './api'
 import { readPassageSource } from './docx'
 import { isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import {
-  grammarHighlightTerms, hasChineseTranslation, highlightGrammarInText, isTransientPassage, mergePassageBooks,
-  normalizePassageSentence, MAX_PASSAGES, parsePassageHandbook, recordSentenceDictation, recordSentenceScore,
-  recoverInterruptedIngest, sentenceNeedsAnalysis,
+  catalogOptionLabel, grammarHighlightTerms, hasChineseTranslation, highlightGrammarInText, isTransientPassage,
+  mergePassageBooks, mergePassageLessons, normalizePassageSentence, MAX_PASSAGES, orderPassagesByCatalog,
+  parsePassageHandbook, recordSentenceDictation, recordSentenceScore, recoverInterruptedIngest,
+  sentenceNeedsAnalysis,
 } from './passage'
 import { PassageIntensive } from './PassageIntensive'
 import { PronunciationPractice } from './PronunciationPractice'
 import { SettingsContext } from './settings-context'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
-import type { Passage, PassageBook, PassageSentence } from './types'
+import type { Passage, PassageBook, PassageLesson, PassageSentence } from './types'
 import { uid } from './utils'
 
 type Mode = 'source' | 'intensive' | 'shadow'
@@ -56,6 +57,8 @@ function hydratePassage(item: unknown): Passage | null {
     createdAt: Number(record.createdAt) || Date.now(),
     bookId: String(record.bookId || '').trim(),
     bookName: String(record.bookName || '').trim(),
+    lessonId: String(record.lessonId || '').trim(),
+    lessonName: String(record.lessonName || '').trim(),
     progress: hydrateProgress(record.progress),
     status,
     statusText: String(record.statusText || ''),
@@ -74,11 +77,14 @@ export function PassageView() {
   const { voiceGender } = useContext(SettingsContext)
   const [passages, setPassages] = useState<Passage[]>([])
   const [books, setBooks] = useState<PassageBook[]>([])
+  const [lessons, setLessons] = useState<PassageLesson[]>([])
   const [ready, setReady] = useState(false)
   const [selectedId, setSelectedId] = useState('')
   const [mode, setMode] = useState<Mode>('source')
   const [sentenceIndex, setSentenceIndex] = useState(0)
   const [draftBookId, setDraftBookId] = useState('')
+  const [draftLessonName, setDraftLessonName] = useState('')
+  const [chapterPreview, setChapterPreview] = useState<string[]>([])
   const [sourceEditing, setSourceEditing] = useState(false)
   const [sourceDraft, setSourceDraft] = useState('')
   const [busy, setBusy] = useState('')
@@ -101,6 +107,7 @@ export function PassageView() {
   const detailLoading = useRef(new Set<string>())
   const passagesRef = useRef<Passage[]>([])
   const booksRef = useRef<PassageBook[]>([])
+  const lessonsRef = useRef<PassageLesson[]>([])
   const activeSentenceRef = useRef<HTMLLIElement | null>(null)
 
   useEffect(() => () => {
@@ -123,6 +130,12 @@ export function PassageView() {
   const commitBooks = (next: PassageBook[]) => {
     booksRef.current = next
     setBooks(next)
+    dirtyBooks.current = true
+  }
+
+  const commitLessons = (next: PassageLesson[]) => {
+    lessonsRef.current = next
+    setLessons(next)
     dirtyBooks.current = true
   }
 
@@ -205,7 +218,7 @@ export function PassageView() {
           const response = await apiFetch('/api/passage-books', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ books: booksRef.current }),
+            body: JSON.stringify({ books: booksRef.current, lessons: lessonsRef.current }),
           })
           if (!response.ok) throw new Error('BOOKS_FAILED')
         }
@@ -225,7 +238,7 @@ export function PassageView() {
   useEffect(() => {
     let cancelled = false
     apiFetch('/api/passages').then(async (response) => {
-      const data = await readApiJson<{ passages?: unknown[]; books?: unknown[]; error?: string }>(response)
+      const data = await readApiJson<{ passages?: unknown[]; books?: unknown[]; lessons?: unknown[]; error?: string }>(response)
       if (cancelled || !response.ok) throw new Error(publicApiMessage(data.error, '读取课文失败'))
       const next = (Array.isArray(data.passages) ? data.passages as unknown[] : []).map(hydratePassage).filter((item): item is Passage => Boolean(item))
       persistEnabled.current = true
@@ -245,6 +258,12 @@ export function PassageView() {
       const nextBooks = mergePassageBooks(Array.isArray(data.books) ? data.books as { id: string; name: string }[] : [], merged)
       booksRef.current = nextBooks
       setBooks(nextBooks)
+      const nextLessons = mergePassageLessons(
+        Array.isArray(data.lessons) ? data.lessons as PassageLesson[] : [],
+        merged,
+      )
+      lessonsRef.current = nextLessons
+      setLessons(nextLessons)
       dirtyBooks.current = false
       setSelectedId((current) => merged.some((item) => item.id === current) ? current : (merged[0]?.id || ''))
       setReady(true)
@@ -295,10 +314,11 @@ export function PassageView() {
     if (!ready || !persistEnabled.current) return
     const timer = window.setTimeout(() => { void flushPersist() }, 400)
     return () => window.clearTimeout(timer)
-  }, [passages, books, ready])
+  }, [passages, books, lessons, ready])
 
   // Keep booksRef in sync when setBooks is used without commitBooks (legacy paths).
   useEffect(() => { booksRef.current = books }, [books])
+  useEffect(() => { lessonsRef.current = lessons }, [lessons])
 
   // Upload modal defaults to the first textbook in the catalog.
   useEffect(() => {
@@ -328,28 +348,46 @@ export function PassageView() {
       setNotice('未识别到「课文整理」手册格式。请使用下载的 .md 模版（含 ## 课文N 与「原文 / 假名注音 / 中文解释」表）。')
       return
     }
+    const lessonName = (draftLessonName.trim() || imported.documentTitle.trim()).slice(0, 80)
+    if (!lessonName) {
+      setNotice('请填写课时名称（例如：第007课）。也可在手册第一行写 # 【课文整理】第007课。')
+      setChapterPreview(imported.lessons.map((item) => item.title))
+      return
+    }
+    setDraftLessonName(lessonName)
+    setChapterPreview(imported.lessons.map((item) => item.title))
     const room = MAX_PASSAGES - durableCount()
     if (room <= 0) {
       setNotice(`课文库已满（最多 ${MAX_PASSAGES} 篇），请先删除旧课文再导入。`)
       return
     }
-    let lessonList = imported.lessons
+    let chapterList = imported.lessons
     let truncated = false
-    if (lessonList.length > room) {
-      lessonList = lessonList.slice(0, room)
+    if (chapterList.length > room) {
+      chapterList = chapterList.slice(0, room)
       truncated = true
     }
     const book = books.find((item) => item.id === draftBookId)
+    let lesson = lessonsRef.current.find(
+      (item) => item.bookId === (book?.id || '') && item.name === lessonName,
+    )
+    if (!lesson) {
+      lesson = { id: uid(), bookId: book?.id || '', name: lessonName }
+      commitLessons([...lessonsRef.current, lesson])
+    } else if (book?.id && lesson.bookId !== book.id) {
+      lesson = { ...lesson, bookId: book.id }
+      commitLessons(lessonsRef.current.map((item) => item.id === lesson!.id ? lesson! : item))
+    }
     // 倒序加入，使「课文1」排在列表最前并被选中
-    const lessons = [...lessonList].reverse()
+    const chapters = [...chapterList].reverse()
     const created: Passage[] = []
     let selected = ''
-    for (const lesson of lessons) {
-      const incomplete = lesson.sentences.filter(sentenceNeedsAnalysis).length
+    for (const chapter of chapters) {
+      const incomplete = chapter.sentences.filter(sentenceNeedsAnalysis).length
       const stub: Passage = {
         id: uid(),
-        title: passageTitle(lesson.title),
-        sourceText: lesson.sourceText,
+        title: passageTitle(chapter.title),
+        sourceText: chapter.sourceText,
         createdAt: Date.now(),
         status: incomplete ? 'error' : 'ready',
         statusText: incomplete
@@ -357,7 +395,9 @@ export function PassageView() {
           : '',
         bookId: book?.id || '',
         bookName: book?.name || '',
-        sentences: lesson.sentences,
+        lessonId: lesson.id,
+        lessonName: lesson.name,
+        sentences: chapter.sentences,
       }
       persistEnabled.current = true
       commitPassages([stub, ...passagesRef.current.filter((item) => item.id !== stub.id)])
@@ -373,16 +413,17 @@ export function PassageView() {
     await flushPersist()
     setBusy('')
     setUploadOpen(false)
+    setChapterPreview([])
     const incompleteLessons = created.filter((item) => item.status !== 'ready')
     if (truncated) {
-      setNotice(`课文库最多 ${MAX_PASSAGES} 篇，本次仅导入 ${lessonList.length} / ${imported.lessons.length} 篇。${incompleteLessons.length ? `其中 ${incompleteLessons.length} 篇核心列不完整。` : ''}`)
+      setNotice(`课文库最多 ${MAX_PASSAGES} 篇，本次仅导入 ${chapterList.length} / ${imported.lessons.length} 个章节。${incompleteLessons.length ? `其中 ${incompleteLessons.length} 篇核心列不完整。` : ''}`)
     } else if (incompleteLessons.length) {
-      setNotice(`已导入 ${lessonList.length} 篇，但有 ${incompleteLessons.length} 篇缺少假名或中文解释，请按模版补全后重传。`)
+      setNotice(`已导入 ${chapterList.length} 个章节到「${lessonName}」，但有 ${incompleteLessons.length} 篇缺少假名或中文解释，请按模版补全后重传。`)
     } else {
       setNotice(
-        lessonList.length > 1
-          ? `已导入 ${lessonList.length} 篇课文（${imported.documentTitle || '手册'}），内容已原样写入数据库。`
-          : '手册已导入，内容已原样写入数据库。',
+        chapterList.length > 1
+          ? `已导入课时「${lessonName}」下 ${chapterList.length} 个章节，内容已原样写入数据库。`
+          : `已导入课时「${lessonName}」，内容已原样写入数据库。`,
       )
     }
   }
@@ -488,11 +529,14 @@ export function PassageView() {
   }
 
   const deleteBook = (book: PassageBook) => {
-    if (!window.confirm(`删除课本「${book.name}」？课文会回到未分组，不会被删。`)) return
+    if (!window.confirm(`删除课本「${book.name}」？课时与课文会回到未分组，不会被删。`)) return
     const affected = passagesRef.current.filter((item) => item.bookId === book.id).map((item) => item.id)
     const remaining = booksRef.current.filter((item) => item.id !== book.id)
     commitBooks(remaining)
-    commitPassages(passagesRef.current.map((item) => item.bookId === book.id ? { ...item, bookId: '', bookName: '' } : item))
+    commitLessons(lessonsRef.current.filter((item) => item.bookId !== book.id))
+    commitPassages(passagesRef.current.map((item) => item.bookId === book.id
+      ? { ...item, bookId: '', bookName: '', lessonId: '', lessonName: '' }
+      : item))
     affected.forEach((id) => markUpsert(id))
     if (draftBookId === book.id) setDraftBookId(remaining[0]?.id || '')
   }
@@ -500,18 +544,22 @@ export function PassageView() {
   const movePassage = (bookId: string) => {
     if (!passage) return
     const book = books.find((item) => item.id === bookId)
-    patchPassage(passage.id, { bookId: book?.id || '', bookName: book?.name || '' })
+    patchPassage(passage.id, {
+      bookId: book?.id || '',
+      bookName: book?.name || '',
+      ...(book?.id ? {} : { lessonId: '', lessonName: '' }),
+    })
   }
 
-  const orderedPassages = [
-    ...books.flatMap((book) => passages.filter((item) => item.bookId === book.id)),
-    ...passages.filter((item) => !item.bookId),
-  ]
+  const orderedPassages = orderPassagesByCatalog(books, lessons, passages)
   const passageOrderIndex = passage ? orderedPassages.findIndex((item) => item.id === passage.id) : -1
   const nextPassage = passageOrderIndex >= 0 ? orderedPassages[passageOrderIndex + 1] : undefined
   const progressPct = passage?.sentences.length
     ? Math.round(((sentenceIndex + (playingFull ? 0.4 : 0)) / Math.max(passage.sentences.length, 1)) * 100)
     : 0
+  const lessonSuggestions = lessons
+    .filter((item) => !draftBookId || item.bookId === draftBookId)
+    .map((item) => item.name)
 
   const grammarPoints = (() => {
     if (!passage) return [] as NonNullable<PassageSentence['grammar']>
@@ -528,6 +576,7 @@ export function PassageView() {
   const openUpload = () => {
     const firstBookId = books[0]?.id
     if (firstBookId) setDraftBookId((current) => current || firstBookId)
+    setChapterPreview([])
     setUploadOpen(true)
   }
 
@@ -566,13 +615,13 @@ export function PassageView() {
                     onChange={(event) => selectPassage(event.target.value)}
                   >
                     {books.map((book) => {
-                      const items = passages.filter((item) => item.bookId === book.id)
-                      if (!items.length) return null
+                      const bookPassages = orderedPassages.filter((item) => item.bookId === book.id)
+                      if (!bookPassages.length) return null
                       return (
                         <optgroup key={book.id} label={book.name}>
-                          {items.map((item) => (
+                          {bookPassages.map((item) => (
                             <option key={item.id} value={item.id}>
-                              {item.title}（{item.sentences.length || item.sentenceCount || 0} 句）
+                              {catalogOptionLabel(item)}
                             </option>
                           ))}
                         </optgroup>
@@ -580,9 +629,9 @@ export function PassageView() {
                     })}
                     {passages.some((item) => !item.bookId) && (
                       <optgroup label="未分组">
-                        {passages.filter((item) => !item.bookId).map((item) => (
+                        {orderedPassages.filter((item) => !item.bookId).map((item) => (
                           <option key={item.id} value={item.id}>
-                            {item.title}（{item.sentences.length || item.sentenceCount || 0} 句）
+                            {catalogOptionLabel(item)}
                           </option>
                         ))}
                       </optgroup>
@@ -879,7 +928,7 @@ export function PassageView() {
         <div className="wide-empty">
           <ScrollText />
           <h2>还没有课文</h2>
-          <p>请上传「课文整理」Markdown 手册（含原文、假名注音、中文解释）。系统按「课文N」拆篇入库，不调用模型。</p>
+          <p>请上传「课文整理」Markdown 手册。结构为课本 → 课时 → 章节（## 课文N），上传时选择课本与课时，系统自动识别章节入库，不调用模型。</p>
           <button onClick={openUpload}>添加课文</button>
         </div>
       )}
@@ -891,14 +940,14 @@ export function PassageView() {
             <span className="modal-icon"><FileText /></span>
             <span className="eyebrow">PASSAGE HANDBOOK</span>
             <h2>添加课文</h2>
-            <p>仅支持「课文整理」Markdown 模版（含假名注音列）。上传内容原样入库，不再调用模型补全。</p>
+            <p>选择课本与课时后上传 Markdown。系统自动识别手册里的「## 课文N」为章节，原样入库。</p>
             <div className="import-template-row">
               <a className="secondary-button import-template-link" href="/templates/课文导入模版.md" download="课文导入模版.md">
                 下载导入模版
               </a>
-              <small>结构：# 课次 → ## 课文N → 原文/假名注音/中文解释表 → 语法考点（上传原样入库，不调用模型）</small>
+              <small>结构：课本 → 课时（# 第N课）→ 章节（## 课文N）→ 原文/假名注音/中文解释表</small>
             </div>
-            <label className="passage-add-title">课本/分组
+            <label className="passage-add-title">课本
               <span className="passage-book-row">
                 <select value={draftBookId} onChange={(event) => setDraftBookId(event.target.value)}>
                   <option value="">未分组</option>
@@ -907,6 +956,22 @@ export function PassageView() {
                 <button type="button" onClick={() => createBook(false)}>新建课本</button>
               </span>
             </label>
+            <label className="passage-add-title">课时（第几课）
+              <input
+                list="passage-lesson-suggestions"
+                value={draftLessonName}
+                placeholder="例如：第007课（可与手册 # 标题一致）"
+                onChange={(event) => setDraftLessonName(event.target.value.slice(0, 80))}
+              />
+              <datalist id="passage-lesson-suggestions">
+                {lessonSuggestions.map((name) => <option key={name} value={name} />)}
+              </datalist>
+            </label>
+            {chapterPreview.length > 0 && (
+              <div className="modal-notice">
+                已识别 {chapterPreview.length} 个章节：{chapterPreview.join('；')}
+              </div>
+            )}
             <label
               className="drop-zone"
               onDragOver={(event) => event.preventDefault()}
