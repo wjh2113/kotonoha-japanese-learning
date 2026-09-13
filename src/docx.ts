@@ -104,23 +104,15 @@ export async function extractDocxPassage(file: File) {
 
 export async function readPassageSource(file: File) {
   const extension = file.name.toLowerCase().split('.').pop() || ''
-  if (file.type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic'].includes(extension)) {
-    return { text: '', images: [file] }
-  }
-  if (extension === 'doc') throw new Error('暂不支持旧版 .doc，请在 Word 中“另存为” .docx 后再导入。')
-  if (extension === 'docx' || file.type.includes('wordprocessingml')) {
-    return extractDocxPassage(file)
-  }
-  if (['txt', 'text', 'md', 'markdown'].includes(extension) || file.type.startsWith('text/') || file.type === 'text/markdown') {
-    if (file.size > 1024 * 1024) throw new Error('文本文件请控制在 1MB 以内。')
+  if (['md', 'markdown'].includes(extension) || file.type === 'text/markdown' || file.type === 'text/x-markdown') {
+    if (file.size > 1024 * 1024) throw new Error('Markdown 文件请控制在 1MB 以内。')
     return { text: await file.text(), images: [] as Blob[] }
   }
-  throw new Error('课文支持 Markdown 手册、Word、图片，或直接粘贴正文。')
+  throw new Error('课文只支持「课文整理」Markdown 模版（.md）。请先下载模版按格式填写。')
 }
 
 export async function readVocabularyFile(file: File) {
   const extension = file.name.toLowerCase().split('.').pop() || ''
-  if (extension === 'doc') throw new Error('暂不支持旧版 .doc，请在 Word 中“另存为” .docx 后再导入。')
   if (extension === 'xlsx' || extension === 'xls' || file.type.includes('spreadsheetml') || file.type.includes('excel')) {
     if (file.size > 8 * 1024 * 1024) throw new Error('Excel 文件请控制在 8MB 以内。')
     const XLSX = await import('xlsx')
@@ -135,18 +127,5 @@ export async function readVocabularyFile(file: File) {
     if (!text.trim()) throw new Error('Excel 文件中没有识别到可导入的文字。')
     return text
   }
-  if (extension === 'docx') {
-    if (file.size > 5 * 1024 * 1024) throw new Error('Word 文件请控制在 5MB 以内。')
-    const mammoth = (await import('mammoth')).default
-    const result = await mammoth.convertToHtml(
-      { arrayBuffer: await file.arrayBuffer() },
-      { ignoreEmptyParagraphs: false },
-    )
-    const text = docxHtmlToVocabularyText(result.value)
-    if (!text) throw new Error('Word 文件中没有识别到可导入的文字。')
-    return text
-  }
-  if (!['txt', 'csv', 'json'].includes(extension)) throw new Error('支持 Excel、DOCX、TXT、CSV 和 JSON 文件。')
-  if (file.size > 1024 * 1024) throw new Error('文本文件请控制在 1MB 以内。')
-  return file.text()
+  throw new Error('单词只支持「词汇手册」Excel 模版（.xlsx）。请先下载模版按格式填写。')
 }

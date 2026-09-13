@@ -16,9 +16,9 @@ import { SettingsContext, DEFAULT_SETTINGS } from './settings-context'
 import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, ThemeName, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fallbackUnitTheme, isPlaceholderTheme } from './theme'
-import { buildQuizOptions, ENRICH_BATCH_SIZE, isPlaceholderMeaning, mergeEnrichedWord, optionLabel, orderQuizByWeakness, recordQuizAnswer, sharedDistractors, usableQuizWords } from './quiz'
+import { buildQuizOptions, isPlaceholderMeaning, optionLabel, orderQuizByWeakness, recordQuizAnswer, sharedDistractors, usableQuizWords } from './quiz'
 import { usePronunciationPractice } from './pronunciation-practice'
-import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, masteryDots, parseVocabulary, proficiencyPercent, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, splitWordList, toRomaji, touchStudyStreak, uid } from './utils'
+import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, masteryDots, parseVocabularyHandbook, proficiencyPercent, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, splitWordList, toRomaji, touchStudyStreak, uid } from './utils'
 
 const STORAGE_KEY = 'kotonoha-units-v1'
 const SETTINGS_KEY = 'kotonoha-settings-v1'
@@ -415,10 +415,7 @@ function App() {
             />
           )}
           {view === 'review' && <ReviewView units={units} onReview={(word, targetUnitId, remembered) => { updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId); setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒') }} />}
-          {view === 'passage' && <PassageView units={units} onAddWords={(targetUnitId, words) => {
-            const target = units.find((item) => item.id === targetUnitId)
-            if (target) addImportedWords(target, words)
-          }} />}
+          {view === 'passage' && <PassageView />}
           {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} starredCount={starredCount} errorBookCount={errorBookCount} onView={nav} />}
         </main>
       </div>
@@ -1349,100 +1346,92 @@ function SettingsView({ settings, onChange, starredCount = 0, errorBookCount = 0
 }
 
 function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () => void; onImported: (words: Word[], description?: string) => void }) {
-  const [raw, setRaw] = useState('')
   const [drafts, setDrafts] = useState<ImportDraft[]>([])
   const [loading, setLoading] = useState(false)
   const [fileReading, setFileReading] = useState(false)
   const [notice, setNotice] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
-  const parse = (text = raw) => { const next = parseVocabulary(text); setDrafts(next); setNotice(next.length ? '' : '没有识别到单词，请检查格式。') }
+
   const readFile = async (file?: File) => {
     if (!file) return
-    setFileReading(true); setNotice('')
+    setFileReading(true)
+    setNotice('')
     try {
       const text = await readVocabularyFile(file)
-      setRaw(text); parse(text)
-    } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : '文件读取失败，请检查文件格式。')
-    } finally { setFileReading(false) }
-  }
-  const enrich = async () => {
-    if (!drafts.length) return
-    setLoading(true); setNotice('')
-    try {
-      const enriched: Partial<Word>[] = Array.from({ length: drafts.length }, () => ({}))
-      let themeFromModel = ''
-      // 表格已给全 假名/词性/释义/例句 的词不调用大模型，只补缺失的。
-      const pending = drafts
-        .map((draft, index) => ({ draft, index }))
-        .filter(({ draft }) => !(draft.reading && draft.meaning && draft.partOfSpeech && draft.example))
-      const chunkSize = ENRICH_BATCH_SIZE
-      for (let start = 0; start < pending.length; start += chunkSize) {
-        const batch = pending.slice(start, start + chunkSize)
-        setNotice(`AI 正在补全缺失字段… ${Math.min(start + batch.length, pending.length)}/${pending.length}`)
-        try {
-          const response = await apiFetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ words: batch.map(({ draft }) => draft), unitName: unit.name }) })
-          const data = await response.json()
-          if (!response.ok || !Array.isArray(data.words)) throw new Error(data.error || 'AI 解析失败')
-          data.words.forEach((item: Partial<Word>, offset: number) => { enriched[batch[offset].index] = item })
-          if (!themeFromModel && typeof data.unitDescription === 'string' && data.unitDescription.trim()) {
-            themeFromModel = data.unitDescription.trim().slice(0, 16)
-          }
-        } catch { /* this batch stays on local fallback and can be filled later */ }
+      const next = parseVocabularyHandbook(text)
+      if (!next.length) {
+        setDrafts([])
+        setNotice('未识别到词汇手册格式。请使用下载的模版，表头需含：序号、单词、假名、词性、中文释义…')
+        return
       }
-      const words: Word[] = drafts.map((draft, index) => {
-        const merged = mergeEnrichedWord(makeFallbackWord(draft), enriched[index] || {})
-        // 用户表格里提供的字段优先，模型只补空缺。
-        return {
-          ...merged,
-          reading: String(draft.reading || '').trim() || merged.reading,
-          meaning: String(draft.meaning || '').trim() || merged.meaning,
-          partOfSpeech: String(draft.partOfSpeech || '').trim() || merged.partOfSpeech,
-          example: String(draft.example || '').trim() || merged.example,
-          exampleReading: String(draft.example || '').trim() ? '' : merged.exampleReading,
-          translation: String(draft.translation || '').trim() || (String(draft.example || '').trim() ? (merged.translation || '') : merged.translation),
-          romaji: String(draft.romaji || '').trim() || merged.romaji,
-          pronunciationNote: String(draft.pronunciationNote || '').trim() || merged.pronunciationNote,
-          memoryTip: String(draft.memoryTip || '').trim() || merged.memoryTip,
-          synonyms: String(draft.synonyms || '').trim() || merged.synonyms,
-          similarWords: String(draft.similarWords || '').trim() || merged.similarWords,
-        }
-      })
-      const theme = themeFromModel && !isPlaceholderTheme(themeFromModel)
-        ? themeFromModel
-        : fallbackUnitTheme(unit.name, [...unit.words, ...words])
-      onImported(words, theme)
-    } catch {
+      setDrafts(next)
+      setNotice('')
+    } catch (reason) {
+      setDrafts([])
+      setNotice(reason instanceof Error ? reason.message : '文件读取失败，请检查是否为词汇手册 Excel。')
+    } finally {
+      setFileReading(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  const importWords = async () => {
+    if (!drafts.length) return
+    setLoading(true)
+    setNotice('')
+    try {
+      // 只用模版字段，不调用 AI，避免改写用户整理的释义/例句。
       const words = drafts.map(makeFallbackWord)
       onImported(words, fallbackUnitTheme(unit.name, [...unit.words, ...words]))
-      setNotice('词卡已用本地模板生成。')
-    } finally { setLoading(false) }
+    } catch {
+      setNotice('导入失败，请重试。')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <section className="modal import-modal">
         <button className="modal-close" onClick={onClose}><X /></button>
-        <span className="modal-icon"><Import /></span><span className="eyebrow">SMART IMPORT</span>        <h2>导入到「{unit.name}」</h2><p>支持词汇手册 Excel 模版（序号、单词、假名、词性、中文释义、罗马音、例句、例句译文、发音注意事项、记忆技巧、同义词、形近词）。表格已有内容直接采用，仅缺失字段才交给 AI 补全。</p>
+        <span className="modal-icon"><Import /></span>
+        <span className="eyebrow">VOCAB HANDBOOK</span>
+        <h2>导入到「{unit.name}」</h2>
+        <p>仅支持「词汇手册」Excel 模版。表内字段原样入库，不再用 AI 改写，以保证数据准确。</p>
         {!drafts.length ? <>
           <div className="import-template-row">
             <a className="secondary-button import-template-link" href="/templates/词汇导入模版.xlsx" download="词汇导入模版.xlsx">
               <FileText size={16} />下载导入模版
             </a>
-            <small>与「词汇手册」同列结构，填好后可直接上传 .xlsx</small>
+            <small>列：序号｜单词｜假名｜词性｜中文释义｜罗马音｜例句｜例句译文｜发音注意事项｜记忆技巧｜同义词｜形近词</small>
           </div>
-          <button className="drop-zone" disabled={fileReading} onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); readFile(e.dataTransfer.files[0]) }}>{fileReading ? <span className="spinner dark" /> : <UploadCloud />}<b>{fileReading ? '正在读取文件…' : '拖入 Excel / Word / TXT / CSV / JSON'}</b><span>推荐直接上传词汇手册 .xlsx · 也可从 Excel 复制后粘贴</span></button>
-          <input ref={fileRef} type="file" accept=".xlsx,.xls,.docx,.doc,.txt,.csv,.json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden onChange={(e) => readFile(e.target.files?.[0])} />
-          <div className="or"><span />或直接粘贴<span /></div>
-          <textarea className="import-textarea" value={raw} onChange={(e) => setRaw(e.target.value)} placeholder={'序号\t单词\t假名\t词性\t中文释义\t罗马音\t例句\t例句译文\t发音注意事项\t记忆技巧\t同义词\t形近词\n1\tすみません\tすみません\t[惯]\t对不起；劳驾\tsumimasen\tすみません。\t劳驾。\t整体读五拍\t搭话通用\tごめんなさい\t—'} />
-          <small className="format-hint"><FileText size={14} />推荐用模版 Excel 上传；从表格复制时请保留表头。也兼容「单词, 读音, 释义」三列简表。</small>
+          <button
+            className="drop-zone"
+            type="button"
+            disabled={fileReading}
+            onClick={() => fileRef.current?.click()}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => { e.preventDefault(); void readFile(e.dataTransfer.files[0]) }}
+          >
+            {fileReading ? <span className="spinner dark" /> : <UploadCloud />}
+            <b>{fileReading ? '正在读取 Excel…' : '拖入或选择词汇手册 .xlsx'}</b>
+            <span>不接受 Word / 粘贴 / CSV / JSON</span>
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+            hidden
+            onChange={(e) => void readFile(e.target.files?.[0])}
+          />
           {notice && <div className="modal-notice">{notice}</div>}
-          <button className="primary-button modal-submit" disabled={!raw.trim()} onClick={() => parse()}>解析单词<ChevronRight size={18} /></button>
         </> : <>
-          <div className="preview-heading"><b>识别到 {drafts.length} 个单词</b><button onClick={() => setDrafts([])}>重新编辑</button></div>
-          <div className="import-preview">{drafts.map((draft, i) => <div key={`${draft.term}-${i}`}><span>{i + 1}</span><b className="jp">{draft.term}</b><small>{draft.reading ? `${draft.reading}${(draft.romaji || toRomaji(draft.reading)) ? ` · ${draft.romaji || toRomaji(draft.reading)}` : ''}` : 'AI 自动识别读音'}</small><em>{draft.meaning || 'AI 自动查询释义'}</em></div>)}</div>
+          <div className="preview-heading"><b>识别到 {drafts.length} 个单词</b><button type="button" onClick={() => setDrafts([])}>重新选择文件</button></div>
+          <div className="import-preview">{drafts.map((draft, i) => <div key={`${draft.term}-${i}`}><span>{i + 1}</span><b className="jp">{draft.term}</b><small>{draft.reading || '—'}</small><em>{draft.meaning || '—'}</em></div>)}</div>
           {notice && <div className="modal-notice">{notice}</div>}
-          <button className="primary-button modal-submit" disabled={loading} onClick={enrich}>{loading ? <><span className="spinner" />AI 正在整理词卡并归纳主题…</> : <><Sparkles size={18} />生成并导入词卡</>}</button>
+          <button className="primary-button modal-submit" disabled={loading} onClick={() => void importWords()}>
+            {loading ? <><span className="spinner" />正在导入…</> : <><Sparkles size={18} />确认导入词卡</>}
+          </button>
         </>}
       </section>
     </div>

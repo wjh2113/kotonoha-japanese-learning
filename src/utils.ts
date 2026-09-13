@@ -141,6 +141,37 @@ export function parseVocabulary(raw: string): ImportDraft[] {
   return normalizeImportDrafts(rawImportDrafts(raw))
 }
 
+/** 仅接受词汇手册表头（至少含：单词、假名、词性、中文释义）。 */
+export function isVocabularyHandbookHeader(cols: string[]) {
+  const header = matchTableHeader(cols)
+  if (!header) return false
+  return Boolean(
+    header.includes('term')
+    && header.includes('reading')
+    && header.includes('partOfSpeech')
+    && header.includes('meaning'),
+  )
+}
+
+/**
+ * 严格按词汇手册解析：必须有标准表头，忽略 JSON / 纯词表 / 三列简表。
+ * 不符合时返回空数组。
+ */
+export function parseVocabularyHandbook(raw: string): ImportDraft[] {
+  const lines = String(raw || '').trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (!lines.length) return []
+  const headerCols = splitImportColumns(lines[0])
+  if (!isVocabularyHandbookHeader(headerCols)) return []
+  const header = matchTableHeader(headerCols)
+  if (!header) return []
+  const out: ImportDraft[] = []
+  for (const line of lines.slice(1)) {
+    const draft = draftFromTableRow(splitImportColumns(line), header)
+    if (draft) out.push(draft)
+  }
+  return normalizeImportDrafts(out)
+}
+
 export function makeFallbackWord(draft: ImportDraft): Word {
   const cleaned = looksLikeVocabularyTerm(draft.term)
     ? draft

@@ -1,23 +1,22 @@
-import { useContext, useEffect, useRef, useState, type ClipboardEvent } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
 import {
-  BookOpen, BookmarkPlus, Bot, CheckCircle2, ChevronLeft, ChevronRight, Circle, Copy, Eye, FileText, Headphones, LoaderCircle, Mic, Pause, Play,
-  RefreshCw, Repeat, ScrollText, Sparkles, SquarePen, Trash2, TriangleAlert, UploadCloud, Volume2, X,
+  BookOpen, Bot, CheckCircle2, ChevronLeft, ChevronRight, Circle, Copy, Eye, FileText, Headphones, LoaderCircle, Mic, Pause, Play,
+  RefreshCw, Repeat, ScrollText, SquarePen, Trash2, TriangleAlert, UploadCloud, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, readApiJson } from './api'
-import { clipboardImageFiles, normalizeOcrText } from './clipboard-images'
-import { extractDocxPassage, htmlToPassageText, readPassageSource } from './docx'
-import { PASSAGE_OCR_PLACEHOLDER, isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
+import { readPassageSource } from './docx'
+import { isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import {
-  chunkItems, extractPassageVocab, hasChineseTranslation, isPrimarilyChineseLine, isTransientPassage, mergeAnalyzedSentences, mergePassageBooks,
-  normalizePassageSentence, passageProgressSummary, parsePassageImport, recordSentenceDictation, recordSentenceScore,
-  recoverInterruptedIngest, sentenceNeedsAnalysis, unusedPassageVocab,
+  chunkItems, hasChineseTranslation, isPrimarilyChineseLine, isTransientPassage, mergeAnalyzedSentences, mergePassageBooks,
+  normalizePassageSentence, passageProgressSummary, parsePassageHandbook, recordSentenceDictation, recordSentenceScore,
+  recoverInterruptedIngest, sentenceNeedsAnalysis,
 } from './passage'
 import { PassageIntensive } from './PassageIntensive'
 import { usePronunciationPractice } from './pronunciation-practice'
 import { SettingsContext } from './settings-context'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
-import type { ImportDraft, Passage, PassageBook, PassageSentence, Unit, Word } from './types'
-import { makeFallbackWord, normalizeJapanese, pronunciationScoreFor, splitJapaneseSentences, uid } from './utils'
+import type { Passage, PassageBook, PassageSentence } from './types'
+import { normalizeJapanese, pronunciationScoreFor, uid } from './utils'
 
 type Mode = 'source' | 'intensive' | 'shadow'
 
@@ -38,20 +37,6 @@ function hydrateProgress(value: unknown) {
     }
   }
   return next
-}
-
-function fallbackPassage(sourceText: string): Passage {
-  const text = isPassagePlaceholder(sourceText) ? '' : sourceText.trim()
-  return {
-    id: uid(),
-    title: '课文',
-    sourceText: text,
-    createdAt: Date.now(),
-    status: 'processing',
-    sentences: text ? splitJapaneseSentences(text).map((line) => ({
-      id: uid(), text: line, reading: '', translation: '', tokens: [], grammar: [],
-    })) : [],
-  }
 }
 
 function hydratePassage(item: unknown): Passage | null {
@@ -78,46 +63,7 @@ function hydratePassage(item: unknown): Passage | null {
   })
 }
 
-function isPasteField(target: EventTarget | null) {
-  const tag = (target as HTMLElement | null)?.tagName
-  return tag === 'INPUT' || tag === 'TEXTAREA'
-}
-
-async function fileToBase64(blob: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result).split(',', 2)[1] || '')
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
-  })
-}
-
-async function fileToCompressedJpeg(file: File) {
-  try {
-    const bitmap = await Promise.race([
-      createImageBitmap(file),
-      new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error('图片处理超时，请换一张更小的照片或直接粘贴正文。')), 15_000)),
-    ])
-    const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height))
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale))
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale))
-    const context = canvas.getContext('2d')
-    if (!context) throw new Error('无法处理图片。')
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-    bitmap.close()
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((result) => result ? resolve(result) : reject(new Error('图片压缩失败。')), 'image/jpeg', 0.82)
-    })
-    return fileToBase64(blob)
-  } catch (reason) {
-    if (reason instanceof Error && /超时/.test(reason.message)) throw reason
-    if (file.size > 2 * 1024 * 1024) throw new Error('图片无法压缩，请换一张更小的照片。')
-    return fileToBase64(file)
-  }
-}
-
-export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: (unitId: string, words: Word[]) => void }) {
+export function PassageView() {
   const { voiceGender } = useContext(SettingsContext)
   const [passages, setPassages] = useState<Passage[]>([])
   const [books, setBooks] = useState<PassageBook[]>([])
@@ -126,8 +72,6 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   const [mode, setMode] = useState<Mode>('source')
   const [sentenceIndex, setSentenceIndex] = useState(0)
   const [catalogOpen, setCatalogOpen] = useState(true)
-  const [raw, setRaw] = useState('')
-  const [draftTitle, setDraftTitle] = useState('')
   const [draftBookId, setDraftBookId] = useState('')
   const [query, setQuery] = useState('')
   const [sourceEditing, setSourceEditing] = useState(false)
@@ -135,9 +79,6 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState('')
   const [uploadOpen, setUploadOpen] = useState(false)
-  const [vocabOpen, setVocabOpen] = useState(false)
-  const [vocabUnitId, setVocabUnitId] = useState('')
-  const [vocabPicked, setVocabPicked] = useState<Record<string, boolean>>({})
   const [playingFull, setPlayingFull] = useState(false)
   const [shadowRetry, setShadowRetry] = useState(0)
   const [playSpeed, setPlaySpeed] = useState(1)
@@ -359,7 +300,6 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     return item.title.includes(needle) || item.sourceText.includes(needle) || (item.bookName || '').includes(needle)
   })
   const summary = passage ? passageProgressSummary(passage) : { total: 0, practiced: 0, average: 0 }
-  const vocabUnit = units.find((item) => item.id === vocabUnitId) || units[0]
 
   useEffect(() => {
     setSentenceIndex(0)
@@ -369,238 +309,62 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     stopSpeaking()
   }, [selectedId])
 
-  const addPassage = (next: Passage) => {
-    persistEnabled.current = true
-    const following = [next, ...passagesRef.current.filter((item) => item.id !== next.id)].slice(0, 50)
-    commitPassages(following)
-    setSelectedId(next.id)
-    setMode('source')
-    setUploadOpen(false)
-    setRaw('')
-    setDraftTitle('')
-  }
-
-  const processIngest = async (passageId: string, text: string, images: Blob[]) => {
-    ingestingIds.current.add(passageId)
-    try {
-      const parts: string[] = []
-      const ocrFailures: string[] = []
-      if (text.trim() && !isPassagePlaceholder(text) && !looksLikeErrorDocument(text)) parts.push(text.trim())
-      if (!images.length && !parts.length) throw new Error('没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
-      for (const [index, image] of images.slice(0, 4).entries()) {
-        if (!ingestingIds.current.has(passageId)) return
-        if (!passagesRef.current.some((item) => item.id === passageId)) return
-        patchPassage(passageId, { status: 'processing', statusText: `正在识别课文图片 ${index + 1}/${Math.min(images.length, 4)}…` })
-        try {
-          const recognized = await ocrImage(image)
-          if (recognized) parts.push(recognized)
-        } catch (reason) {
-          ocrFailures.push(reason instanceof Error ? reason.message : '图片识别失败')
-        }
-      }
-      if (!ingestingIds.current.has(passageId)) return
-      const sourceText = parts.join('\n\n').trim()
-      if (!sourceText || looksLikeErrorDocument(sourceText)) {
-        throw new Error(ocrFailures[0] || '没有识别到日语课文，请换一份 Word、更清晰的照片，或直接粘贴正文。')
-      }
-      // 手册 Markdown / 表格（原文/中文解释/语法考点）直接用，翻译不再调用大模型。
-      const imported = parsePassageImport(sourceText)
-      const lesson = imported?.lessons[0]
-      const sentences = lesson ? lesson.sentences : fallbackPassage(sourceText).sentences
-      if (!sentences.length) throw new Error('没有识别到可拆分的日语句子，请检查图片是否清晰。')
-      const current = passagesRef.current.find((item) => item.id === passageId)
-      const nextTitle = current && current.title !== '课文'
-        ? current.title
-        : passageTitle(lesson?.title || current?.title)
-      // Sync ref before analyze so fillPassage never sees a stale empty stub.
-      patchPassage(passageId, {
-        title: nextTitle,
-        sourceText: lesson ? lesson.sourceText : sourceText,
-        sentences,
-        status: 'processing',
-        statusText: lesson ? '手册/表格已导入，正在补全读音…' : `正在生成整句翻译 0/${sentences.length}`,
-      })
-      if (ocrFailures.length) setNotice(`有 ${ocrFailures.length} 张图片识别失败，已用其余内容继续。`)
-      // 图片 OCR 后若识别出多课手册，补建其余课文
-      if (imported && imported.lessons.length > 1) {
-        const book = books.find((item) => item.id === draftBookId)
-        for (const extra of [...imported.lessons.slice(1)].reverse()) {
-          const stub = {
-            id: uid(),
-            title: passageTitle(extra.title),
-            sourceText: extra.sourceText,
-            createdAt: Date.now(),
-            status: 'processing' as const,
-            statusText: '手册内容已导入，正在补全读音…',
-            bookId: book?.id || current?.bookId || '',
-            bookName: book?.name || current?.bookName || '',
-            sentences: extra.sentences,
-          }
-          persistEnabled.current = true
-          commitPassages([stub, ...passagesRef.current.filter((item) => item.id !== stub.id)].slice(0, 50))
-          ingestingIds.current.add(stub.id)
-          void fillPassage(stub.id)
-        }
-        setNotice(`已从手册拆出 ${imported.lessons.length} 篇课文，正在后台补全读音。`)
-      }
-      await fillPassage(passageId)
-    } catch (reason) {
-      if (!ingestingIds.current.has(passageId)) return
-      patchPassage(passageId, {
-        status: 'error',
-        statusText: publicApiMessage(reason instanceof Error ? reason.message : '', '课文读取失败。'),
-        sourceText: '',
-        sentences: [],
-      })
-      setNotice(publicApiMessage(reason instanceof Error ? reason.message : '', '课文读取失败。'))
-    } finally {
-      ingestingIds.current.delete(passageId)
-    }
-  }
-
-  const queueIngest = (text: string, images: Blob[] = [], title?: string) => {
+  const queueHandbook = (text: string) => {
     if (!ready) {
       setNotice('课文库还在加载，请稍后再试。')
       return
     }
+    const imported = parsePassageHandbook(text)
+    if (!imported?.lessons.length) {
+      setNotice('未识别到「课文整理」手册格式。请使用下载的 .md 模版（含 ## 课文N 与「原文 / 中文解释」表）。')
+      return
+    }
     const book = books.find((item) => item.id === draftBookId)
-    const sourceText = isPassagePlaceholder(text) ? '' : text.trim()
-    // 无图片时：手册可直接拆成多课（带翻译），跳过 OCR
-    if (!images.length && sourceText) {
-      const imported = parsePassageImport(sourceText)
-      if (imported?.lessons.length) {
-        const overrideTitle = String(title || '').trim()
-        // 倒序加入，使「课文1」排在列表最前并被选中
-        const lessons = [...imported.lessons].reverse()
-        let selected = ''
-        for (const [index, lesson] of lessons.entries()) {
-          const isLast = index === lessons.length - 1
-          const stub = {
-            id: uid(),
-            title: passageTitle(overrideTitle && imported.lessons.length === 1 ? overrideTitle : lesson.title),
-            sourceText: lesson.sourceText,
-            createdAt: Date.now(),
-            status: 'processing' as const,
-            statusText: '手册/表格已导入，正在补全读音…',
-            bookId: book?.id || '',
-            bookName: book?.name || '',
-            sentences: lesson.sentences,
-          }
-          persistEnabled.current = true
-          commitPassages([stub, ...passagesRef.current.filter((item) => item.id !== stub.id)].slice(0, 50))
-          selected = stub.id
-          ingestingIds.current.add(stub.id)
-          void fillPassage(stub.id)
-          if (isLast) {
-            setSelectedId(stub.id)
-            setMode('source')
-            setUploadOpen(false)
-            setRaw('')
-            setDraftTitle('')
-          }
-        }
-        if (imported.lessons.length > 1) {
-          setNotice(`已导入 ${imported.lessons.length} 篇课文（${imported.documentTitle || '手册'}），正在后台补全读音。`)
-        }
-        if (selected) setSelectedId(selected)
-        return
+    const lessons = [...imported.lessons].reverse()
+    let selected = ''
+    for (const [index, lesson] of lessons.entries()) {
+      const isLast = index === lessons.length - 1
+      const stub: Passage = {
+        id: uid(),
+        title: passageTitle(lesson.title),
+        sourceText: lesson.sourceText,
+        createdAt: Date.now(),
+        status: 'processing',
+        statusText: '手册已导入，正在补全读音…',
+        bookId: book?.id || '',
+        bookName: book?.name || '',
+        sentences: lesson.sentences,
+      }
+      persistEnabled.current = true
+      commitPassages([stub, ...passagesRef.current.filter((item) => item.id !== stub.id)].slice(0, 50))
+      selected = stub.id
+      ingestingIds.current.add(stub.id)
+      void fillPassage(stub.id)
+      if (isLast) {
+        setSelectedId(stub.id)
+        setMode('source')
+        setUploadOpen(false)
       }
     }
-    const stub = {
-      ...fallbackPassage(sourceText),
-      title: passageTitle(title),
-      status: 'processing' as const,
-      statusText: images.length ? '正在识别课文图片…' : '正在生成整句翻译…',
-      bookId: book?.id || '',
-      bookName: book?.name || '',
-    }
-    addPassage(stub)
-    ingestingIds.current.add(stub.id)
-    void processIngest(stub.id, sourceText, images)
-  }
-
-  const ocrImage = async (blob: Blob) => {
-    const file = blob instanceof File ? blob : new File([blob], 'paste.jpg', { type: blob.type || 'image/jpeg' })
-    const imageBase64 = await fileToCompressedJpeg(file)
-    const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), 90_000)
-    try {
-      const response = await apiFetch('/api/passage/ocr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64, mimeType: 'image/jpeg' }),
-        signal: controller.signal,
-      })
-      const data = await readApiJson<{ text?: string; error?: string }>(response)
-      if (!response.ok) throw new Error(publicApiMessage(data.error, '图片识别失败，请稍后重试。'))
-      const text = normalizeOcrText(data.text)
-      if (!text || looksLikeErrorDocument(text) || text === PASSAGE_OCR_PLACEHOLDER) {
-        throw new Error('没有识别到日语课文，请换更清晰的照片或直接粘贴文本。')
-      }
-      return text
-    } catch (reason) {
-      if (reason instanceof DOMException && reason.name === 'AbortError') {
-        throw new Error('图片识别超时（约 90 秒）。请换更清晰的照片，或直接粘贴正文。')
-      }
-      throw reason
-    } finally {
-      window.clearTimeout(timeout)
-    }
+    if (selected) setSelectedId(selected)
+    setNotice(
+      imported.lessons.length > 1
+        ? `已导入 ${imported.lessons.length} 篇课文（${imported.documentTitle || '手册'}），正在后台补全读音。`
+        : '手册已导入，正在后台补全读音。',
+    )
   }
 
   const readUpload = async (file?: File) => {
     if (!file || ingesting.current) return
     if (!ready) { setNotice('课文库还在加载，请稍后再试。'); return }
     ingesting.current = true
-    setBusy('正在读取课文…')
+    setBusy('正在读取课文手册…')
     setNotice('')
     try {
       const source = await readPassageSource(file)
-      queueIngest(source.text, source.images, draftTitle)
+      queueHandbook(source.text)
     } catch (reason) {
       setNotice(reason instanceof Error ? reason.message : '课文读取失败。')
-    } finally {
-      ingesting.current = false
-      setBusy('')
-    }
-  }
-
-  const pasteClipboard = async (event: ClipboardEvent<HTMLElement>, immediate = true) => {
-    event.stopPropagation()
-    if (ingesting.current) return
-    const clipboard = event.clipboardData
-    if (!clipboard) return
-    const imageFiles = clipboardImageFiles(clipboard)
-    const files = Array.from(clipboard.files || [])
-    const wordFile = files.find((file) => file.name.toLowerCase().endsWith('.docx') || file.type.includes('wordprocessingml'))
-      || Array.from(clipboard.items || []).map((item) => item.getAsFile()).find((file) => file && (file.name.toLowerCase().endsWith('.docx') || file.type.includes('wordprocessingml'))) || undefined
-    const html = clipboard.getData('text/html')
-    const plain = clipboard.getData('text/plain')
-    const htmlText = html ? htmlToPassageText(html) : ''
-    const text = (htmlText.length > plain.trim().length ? htmlText : plain).trim()
-    if (!imageFiles.length && !wordFile && !(immediate && text)) {
-      if (!immediate && !text) setNotice('没有检测到图片或课文文字。请用 Ctrl+V 贴到上方虚线框，或点选上传图片/Word。')
-      return
-    }
-    ingesting.current = true
-    event.preventDefault()
-    setNotice('')
-    try {
-      if (wordFile) {
-        const source = await extractDocxPassage(wordFile)
-        queueIngest(source.text, source.images, draftTitle)
-        return
-      }
-      // Prefer images when present: screenshot pastes often also carry useless HTML/plain fragments.
-      if (imageFiles.length) {
-        setNotice(`已收到 ${imageFiles.length} 张图片，正在识别…`)
-        queueIngest('', imageFiles, draftTitle)
-        return
-      }
-      queueIngest(text, [], draftTitle)
-    } catch (reason) {
-      if (plain.trim()) setRaw(plain)
-      setNotice(reason instanceof Error ? reason.message : '粘贴内容无法识别。')
     } finally {
       ingesting.current = false
       setBusy('')
@@ -673,17 +437,14 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
 
   const reanalyze = () => {
     if (!passage) return
-    const sourceText = (sourceEditing ? sourceDraft : passage.sourceText).trim()
-    if (!sourceText || looksLikeErrorDocument(sourceText)) { setNotice('没有原文可以重新解析。'); return }
+    if (!passage.sentences.length) { setNotice('没有句子可以重新解析。'); return }
     setSourceEditing(false)
-    const imported = parsePassageImport(sourceText)
-    const lesson = imported?.lessons[0]
+    // 保留手册导入的原文/翻译/语法，只重新补读音与逐词。
     patchPassage(passage.id, {
-      sourceText: lesson ? lesson.sourceText : sourceText,
-      sentences: lesson ? lesson.sentences : fallbackPassage(sourceText).sentences,
+      sentences: passage.sentences.map((item) => ({ ...item, reading: '', tokens: item.tokens?.length ? [] : item.tokens })),
       progress: {},
       status: 'processing',
-      statusText: lesson ? '手册/表格已导入，正在补全读音…' : '正在按原文重新翻译…',
+      statusText: '正在补全读音与逐词注释…',
     })
     setSentenceIndex(0)
     setMode('source')
@@ -718,29 +479,6 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
     const book = books.find((item) => item.id === bookId)
     patchPassage(passage.id, { bookId: book?.id || '', bookName: book?.name || '' })
   }
-
-  const openVocab = () => {
-    if (!passage) return
-    if (passage.status === 'processing') { setNotice('整句翻译还在生成，完成后再抽生词。'); return }
-    const drafts = unusedPassageVocab(passage, vocabUnit?.words.map((word) => word.term) || [])
-    if (!drafts.length) { setNotice(extractPassageVocab(passage).length ? '这些词已经在当前词库里了。' : '这一课还没有可抽出的生词。'); return }
-    setVocabUnitId(vocabUnit?.id || units[0]?.id || '')
-    setVocabPicked(Object.fromEntries(drafts.map((draft) => [draft.term, true])))
-    setVocabOpen(true)
-  }
-
-  const addDrafts = (drafts: ImportDraft[]) => {
-    const unit = units.find((item) => item.id === (vocabUnitId || vocabUnit?.id)) || units[0]
-    if (!unit) { setNotice('请先创建一个词库单元。'); return }
-    const have = new Set(unit.words.map((word) => word.term))
-    const words = drafts.filter((draft) => draft.term && !have.has(draft.term)).map(makeFallbackWord)
-    if (!words.length) { setNotice('这些词已经在词库里了。'); return }
-    onAddWords(unit.id, words)
-    setVocabOpen(false)
-    setNotice(`已把 ${words.length} 张词卡放入「${unit.name}」`)
-  }
-
-  const vocabDrafts = passage && vocabUnit ? unusedPassageVocab(passage, vocabUnit.words.map((word) => word.term)) : []
 
   const renderPassageButton = (item: Passage) => {
     const progress = passageProgressSummary(item)
@@ -876,7 +614,6 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
                   />
                 </label>
                 <div className="passage-toolbar-actions">
-                  <button type="button" onClick={openVocab}><BookmarkPlus size={15} strokeWidth={1.6} />抽生词</button>
                   <button type="button" className="remove-word" onClick={() => {
                     if (!window.confirm(`删除课文「${passage.title}」？此操作不可恢复。`)) return
                     ingestingIds.current.delete(passage.id)
@@ -1143,28 +880,25 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
         <div className="wide-empty">
           <ScrollText />
           <h2>还没有课文</h2>
-          <p>粘贴日语课文、上传 Word 文档，或拍一张教材照片。会先进入课文库，再在后台拆句并补整句翻译。</p>
+          <p>请上传「课文整理」Markdown 手册（按模版填写）。系统会按「课文N」拆篇入库，翻译与语法考点原样保留。</p>
           <button onClick={() => setUploadOpen(true)}>添加课文</button>
         </div>
       )}
 
       {uploadOpen && (
         <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !busy && setUploadOpen(false)}>
-          <section className="modal import-modal" onPaste={(event) => { if (!isPasteField(event.target)) void pasteClipboard(event) }}>
+          <section className="modal import-modal">
             <button className="modal-close" onClick={() => !busy && setUploadOpen(false)}><X /></button>
             <span className="modal-icon"><FileText /></span>
-            <span className="eyebrow">PASSAGE IMPORT</span>
+            <span className="eyebrow">PASSAGE HANDBOOK</span>
             <h2>添加课文</h2>
-            <p>推荐上传「课文整理」Markdown 手册；也可粘贴正文、Word，或拍教材照片。翻译已整理好的表格不再调 AI。</p>
+            <p>仅支持「课文整理」Markdown 模版。不接受 Word、图片、粘贴或自由正文，以保证翻译与语法数据准确。</p>
             <div className="import-template-row">
               <a className="secondary-button import-template-link" href="/templates/课文导入模版.md" download="课文导入模版.md">
                 下载导入模版
               </a>
-              <small>与「课文整理」同结构：多课标题 + 原文/中文表 + 语法考点</small>
+              <small>结构：# 课次 → ## 课文N → 原文/中文表 → 语法考点</small>
             </div>
-            <label className="passage-add-title">课文标题
-              <input value={draftTitle} maxLength={80} onChange={(event) => setDraftTitle(event.target.value)} placeholder="例如：第一课 自己紹介（可不填；手册会按「课文N」自动拆篇）" disabled={Boolean(busy)} />
-            </label>
             <label className="passage-add-title">课本/分组
               <span className="passage-book-row">
                 <select value={draftBookId} onChange={(event) => setDraftBookId(event.target.value)}>
@@ -1179,54 +913,12 @@ export function PassageView({ units, onAddWords }: { units: Unit[]; onAddWords: 
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => { event.preventDefault(); if (!busy) void readUpload(event.dataTransfer.files[0]) }}
             >
-              <input type="file" accept="image/jpeg,image/png,image/webp,image/*,.docx,.md,.markdown,.txt,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden disabled={Boolean(busy)} onChange={(event) => { void readUpload(event.target.files?.[0]); event.target.value = '' }} />
+              <input type="file" accept=".md,.markdown,text/markdown,text/x-markdown" hidden disabled={Boolean(busy)} onChange={(event) => { void readUpload(event.target.files?.[0]); event.target.value = '' }} />
               {busy ? <span className="spinner dark" /> : <UploadCloud />}
-              <b>{busy || '拖入、点击或直接粘贴'}</b>
-              <span>支持 .md 手册、截图 Ctrl+V、Word / JPG / PNG</span>
+              <b>{busy || '拖入或选择课文整理 .md'}</b>
+              <span>不接受 Word / 图片 / 粘贴</span>
             </label>
-            <div className="or"><span />或粘贴课文<span /></div>
-            <textarea
-              className="import-textarea"
-              value={raw}
-              onChange={(event) => setRaw(event.target.value)}
-              onPaste={(event) => { void pasteClipboard(event, false) }}
-              placeholder={'推荐粘贴「课文整理」Markdown，例如：\n## 课文1：电器店问路\n| 原文 | 中文解释 |\n| --- | --- |\n| 店員：いらっしゃいませ。 | 店员：欢迎光临。 |\n\n也支持 Excel 复制的 TSV：\n原文\t中文解释\t语法考点'}
-              disabled={Boolean(busy)}
-            />
-            <small className="format-hint"><FileText size={14} />手册/表格里的翻译与语法考点直接使用；仅补全缺失的读音与逐词注释。</small>
-            <button className="primary-button modal-submit" disabled={Boolean(busy) || ingesting.current || !raw.trim()} onClick={() => {
-              if (ingesting.current || !raw.trim()) return
-              ingesting.current = true
-              queueIngest(raw, [], draftTitle)
-              ingesting.current = false
-            }}>{busy ? busy : <><Sparkles size={18} />生成学习内容</>}</button>
-          </section>
-        </div>
-      )}
-
-      {vocabOpen && passage && vocabUnit && (
-        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setVocabOpen(false)}>
-          <section className="modal import-modal vocab-modal">
-            <button className="modal-close" onClick={() => setVocabOpen(false)}><X /></button>
-            <span className="eyebrow">PASSAGE VOCAB</span>
-            <h2>抽生词进词库</h2>
-            <p>把「{passage.title}」里的单词做成词卡，例如 友達、学校。</p>
-            <label className="passage-add-title">放入单元
-              <select value={vocabUnit.id} onChange={(event) => setVocabUnitId(event.target.value)}>
-                {units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}
-              </select>
-            </label>
-            <div className="vocab-pick-list">
-              {vocabDrafts.map((draft) => (
-                <label key={draft.term}>
-                  <input type="checkbox" checked={Boolean(vocabPicked[draft.term])} onChange={(event) => setVocabPicked((current) => ({ ...current, [draft.term]: event.target.checked }))} />
-                  <b className="jp">{draft.term}</b>
-                  <span>{draft.reading}</span>
-                  <em>{draft.meaning}</em>
-                </label>
-              ))}
-            </div>
-            <button className="primary-button modal-submit" onClick={() => addDrafts(vocabDrafts.filter((draft) => vocabPicked[draft.term]))}>做成词卡</button>
+            {notice && <div className="modal-notice">{notice}</div>}
           </section>
         </div>
       )}

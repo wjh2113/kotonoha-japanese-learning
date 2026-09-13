@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { docxHtmlToVocabularyText, htmlToPassageText, readVocabularyFile } from './docx'
-import { parseVocabulary } from './utils'
+import { docxHtmlToVocabularyText, htmlToPassageText, readPassageSource, readVocabularyFile } from './docx'
+import { parseVocabulary, parseVocabularyHandbook } from './utils'
 
 describe('Word vocabulary extraction', () => {
   it('extracts vocabulary from Word paragraphs and lists', () => {
@@ -9,9 +9,9 @@ describe('Word vocabulary extraction', () => {
     expect(parseVocabulary(text).map((item) => item.term)).toEqual(['猫', '犬', '水'])
   })
 
-  it('explains how to handle legacy Word files', async () => {
+  it('rejects non-Excel vocabulary uploads', async () => {
     const file = new File(['legacy'], 'words.doc')
-    await expect(readVocabularyFile(file)).rejects.toThrow('另存为')
+    await expect(readVocabularyFile(file)).rejects.toThrow('词汇手册')
   })
 
   it('preserves Word table columns as term, reading and meaning', () => {
@@ -27,7 +27,7 @@ describe('Word vocabulary extraction', () => {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     })
     const text = await readVocabularyFile(file)
-    const drafts = parseVocabulary(text)
+    const drafts = parseVocabularyHandbook(text)
     expect(drafts.length).toBeGreaterThanOrEqual(2)
     expect(drafts[0]).toMatchObject({
       term: 'ありがとうございます',
@@ -36,6 +36,10 @@ describe('Word vocabulary extraction', () => {
       translation: '谢谢。',
       partOfSpeech: '[惯]',
     })
+  })
+
+  it('rejects passage non-markdown uploads', async () => {
+    await expect(readPassageSource(new File(['x'], 'a.txt'))).rejects.toThrow('Markdown')
   })
 })
 
