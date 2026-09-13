@@ -341,8 +341,67 @@ async function main() {
     await page.waitForTimeout(1000)
     await shot('11-review')
     text = await bodyText()
-    if (/复习|间隔|今日|待复习|曲线/.test(text)) ok('review-view')
+    if (/复习|间隔|今日|待复习|曲线|语法学习/.test(text)) ok('review-view')
     else fail('review-view', text.slice(0, 120))
+
+    // —— Grammar (mobile: review tab + home shortcut + sidebar) ——
+    const grammarTab = page.locator('.review-mode-tabs button:has-text("语法学习")').first()
+    if (await grammarTab.count()) {
+      await grammarTab.click()
+      await page.waitForTimeout(1200)
+    } else if (!(await openMenuItem('语法学习'))) {
+      await openTab('首页')
+      await page.waitForTimeout(600)
+      const shortcut = page.locator('.home-shortcut-grid button:has-text("语法学习")').first()
+      if (await shortcut.count()) await shortcut.click()
+      await page.waitForTimeout(1200)
+    }
+    await shot('11b-grammar-hub')
+    text = await bodyText()
+    if (/语法学习|電気屋|语法点/.test(text)) ok('grammar-hub')
+    else fail('grammar-hub', text.slice(0, 140))
+    if ((await page.locator('label.grammar-upload, button:has-text("上传语法")').count()) === 0) ok('grammar-no-upload')
+    else fail('grammar-no-upload', 'upload visible on mobile')
+
+    const mLesson = page.locator('button.grammar-lesson-card').first()
+    if (await mLesson.count()) {
+      await mLesson.click()
+      await page.waitForTimeout(900)
+      await shot('11c-grammar-lesson')
+      text = await bodyText()
+      if (/按顺序学习|综合测验|语法点/.test(text)) ok('grammar-lesson')
+      else fail('grammar-lesson', text.slice(0, 140))
+
+      const mPoint = page.locator('button.grammar-point-row').first()
+      if (await mPoint.count()) {
+        await mPoint.click()
+        await page.waitForTimeout(800)
+        await shot('11d-grammar-point')
+        text = await bodyText()
+        if (/开始本点测验|标记已学/.test(text)) ok('grammar-point')
+        else fail('grammar-point', text.slice(0, 140))
+
+        const mQuiz = page.locator('button:has-text("开始本点测验")').first()
+        if (await mQuiz.count() && !(await mQuiz.isDisabled())) {
+          await mQuiz.click()
+          await page.waitForTimeout(1000)
+          await shot('11e-grammar-quiz')
+          text = await bodyText()
+          if (/语法点测验|下一题|退出/.test(text) || await page.locator('.quiz-options-design button').count()) {
+            ok('grammar-quiz')
+            const opt = page.locator('.quiz-options-design button').first()
+            if (await opt.count()) {
+              await opt.click()
+              await page.waitForTimeout(500)
+              if (/回答正确|再记一次|下一题|查看结果/.test(await bodyText())) ok('grammar-quiz-answer')
+              else fail('grammar-quiz-answer')
+            } else fail('grammar-quiz-answer', 'no options')
+          } else fail('grammar-quiz', text.slice(0, 140))
+          await page.locator('button.quiz-exit, button:has-text("退出")').first().click({ force: true }).catch(() => {})
+          await page.waitForTimeout(500)
+        } else fail('grammar-quiz', 'missing')
+      } else fail('grammar-point', 'no rows')
+    } else fail('grammar-lesson', 'no cards')
 
     // —— Settings ——
     await openTab('我的')

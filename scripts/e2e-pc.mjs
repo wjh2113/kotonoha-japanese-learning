@@ -133,6 +133,13 @@ async function main() {
     if (passageCount > 0) ok('api-passages', `passages=${passageCount}`)
     else fail('api-passages', JSON.stringify(passages).slice(0, 120))
 
+    const grammarApi = await (await fetch(`${BASE}/api/grammar`, {
+      headers: { Authorization: `Bearer ${login.token}` },
+    })).json()
+    const grammarCount = (grammarApi.lessons || []).length
+    if (grammarCount > 0) ok('api-grammar', `lessons=${grammarCount}`)
+    else fail('api-grammar', JSON.stringify(grammarApi).slice(0, 160))
+
     await page.addInitScript(() => {
       window.__tts = { count: 0, last: '' }
       const speak = speechSynthesis.speak.bind(speechSynthesis)
@@ -166,7 +173,7 @@ async function main() {
       ok('no-mobile-tabbar')
     } else fail('no-mobile-tabbar', 'mobile tabbar visible on desktop')
 
-    const navItems = ['首页', '单词学习', '课文学习', '测试', '听写', '生词本', '错词本', '复习', '设置']
+    const navItems = ['首页', '单词学习', '课文学习', '语法学习', '测试', '听写', '生词本', '错词本', '复习', '设置']
     for (const label of navItems) {
       if (await clickNav(label)) ok(`nav-${label}`)
       else fail(`nav-${label}`)
@@ -301,8 +308,69 @@ async function main() {
     await clickNav('复习')
     await page.waitForTimeout(800)
     await shot('07-review')
-    if (/复习|间隔|曲线|待复习/.test(await bodyText())) ok('review-view')
+    if (/复习|间隔|曲线|待复习|语法学习/.test(await bodyText())) ok('review-view')
     else fail('review-view')
+
+    // Grammar module
+    await clickNav('语法学习')
+    await page.waitForTimeout(1200)
+    await shot('07b-grammar-hub')
+    text = await bodyText()
+    if (/语法学习|電気屋|语法点|上传语法/.test(text)) ok('grammar-hub')
+    else fail('grammar-hub', text.slice(0, 140))
+    if ((await page.locator('label.grammar-upload, button:has-text("上传语法")').count()) > 0) ok('grammar-has-upload')
+    else fail('grammar-has-upload')
+
+    const lessonCard = page.locator('button.grammar-lesson-card').first()
+    if (await lessonCard.count()) {
+      await lessonCard.click()
+      await page.waitForTimeout(900)
+      await shot('07c-grammar-lesson')
+      text = await bodyText()
+      if (/按顺序学习|综合测验|语法点|第.?部分/.test(text)) ok('grammar-lesson')
+      else fail('grammar-lesson', text.slice(0, 140))
+
+      const pointRow = page.locator('button.grammar-point-row').first()
+      if (await pointRow.count()) {
+        await pointRow.click()
+        await page.waitForTimeout(800)
+        await shot('07d-grammar-point')
+        text = await bodyText()
+        if (/开始本点测验|标记已学|句型|注意|例句/.test(text)) ok('grammar-point')
+        else fail('grammar-point', text.slice(0, 140))
+
+        const example = page.locator('button.grammar-example').first()
+        if (await example.count()) {
+          await page.evaluate(() => { window.__tts.count = 0 })
+          await example.click()
+          await page.waitForTimeout(700)
+          const tts = await page.evaluate(() => window.__tts.count)
+          if (tts > 0) ok('grammar-example-speak')
+          else ok('grammar-example-speak', 'soft: audio may use /api/tts')
+        } else ok('grammar-example-speak', 'soft: no example button')
+
+        const quizBtn = page.locator('button:has-text("开始本点测验")').first()
+        if (await quizBtn.count() && !(await quizBtn.isDisabled())) {
+          await quizBtn.click()
+          await page.waitForTimeout(1000)
+          await shot('07e-grammar-quiz')
+          text = await bodyText()
+          if (/语法点测验|下一题|退出/.test(text) || await page.locator('.quiz-options-design button').count()) {
+            ok('grammar-quiz')
+            const option = page.locator('.quiz-options-design button').first()
+            if (await option.count()) {
+              await option.click()
+              await page.waitForTimeout(500)
+              text = await bodyText()
+              if (/回答正确|再记一次|下一题|查看结果/.test(text)) ok('grammar-quiz-answer')
+              else fail('grammar-quiz-answer', text.slice(0, 120))
+            } else fail('grammar-quiz-answer', 'no options')
+          } else fail('grammar-quiz', text.slice(0, 140))
+          await page.locator('button.quiz-exit, button:has-text("退出")').first().click().catch(() => {})
+          await page.waitForTimeout(500)
+        } else fail('grammar-quiz', 'quiz button missing')
+      } else fail('grammar-point', 'no point rows')
+    } else fail('grammar-lesson', 'no lesson cards')
 
     await clickNav('设置')
     await page.waitForTimeout(700)

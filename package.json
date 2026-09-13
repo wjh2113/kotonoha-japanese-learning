@@ -7,6 +7,7 @@
     "dev": "concurrently -k \"vite\" \"node --env-file-if-exists=.env --watch server.mjs\"",
     "build": "tsc -b && vite build",
     "test": "vitest run",
+    "test:e2e": "node scripts/e2e-regression.mjs",
     "db:local:init": "bash scripts/postgres-local.sh init",
     "db:local:start": "bash scripts/postgres-local.sh start",
     "db:local:status": "bash scripts/postgres-local.sh status",

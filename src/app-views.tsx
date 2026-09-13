@@ -253,9 +253,11 @@ export function MobileTabBar({ view, reviewCount, onView }: { view: View; review
   ]
   const active = view === 'wordbook'
     ? 'study'
-    : view === 'errorbook' || view === 'test' || view === 'library' || view === 'grammar'
-      ? ''
-      : view
+    : view === 'grammar'
+      ? 'review'
+      : view === 'errorbook' || view === 'test' || view === 'library'
+        ? ''
+        : view
   return (
     <nav className="mobile-tabbar" aria-label="应用导航">
       {items.map((item) => (
@@ -1330,12 +1332,15 @@ export function ReviewView({ units, onReview, onOpenGrammar }: {
           <p className="review-today-line">今日 <b>{due.length}</b> 词待复习</p>
           <p className="review-hero-desc">根据艾宾浩斯遗忘曲线，合理安排复习计划，巩固日语记忆。</p>
         </div>
-        {onOpenGrammar && (
-          <button type="button" className="secondary-button" onClick={onOpenGrammar}>
-            <ClipboardList size={16} strokeWidth={1.6} />语法学习
-          </button>
-        )}
       </section>
+      {onOpenGrammar && (
+        <div className="review-mode-tabs" role="tablist" aria-label="复习类型">
+          <button type="button" className="active" role="tab" aria-selected>单词复习</button>
+          <button type="button" role="tab" aria-selected={false} onClick={onOpenGrammar}>
+            <ClipboardList size={15} strokeWidth={1.7} />语法学习
+          </button>
+        </div>
+      )}
       <section className="home-card memory-curve-card">
         <div className="curve-copy">
           <Target size={18} strokeWidth={1.6} />
