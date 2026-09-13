@@ -76,7 +76,7 @@ function App() {
   useEffect(() => {
     const theme = settings.theme || 'matcha'
     document.documentElement.dataset.theme = theme
-    const colors: Record<string, string> = { aka: '#d85b45', ai: '#4b6a9e', matcha: '#7d9159' }
+    const colors: Record<string, string> = { aka: '#d85b45', ai: '#4b6a9e', matcha: '#5a8f6e' }
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', colors[theme] || colors.matcha)
   }, [settings.theme])
 
