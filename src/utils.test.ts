@@ -72,6 +72,15 @@ describe('parseVocabulary', () => {
   it('splits word-list cells into chips', () => {
     expect(splitWordList('櫻花、サクラ，さくら; 桃')).toEqual(['櫻花', 'サクラ', 'さくら', '桃'])
     expect(splitWordList('')).toEqual([])
+    expect(splitWordList('—')).toEqual([])
+    expect(splitWordList('昼（ひる・白天，中午）、晩（ばん・晚，晚上）')).toEqual([
+      '昼（ひる・白天，中午）',
+      '晩（ばん・晚，晚上）',
+    ])
+    expect(splitWordList('そちら（那里，那边（礼貌））、あっち（那里，那边（口语））')).toEqual([
+      'そちら（那里，那边（礼貌））',
+      'あっち（那里，那边（口语））',
+    ])
   })
 
   it('parses an 8-column table without header positionally', () => {

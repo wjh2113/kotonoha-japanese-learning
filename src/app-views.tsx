@@ -572,12 +572,12 @@ function WordDetail({ word, onToggle, onToggleStar, onEdit, position, total, onP
             </div>
           )}
           {(splitWordList(word.similarWords).length > 0 || splitWordList(word.synonyms).length > 0) && (
-            <div className="detail-related">
+            <div className="detail-related" key={`related-${word.id}`}>
               {splitWordList(word.similarWords).length > 0 && (
-                <div className="detail-block"><label><Sparkles size={14} strokeWidth={1.6} />相似词</label><p className="word-chips">{splitWordList(word.similarWords).map((item) => <span key={item} className="jp">{item}</span>)}</p></div>
+                <div className="detail-block"><label><Sparkles size={14} strokeWidth={1.6} />相似词</label><p className="word-chips">{splitWordList(word.similarWords).map((item, index) => <span key={`sim-${word.id}-${index}-${item}`} className="jp">{item}</span>)}</p></div>
               )}
               {splitWordList(word.synonyms).length > 0 && (
-                <div className="detail-block"><label><Sparkles size={14} strokeWidth={1.6} />同义词</label><p className="word-chips">{splitWordList(word.synonyms).map((item) => <span key={item} className="jp">{item}</span>)}</p></div>
+                <div className="detail-block"><label><Sparkles size={14} strokeWidth={1.6} />同义词</label><p className="word-chips">{splitWordList(word.synonyms).map((item, index) => <span key={`syn-${word.id}-${index}-${item}`} className="jp">{item}</span>)}</p></div>
               )}
             </div>
           )}

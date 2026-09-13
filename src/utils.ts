@@ -241,13 +241,39 @@ const ROMAJI_COMBO: Record<string, string> = {
   でぃ: 'di', でゅ: 'dyu', とぅ: 'tu', どぅ: 'du',
 }
 
-/** Split a 同义词/形近词 cell into individual words. */
+const WORD_LIST_PLACEHOLDER = /^[—–\-－]+$/
+const WORD_LIST_SEPARATOR = /[、，,；;／/\n]/
+
+/** Split a 同义词/形近词 cell into chips; keep commas inside （）/() intact. */
 export function splitWordList(input?: string) {
-  return String(input || '')
-    .split(/[、，,；;／/\n]+/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .slice(0, 12)
+  const text = String(input || '').trim()
+  if (!text || WORD_LIST_PLACEHOLDER.test(text)) return []
+  const parts: string[] = []
+  let current = ''
+  let depth = 0
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i]
+    if (char === '（' || char === '(') {
+      depth += 1
+      current += char
+      continue
+    }
+    if (char === '）' || char === ')') {
+      depth = Math.max(0, depth - 1)
+      current += char
+      continue
+    }
+    if (depth === 0 && WORD_LIST_SEPARATOR.test(char)) {
+      const item = current.trim()
+      if (item && !WORD_LIST_PLACEHOLDER.test(item)) parts.push(item)
+      current = ''
+      continue
+    }
+    current += char
+  }
+  const last = current.trim()
+  if (last && !WORD_LIST_PLACEHOLDER.test(last)) parts.push(last)
+  return parts.slice(0, 12)
 }
 
 /** Hepburn romaji derived from a kana reading. Returns '' when the text has kanji/other scripts. */
