@@ -16,6 +16,7 @@ import {
   TestView, WordbookView,
 } from './app-views'
 import { getReviewState, scheduleReview, touchStudyStreak, uid } from './utils'
+import { loadSpeechVoices, unlockSpeech } from './speech'
 import type { DictationMode } from './DictationView'
 
 const PassageView = lazy(() => import('./PassageView').then((module) => ({ default: module.PassageView })))
@@ -89,6 +90,19 @@ function App() {
     const colors: Record<string, string> = { aka: '#d85b45', ai: '#4b6a9e', matcha: '#5a8f6e' }
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', colors[theme] || colors.matcha)
   }, [settings.theme])
+
+  useEffect(() => {
+    void loadSpeechVoices()
+    const unlock = () => unlockSpeech()
+    window.addEventListener('pointerdown', unlock, { once: true, passive: true })
+    window.addEventListener('touchstart', unlock, { once: true, passive: true })
+    window.addEventListener('click', unlock, { once: true })
+    return () => {
+      window.removeEventListener('pointerdown', unlock)
+      window.removeEventListener('touchstart', unlock)
+      window.removeEventListener('click', unlock)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
