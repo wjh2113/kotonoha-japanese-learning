@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import {
   AudioLines, Bell, BookMarked, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronLeft, ChevronRight,
-  Circle, Clock3, FileText, GraduationCap, Headphones, Home, Import, Keyboard, LayoutGrid, LibraryBig, List, Menu,
+  Circle, ClipboardList, Clock3, FileText, GraduationCap, Headphones, Home, Import, Keyboard, LayoutGrid, LibraryBig, List, Menu,
   Mic, MoreHorizontal, NotebookPen, Palette, PanelLeft, PanelLeftClose, Pause, Plus, Search, Settings, Sparkles, SquarePen,
   Sprout, Target, Trash2, Trophy, UploadCloud, UserRound, Volume2, X,
 } from 'lucide-react'
@@ -114,6 +114,7 @@ export function AppHeader({ open, view, starredCount, errorBookCount, reviewCoun
     { id: 'home', label: '首页', icon: <Home size={18} strokeWidth={1.6} /> },
     { id: 'study', label: '单词学习', icon: <BookOpen size={18} strokeWidth={1.6} /> },
     { id: 'passage', label: '课文学习', icon: <FileText size={18} strokeWidth={1.6} /> },
+    { id: 'grammar', label: '语法学习', icon: <ClipboardList size={18} strokeWidth={1.6} /> },
     { id: 'test', label: '测试', icon: <GraduationCap size={18} strokeWidth={1.6} /> },
     { id: 'dictation', label: '听写', icon: <Keyboard size={18} strokeWidth={1.6} /> },
     { id: 'wordbook', label: '生词本', icon: <BookMarked size={18} strokeWidth={1.6} />, count: starredCount },
@@ -209,7 +210,7 @@ export function DesktopTopBar({ settings, onView, onSettingsChange, sidebarColla
 }
 
 const VIEW_TITLES: Record<View, string> = {
-  home: '首页', library: '词库', study: '单词学习', passage: '课文学习', test: '测试', dictation: '听写', wordbook: '生词本', errorbook: '错词本', review: '复习', settings: '设置',
+  home: '首页', library: '词库', study: '单词学习', passage: '课文学习', grammar: '语法学习', test: '测试', dictation: '听写', wordbook: '生词本', errorbook: '错词本', review: '复习', settings: '设置',
 }
 
 export function MobileTopBar({ view, settings, onView, onSettingsChange, onMenu, reviewCount = 0 }: {
@@ -252,7 +253,7 @@ export function MobileTabBar({ view, reviewCount, onView }: { view: View; review
   ]
   const active = view === 'wordbook'
     ? 'study'
-    : view === 'errorbook' || view === 'test' || view === 'library'
+    : view === 'errorbook' || view === 'test' || view === 'library' || view === 'grammar'
       ? ''
       : view
   return (
@@ -1298,7 +1299,11 @@ function WordCardSheet({
   )
 }
 
-export function ReviewView({ units, onReview }: { units: Unit[]; onReview: (word: Word, unitId: string, remembered: boolean) => void }) {
+export function ReviewView({ units, onReview, onOpenGrammar }: {
+  units: Unit[]
+  onReview: (word: Word, unitId: string, remembered: boolean) => void
+  onOpenGrammar?: () => void
+}) {
   const entries = units.flatMap((unit) => unit.words.map((word) => ({ word, unit, state: getReviewState(word) })))
   const due = entries.filter((item) => item.state.due).sort((a, b) => a.state.nextReviewAt - b.state.nextReviewAt)
   const stageGoals: Record<number, string> = {
@@ -1325,6 +1330,11 @@ export function ReviewView({ units, onReview }: { units: Unit[]; onReview: (word
           <p className="review-today-line">今日 <b>{due.length}</b> 词待复习</p>
           <p className="review-hero-desc">根据艾宾浩斯遗忘曲线，合理安排复习计划，巩固日语记忆。</p>
         </div>
+        {onOpenGrammar && (
+          <button type="button" className="secondary-button" onClick={onOpenGrammar}>
+            <ClipboardList size={16} strokeWidth={1.6} />语法学习
+          </button>
+        )}
       </section>
       <section className="home-card memory-curve-card">
         <div className="curve-copy">
@@ -1430,6 +1440,7 @@ export function SettingsView({ settings, onChange, starredCount = 0, errorBookCo
         <div className="me-shortcuts">
           <button onClick={() => onView('wordbook')}><BookMarked size={18} /><span>生词本</span><em>{starredCount}</em></button>
           <button onClick={() => onView('errorbook')}><NotebookPen size={18} /><span>错词本</span><em>{errorBookCount}</em></button>
+          <button onClick={() => onView('grammar')}><ClipboardList size={18} /><span>语法学习</span></button>
           <button onClick={() => onView('test')}><GraduationCap size={18} /><span>单元测试</span></button>
           <button onClick={() => onView('dictation')}><Keyboard size={18} /><span>听写</span></button>
         </div>

@@ -22,6 +22,7 @@ import type { DictationMode } from './DictationView'
 const PassageView = lazy(() => import('./PassageView').then((module) => ({ default: module.PassageView })))
 const DictationView = lazy(() => import('./DictationView').then((module) => ({ default: module.DictationView })))
 const ErrorBookView = lazy(() => import('./ErrorBookView').then((module) => ({ default: module.ErrorBookView })))
+const GrammarView = lazy(() => import('./GrammarView').then((module) => ({ default: module.GrammarView })))
 
 const STORAGE_KEY = 'kotonoha-units-v1'
 const SETTINGS_KEY = 'kotonoha-settings-v1'
@@ -706,7 +707,21 @@ function App() {
               />
             </Suspense>
           )}
-          {view === 'review' && <ReviewView units={units} onReview={(word, targetUnitId, remembered) => { updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId); setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒') }} />}
+          {view === 'review' && (
+            <ReviewView
+              units={units}
+              onOpenGrammar={() => setView('grammar')}
+              onReview={(word, targetUnitId, remembered) => {
+                updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId)
+                setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒')
+              }}
+            />
+          )}
+          {view === 'grammar' && (
+            <Suspense fallback={<div className="wide-empty compact"><b>加载中…</b></div>}>
+              <GrammarView practiceOnly={practiceOnly} />
+            </Suspense>
+          )}
           {view === 'passage' && (
             <Suspense fallback={<div className="wide-empty compact"><b>加载中…</b></div>}>
               <PassageView />

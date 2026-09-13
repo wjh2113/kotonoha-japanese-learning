@@ -48,7 +48,7 @@ export type PassageLesson = {
   name: string
 }
 
-export type View = 'home' | 'library' | 'study' | 'passage' | 'test' | 'dictation' | 'wordbook' | 'errorbook' | 'review' | 'settings'
+export type View = 'home' | 'library' | 'study' | 'passage' | 'grammar' | 'test' | 'dictation' | 'wordbook' | 'errorbook' | 'review' | 'settings'
 
 export type VoiceGender = 'female' | 'male'
 

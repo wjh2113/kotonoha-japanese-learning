@@ -301,6 +301,7 @@ export function HomeView({ units, unit, settings, onView, practiceOnly = false }
           <button type="button" onClick={() => onView('study')}><Zap size={18} /><span>单词学习</span><small>背单词 · 记词义 · 练发音</small></button>
           <button type="button" onClick={() => onView('library')}><BookOpen size={18} /><span>词库</span><small>{practiceOnly ? '切换单元 · 查看进度' : '管理单元 · 导入手册'}</small></button>
           <button type="button" onClick={() => onView('passage')}><FileText size={18} /><span>课文学习</span><small>精读课文 · 语法解析 · 例句</small></button>
+          <button type="button" onClick={() => onView('grammar')}><ClipboardList size={18} /><span>语法学习</span><small>学语法点 · 看例句 · 做测验</small></button>
           <button type="button" onClick={() => onView('test')}><Target size={18} /><span>测试</span><small>巩固知识 · 检验成果</small></button>
           <button type="button" onClick={() => onView('dictation')}><Headphones size={18} /><span>听写</span><small>听音写词 · 提升听力</small></button>
         </div>
