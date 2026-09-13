@@ -8,7 +8,7 @@ import { readPassageSource } from './docx'
 import { isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import {
   chunkItems, hasChineseTranslation, isPrimarilyChineseLine, isTransientPassage, mergeAnalyzedSentences, mergePassageBooks,
-  normalizePassageSentence, passageProgressSummary, parsePassageHandbook, recordSentenceDictation, recordSentenceScore,
+  normalizePassageSentence, PASSAGE_ANALYZE_CONCURRENCY, passageProgressSummary, parsePassageHandbook, recordSentenceDictation, recordSentenceScore,
   recoverInterruptedIngest, sentenceNeedsAnalysis,
 } from './passage'
 import { PassageIntensive } from './PassageIntensive'
@@ -171,39 +171,52 @@ export function PassageView() {
       const progressLabel = (done: number) => fillingGapsOnly ? `正在补全读音与逐词注释 ${done}/${total}` : `正在生成整句翻译 ${done}/${total}`
       let finished = total - work.length
       let chunkErrors = 0
-      for (const chunk of chunkItems(work)) {
+      const chunks = chunkItems(work)
+      for (let offset = 0; offset < chunks.length; offset += PASSAGE_ANALYZE_CONCURRENCY) {
         if (!passagesRef.current.some((item) => item.id === passageId)) return
+        const batch = chunks.slice(offset, offset + PASSAGE_ANALYZE_CONCURRENCY)
         patchPassage(passageId, { status: 'processing', statusText: progressLabel(finished) })
-        try {
-          const controller = new AbortController()
-          const timeout = window.setTimeout(() => controller.abort(), 100_000)
-          let response: Response
+        const results = await Promise.all(batch.map(async (chunk) => {
           try {
-            response = await apiFetch('/api/passage/analyze', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ sentences: chunk.map((sentence) => ({ text: sentence.text })) }),
-              signal: controller.signal,
-            })
-          } finally {
-            window.clearTimeout(timeout)
+            const controller = new AbortController()
+            const timeout = window.setTimeout(() => controller.abort(), 100_000)
+            try {
+              const response = await apiFetch('/api/passage/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sentences: chunk.map((sentence) => ({ text: sentence.text })) }),
+                signal: controller.signal,
+              })
+              const data = await readApiJson<{ title?: string; sentences?: unknown[]; error?: string }>(response, '课文解析失败，请稍后重试。')
+              if (!response.ok) throw new Error(publicApiMessage(data.error, '课文解析失败，请稍后重试。'))
+              return { ok: true as const, data, size: chunk.length }
+            } finally {
+              window.clearTimeout(timeout)
+            }
+          } catch (reason) {
+            console.error('passage analyze chunk failed:', reason)
+            return { ok: false as const, size: chunk.length }
           }
-          const data = await readApiJson<{ title?: string; sentences?: unknown[]; error?: string }>(response, '课文解析失败，请稍后重试。')
-          if (!response.ok) throw new Error(publicApiMessage(data.error, '课文解析失败，请稍后重试。'))
-          const latest = passagesRef.current.find((item) => item.id === passageId)
-          if (!latest) return
-          finished = Math.min(total, finished + chunk.length)
-          const analyzedTitle = passageTitle(data.title, '')
-          patchPassage(passageId, {
-            sentences: mergeAnalyzedSentences(latest.sentences, data.sentences || []),
-            status: 'processing',
-            statusText: progressLabel(finished),
-            ...(latest.title === '课文' && analyzedTitle && !looksLikeErrorDocument(analyzedTitle) ? { title: analyzedTitle } : {}),
-          })
-        } catch (reason) {
-          chunkErrors += 1
-          console.error('passage analyze chunk failed:', reason)
+        }))
+        let latest = passagesRef.current.find((item) => item.id === passageId)
+        if (!latest) return
+        let sentences = latest.sentences
+        let analyzedTitle = ''
+        for (const result of results) {
+          finished = Math.min(total, finished + result.size)
+          if (!result.ok) {
+            chunkErrors += 1
+            continue
+          }
+          sentences = mergeAnalyzedSentences(sentences, result.data.sentences || [])
+          if (!analyzedTitle) analyzedTitle = passageTitle(result.data.title, '')
         }
+        patchPassage(passageId, {
+          sentences,
+          status: 'processing',
+          statusText: progressLabel(finished),
+          ...(latest.title === '课文' && analyzedTitle && !looksLikeErrorDocument(analyzedTitle) ? { title: analyzedTitle } : {}),
+        })
       }
       const latest = passagesRef.current.find((item) => item.id === passageId)
       if (!latest) return

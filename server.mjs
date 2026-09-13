@@ -128,6 +128,26 @@ app.put('/api/state', async (req, res) => {
   }
 })
 
+app.patch('/api/settings', async (req, res) => {
+  try {
+    res.json({ settings: await database.patchSettings(req.body?.settings || req.body) })
+  } catch (error) {
+    console.error(error)
+    res.status(error.message === 'INVALID_STATE' ? 400 : 500).json({ error: '设置保存失败。' })
+  }
+})
+
+app.patch('/api/words/:id', async (req, res) => {
+  try {
+    res.json({ word: await database.patchWord(req.params.id, req.body || {}) })
+  } catch (error) {
+    console.error(error)
+    if (error.message === 'WORD_NOT_FOUND') return res.status(404).json({ error: '单词不存在。' })
+    if (error.message === 'INVALID_WORD') return res.status(400).json({ error: '单词数据无效。' })
+    res.status(500).json({ error: '单词保存失败。' })
+  }
+})
+
 function looksLikeErrorDocument(text) {
   const value = String(text || '')
   return /<\s*html\b/i.test(value)
@@ -510,6 +530,36 @@ app.put('/api/passages', async (req, res) => {
     console.error(error)
     const clientError = ['INVALID_PASSAGES', 'TOO_MANY_PASSAGES', 'INVALID_PASSAGE'].includes(error.message)
     res.status(clientError ? 400 : 500).json({ error: clientError ? '提交的课文数据无效。' : '写入课文失败。' })
+  }
+})
+
+app.put('/api/passages/:id', async (req, res) => {
+  try {
+    const passage = await database.upsertPassage({ ...(req.body || {}), id: req.params.id })
+    res.json({ passage })
+  } catch (error) {
+    console.error(error)
+    res.status(error.message === 'INVALID_PASSAGE' ? 400 : 500).json({ error: '课文保存失败。' })
+  }
+})
+
+app.patch('/api/passages/:id/progress', async (req, res) => {
+  try {
+    const passage = await database.patchPassageProgress(req.params.id, req.body?.progress || req.body)
+    res.json({ passage })
+  } catch (error) {
+    console.error(error)
+    if (error.message === 'PASSAGE_NOT_FOUND') return res.status(404).json({ error: '课文不存在。' })
+    res.status(error.message === 'INVALID_PASSAGE' ? 400 : 500).json({ error: '进度保存失败。' })
+  }
+})
+
+app.put('/api/passage-books', async (req, res) => {
+  try {
+    res.json({ books: await database.replacePassageBooks(req.body?.books || req.body) })
+  } catch (error) {
+    console.error(error)
+    res.status(500).json({ error: '课本分组保存失败。' })
   }
 })
 

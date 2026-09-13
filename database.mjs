@@ -118,31 +118,134 @@ export function createDatabase(connectionString) {
     return result.rows[0]
   }
 
+  const mapWordRow = (row) => ({
+    id: row.id, term: row.term, reading: row.reading, meaning: row.meaning,
+    partOfSpeech: row.part_of_speech, example: row.example, exampleReading: row.example_reading,
+    translation: row.translation, mastered: row.mastered, starred: row.starred,
+    wrongBook: row.wrong_book, dictationMisses: row.dictation_misses || 0,
+    errorReviewed: row.error_reviewed,
+    reviewStage: row.review_stage ?? undefined,
+    lastReviewedAt: row.last_reviewed_at?.getTime(), nextReviewAt: row.next_review_at?.getTime(),
+    listeningWrong: row.listening_wrong || 0, meaningWrong: row.meaning_wrong || 0,
+    listeningCorrect: row.listening_correct || 0, meaningCorrect: row.meaning_correct || 0,
+    romaji: row.romaji || undefined,
+    pronunciationNote: row.pronunciation_note || undefined,
+    memoryTip: row.memory_tip || undefined,
+    synonyms: row.synonyms || undefined,
+    similarWords: row.similar_words || undefined,
+    notes: row.notes || undefined,
+    createdAt: row.created_at.getTime(),
+  })
+
+  const wordUpsertSql = `INSERT INTO words (
+      id, unit_id, term, reading, meaning, part_of_speech, example, example_reading, translation,
+      mastered, starred, review_stage, last_reviewed_at, next_review_at,
+      listening_wrong, meaning_wrong, listening_correct, meaning_correct,
+      wrong_book, dictation_misses, error_reviewed,
+      romaji, pronunciation_note, memory_tip, synonyms, similar_words, notes,
+      sort_order, created_at
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
+      $22,$23,$24,$25,$26,$27,$28,COALESCE($29,NOW())
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      unit_id = EXCLUDED.unit_id,
+      term = EXCLUDED.term,
+      reading = EXCLUDED.reading,
+      meaning = EXCLUDED.meaning,
+      part_of_speech = EXCLUDED.part_of_speech,
+      example = EXCLUDED.example,
+      example_reading = EXCLUDED.example_reading,
+      translation = EXCLUDED.translation,
+      mastered = EXCLUDED.mastered,
+      starred = EXCLUDED.starred,
+      review_stage = EXCLUDED.review_stage,
+      last_reviewed_at = EXCLUDED.last_reviewed_at,
+      next_review_at = EXCLUDED.next_review_at,
+      listening_wrong = EXCLUDED.listening_wrong,
+      meaning_wrong = EXCLUDED.meaning_wrong,
+      listening_correct = EXCLUDED.listening_correct,
+      meaning_correct = EXCLUDED.meaning_correct,
+      wrong_book = EXCLUDED.wrong_book,
+      dictation_misses = EXCLUDED.dictation_misses,
+      error_reviewed = EXCLUDED.error_reviewed,
+      romaji = EXCLUDED.romaji,
+      pronunciation_note = EXCLUDED.pronunciation_note,
+      memory_tip = EXCLUDED.memory_tip,
+      synonyms = EXCLUDED.synonyms,
+      similar_words = EXCLUDED.similar_words,
+      notes = EXCLUDED.notes,
+      sort_order = EXCLUDED.sort_order`
+
+  const buildWordParams = (word, unitId, wordIndex, term, reading, lex) => {
+    const meaning = text(word.meaning)
+    const placeholder = !meaning || /待补充|未知|不明|暂无|未查询|词义缺失|n\/a|unknown/i.test(meaning) || !/[一-鿿]/.test(meaning)
+    const dirtyExample = /笔记|批注|手写/.test(`${word.example || ''}${word.translation || ''}`)
+    return [
+      text(word.id), text(unitId), term, reading,
+      placeholder && lex.meaning ? lex.meaning : meaning,
+      text(word.partOfSpeech),
+      dirtyExample ? `${term}を勉強します。` : text(word.example),
+      dirtyExample ? '' : text(word.exampleReading),
+      dirtyExample ? `学习“${term}”这个词。` : text(word.translation),
+      Boolean(word.mastered), Boolean(word.starred), Number.isInteger(word.reviewStage) ? word.reviewStage : null,
+      timestamp(word.lastReviewedAt), timestamp(word.nextReviewAt),
+      Math.max(0, Math.min(99, Number(word.listeningWrong) || 0)),
+      Math.max(0, Math.min(99, Number(word.meaningWrong) || 0)),
+      Math.max(0, Math.min(99, Number(word.listeningCorrect) || 0)),
+      Math.max(0, Math.min(99, Number(word.meaningCorrect) || 0)),
+      Boolean(word.wrongBook),
+      Math.max(0, Math.min(99, Number(word.dictationMisses) || 0)),
+      Boolean(word.errorReviewed),
+      text(word.romaji).slice(0, 120),
+      text(word.pronunciationNote).slice(0, 200),
+      text(word.memoryTip).slice(0, 200),
+      text(word.synonyms).slice(0, 200),
+      text(word.similarWords).slice(0, 200),
+      text(word.notes).slice(0, 1000),
+      wordIndex, timestamp(word.createdAt),
+    ]
+  }
+
+  const upsertSettings = async (clientOrPool, settings) => {
+    const theme = settings.theme === 'aka' || settings.theme === 'ai' ? settings.theme : 'matcha'
+    await clientOrPool.query(
+      `INSERT INTO app_settings (id, avatar, voice_gender, theme, display_name, streak_days, last_study_date, updated_at)
+       VALUES (1, $1, $2, $3, $4, $5, $6, NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         avatar = EXCLUDED.avatar,
+         voice_gender = EXCLUDED.voice_gender,
+         theme = EXCLUDED.theme,
+         display_name = EXCLUDED.display_name,
+         streak_days = EXCLUDED.streak_days,
+         last_study_date = EXCLUDED.last_study_date,
+         updated_at = NOW()`,
+      [
+        text(settings.avatar, 'ゆ').slice(0, 2),
+        settings.voiceGender === 'male' ? 'male' : 'female',
+        theme,
+        text(settings.displayName, '小林同学').slice(0, 40) || '小林同学',
+        Math.max(0, Math.min(9999, Number(settings.streakDays) || 0)),
+        text(settings.lastStudyDate).slice(0, 16),
+      ],
+    )
+  }
+
   const getState = async () => {
     const [unitResult, wordResult, settingsResult] = await Promise.all([
       pool.query('SELECT id, name, description, color FROM units ORDER BY sort_order, created_at, id'),
       pool.query(`SELECT id, unit_id, term, reading, meaning, part_of_speech, example, example_reading,
         translation, mastered, starred, review_stage, last_reviewed_at, next_review_at,
         listening_wrong, meaning_wrong, listening_correct, meaning_correct,
-        wrong_book, dictation_misses, error_reviewed, created_at
+        wrong_book, dictation_misses, error_reviewed,
+        romaji, pronunciation_note, memory_tip, synonyms, similar_words, notes, created_at
         FROM words ORDER BY unit_id, sort_order, created_at, id`),
       pool.query('SELECT avatar, voice_gender, theme, display_name, streak_days, last_study_date FROM app_settings WHERE id = 1'),
     ])
     const wordsByUnit = new Map()
     for (const row of wordResult.rows) {
       const words = wordsByUnit.get(row.unit_id) || []
-      words.push({
-        id: row.id, term: row.term, reading: row.reading, meaning: row.meaning,
-        partOfSpeech: row.part_of_speech, example: row.example, exampleReading: row.example_reading,
-        translation: row.translation, mastered: row.mastered, starred: row.starred,
-        wrongBook: row.wrong_book, dictationMisses: row.dictation_misses || 0,
-        errorReviewed: row.error_reviewed,
-        reviewStage: row.review_stage ?? undefined,
-        lastReviewedAt: row.last_reviewed_at?.getTime(), nextReviewAt: row.next_review_at?.getTime(),
-        listeningWrong: row.listening_wrong || 0, meaningWrong: row.meaning_wrong || 0,
-        listeningCorrect: row.listening_correct || 0, meaningCorrect: row.meaning_correct || 0,
-        createdAt: row.created_at.getTime(),
-      })
+      words.push(mapWordRow(row))
       wordsByUnit.set(row.unit_id, words)
     }
     const theme = settingsResult.rows[0]?.theme
@@ -161,71 +264,46 @@ export function createDatabase(connectionString) {
     }
   }
 
+  /** Upsert units/words/settings; delete orphans. Avoids DELETE-all rewrite. */
   const replaceState = async (input) => {
     const { units, settings } = validateState(input)
     const client = await pool.connect()
     const dropped = []
     try {
       await client.query('BEGIN')
-      await client.query('DELETE FROM units')
+      const keepUnitIds = []
+      const keepWordIds = []
       for (const [unitIndex, unit] of units.entries()) {
+        const unitId = text(unit.id)
+        keepUnitIds.push(unitId)
         await client.query(
-          'INSERT INTO units (id, name, description, color, sort_order) VALUES ($1, $2, $3, $4, $5)',
-          [text(unit.id), text(unit.name), text(unit.description), text(unit.color, '#e6533f'), unitIndex],
+          `INSERT INTO units (id, name, description, color, sort_order)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (id) DO UPDATE SET
+             name = EXCLUDED.name,
+             description = EXCLUDED.description,
+             color = EXCLUDED.color,
+             sort_order = EXCLUDED.sort_order`,
+          [unitId, text(unit.name), text(unit.description), text(unit.color, '#e6533f'), unitIndex],
         )
         const prepared = prepareUnitWords(unit.words)
-        dropped.push(...prepared.dropped.map((item) => ({ ...item, unitId: text(unit.id) })))
+        dropped.push(...prepared.dropped.map((item) => ({ ...item, unitId })))
         for (const [wordIndex, entry] of prepared.kept.entries()) {
-          const { word, term, reading, lex } = entry
-          const meaning = text(word.meaning)
-          const placeholder = !meaning || /待补充|未知|不明|暂无|未查询|词义缺失|n\/a|unknown/i.test(meaning) || !/[一-鿿]/.test(meaning)
-          const dirtyExample = /笔记|批注|手写/.test(`${word.example || ''}${word.translation || ''}`)
-          await client.query(
-            `INSERT INTO words (id, unit_id, term, reading, meaning, part_of_speech, example,
-              example_reading, translation, mastered, starred, review_stage, last_reviewed_at,
-              next_review_at, listening_wrong, meaning_wrong, listening_correct, meaning_correct,
-              wrong_book, dictation_misses, error_reviewed, sort_order, created_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,COALESCE($23,NOW()))`,
-            [text(word.id), text(unit.id), term, reading,
-              placeholder && lex.meaning ? lex.meaning : meaning,
-              text(word.partOfSpeech),
-              dirtyExample ? `${term}を勉強します。` : text(word.example),
-              dirtyExample ? '' : text(word.exampleReading),
-              dirtyExample ? `学习“${term}”这个词。` : text(word.translation),
-              Boolean(word.mastered), Boolean(word.starred), Number.isInteger(word.reviewStage) ? word.reviewStage : null,
-              timestamp(word.lastReviewedAt), timestamp(word.nextReviewAt),
-              Math.max(0, Math.min(99, Number(word.listeningWrong) || 0)),
-              Math.max(0, Math.min(99, Number(word.meaningWrong) || 0)),
-              Math.max(0, Math.min(99, Number(word.listeningCorrect) || 0)),
-              Math.max(0, Math.min(99, Number(word.meaningCorrect) || 0)),
-              Boolean(word.wrongBook),
-              Math.max(0, Math.min(99, Number(word.dictationMisses) || 0)),
-              Boolean(word.errorReviewed),
-              wordIndex, timestamp(word.createdAt)],
-          )
+          keepWordIds.push(text(entry.word.id))
+          await client.query(wordUpsertSql, buildWordParams(entry.word, unitId, wordIndex, entry.term, entry.reading, entry.lex))
         }
       }
-      const theme = settings.theme === 'aka' || settings.theme === 'ai' ? settings.theme : 'matcha'
-      await client.query(
-        `INSERT INTO app_settings (id, avatar, voice_gender, theme, display_name, streak_days, last_study_date, updated_at)
-         VALUES (1, $1, $2, $3, $4, $5, $6, NOW())
-         ON CONFLICT (id) DO UPDATE SET
-           avatar = EXCLUDED.avatar,
-           voice_gender = EXCLUDED.voice_gender,
-           theme = EXCLUDED.theme,
-           display_name = EXCLUDED.display_name,
-           streak_days = EXCLUDED.streak_days,
-           last_study_date = EXCLUDED.last_study_date,
-           updated_at = NOW()`,
-        [
-          text(settings.avatar, 'ゆ').slice(0, 2),
-          settings.voiceGender === 'male' ? 'male' : 'female',
-          theme,
-          text(settings.displayName, '小林同学').slice(0, 40) || '小林同学',
-          Math.max(0, Math.min(9999, Number(settings.streakDays) || 0)),
-          text(settings.lastStudyDate).slice(0, 16),
-        ],
-      )
+      if (keepWordIds.length) {
+        await client.query('DELETE FROM words WHERE NOT (id = ANY($1::text[]))', [keepWordIds])
+      } else {
+        await client.query('DELETE FROM words')
+      }
+      if (keepUnitIds.length) {
+        await client.query('DELETE FROM units WHERE NOT (id = ANY($1::text[]))', [keepUnitIds])
+      } else {
+        await client.query('DELETE FROM units')
+      }
+      await upsertSettings(client, settings)
       await client.query('COMMIT')
       const state = await getState()
       return dropped.length ? { ...state, droppedCount: dropped.length, dropped } : state
@@ -235,6 +313,55 @@ export function createDatabase(connectionString) {
     } finally {
       client.release()
     }
+  }
+
+  const patchSettings = async (settings) => {
+    if (!settings || typeof settings !== 'object') throw new Error('INVALID_STATE')
+    await upsertSettings(pool, settings)
+    return (await getState()).settings
+  }
+
+  const patchWord = async (id, fields = {}) => {
+    const wordId = text(id)
+    if (!wordId) throw new Error('INVALID_WORD')
+    const existing = await pool.query('SELECT * FROM words WHERE id = $1', [wordId])
+    if (!existing.rows[0]) throw new Error('WORD_NOT_FOUND')
+    const row = existing.rows[0]
+    const merged = {
+      id: wordId,
+      term: fields.term ?? row.term,
+      reading: fields.reading ?? row.reading,
+      meaning: fields.meaning ?? row.meaning,
+      partOfSpeech: fields.partOfSpeech ?? row.part_of_speech,
+      example: fields.example ?? row.example,
+      exampleReading: fields.exampleReading ?? row.example_reading,
+      translation: fields.translation ?? row.translation,
+      mastered: fields.mastered ?? row.mastered,
+      starred: fields.starred ?? row.starred,
+      reviewStage: fields.reviewStage !== undefined ? fields.reviewStage : row.review_stage,
+      lastReviewedAt: fields.lastReviewedAt !== undefined ? fields.lastReviewedAt : row.last_reviewed_at?.getTime(),
+      nextReviewAt: fields.nextReviewAt !== undefined ? fields.nextReviewAt : row.next_review_at?.getTime(),
+      listeningWrong: fields.listeningWrong ?? row.listening_wrong,
+      meaningWrong: fields.meaningWrong ?? row.meaning_wrong,
+      listeningCorrect: fields.listeningCorrect ?? row.listening_correct,
+      meaningCorrect: fields.meaningCorrect ?? row.meaning_correct,
+      wrongBook: fields.wrongBook ?? row.wrong_book,
+      dictationMisses: fields.dictationMisses ?? row.dictation_misses,
+      errorReviewed: fields.errorReviewed ?? row.error_reviewed,
+      romaji: fields.romaji ?? row.romaji,
+      pronunciationNote: fields.pronunciationNote ?? row.pronunciation_note,
+      memoryTip: fields.memoryTip ?? row.memory_tip,
+      synonyms: fields.synonyms ?? row.synonyms,
+      similarWords: fields.similarWords ?? row.similar_words,
+      notes: fields.notes ?? row.notes,
+      createdAt: row.created_at?.getTime(),
+    }
+    const lex = extractUploadedLexeme(merged.term, merged.reading)
+    const term = looksLikeVocabularyTerm(lex.term) ? lex.term : text(merged.term)
+    if (!term) throw new Error('INVALID_WORD')
+    await pool.query(wordUpsertSql, buildWordParams(merged, row.unit_id, row.sort_order || 0, term, text(lex.reading || merged.reading), lex))
+    const next = await pool.query('SELECT * FROM words WHERE id = $1', [wordId])
+    return mapWordRow(next.rows[0])
   }
 
   const listPassages = async () => {
@@ -261,38 +388,56 @@ export function createDatabase(connectionString) {
     return { passages, books }
   }
 
+  const passageAnalysisPayload = (passage) => {
+    const sentences = Array.isArray(passage.sentences)
+      ? passage.sentences.filter((item) => {
+        const line = text(item?.text)
+        return line && !looksLikeErrorDocument(line) && line !== '（正在识别课文…）'
+      }).slice(0, 80)
+      : []
+    const progress = passage.progress && typeof passage.progress === 'object' ? passage.progress : {}
+    return {
+      sentences,
+      bookId: text(passage.bookId).slice(0, 40),
+      bookName: text(passage.bookName).slice(0, 80),
+      progress,
+      status: passage.status === 'processing' || passage.status === 'error' ? passage.status : 'ready',
+      statusText: storeStatusText(passage.statusText),
+    }
+  }
+
+  /** Upsert passages + books meta; delete orphans instead of wiping the table. */
   const replacePassages = async (input) => {
     const passages = validatePassages(input)
     const books = normalizePassageBooks(input, passages)
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
-      await client.query('DELETE FROM passages')
+      const keepIds = [BOOKS_META_ID]
       for (const [index, passage] of passages.entries()) {
-        const sentences = Array.isArray(passage.sentences)
-          ? passage.sentences.filter((item) => {
-            const line = text(item?.text)
-            return line && !looksLikeErrorDocument(line) && line !== '（正在识别课文…）'
-          }).slice(0, 80)
-          : []
-        const progress = passage.progress && typeof passage.progress === 'object' ? passage.progress : {}
+        keepIds.push(text(passage.id))
         await client.query(
-          'INSERT INTO passages (id, title, source_text, analysis, sort_order, created_at) VALUES ($1, $2, $3, $4, $5, COALESCE($6, NOW()))',
+          `INSERT INTO passages (id, title, source_text, analysis, sort_order, created_at)
+           VALUES ($1, $2, $3, $4, $5, COALESCE($6, NOW()))
+           ON CONFLICT (id) DO UPDATE SET
+             title = EXCLUDED.title,
+             source_text = EXCLUDED.source_text,
+             analysis = EXCLUDED.analysis,
+             sort_order = EXCLUDED.sort_order`,
           [text(passage.id), storePassageTitle(passage.title), storePassageSource(passage.sourceText),
-            JSON.stringify({
-              sentences,
-              bookId: text(passage.bookId).slice(0, 40),
-              bookName: text(passage.bookName).slice(0, 80),
-              progress,
-              status: passage.status === 'processing' || passage.status === 'error' ? passage.status : 'ready',
-              statusText: storeStatusText(passage.statusText),
-            }), index, timestamp(passage.createdAt)],
+            JSON.stringify(passageAnalysisPayload(passage)), index, timestamp(passage.createdAt)],
         )
       }
       await client.query(
-        'INSERT INTO passages (id, title, source_text, analysis, sort_order, created_at) VALUES ($1, $2, $3, $4, $5, NOW())',
+        `INSERT INTO passages (id, title, source_text, analysis, sort_order, created_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           title = EXCLUDED.title,
+           analysis = EXCLUDED.analysis,
+           sort_order = EXCLUDED.sort_order`,
         [BOOKS_META_ID, '课本分组', '', JSON.stringify({ books, sentences: [] }), passages.length],
       )
+      await client.query('DELETE FROM passages WHERE NOT (id = ANY($1::text[]))', [keepIds])
       await client.query('COMMIT')
       return listPassages()
     } catch (error) {
@@ -301,6 +446,51 @@ export function createDatabase(connectionString) {
     } finally {
       client.release()
     }
+  }
+
+  const upsertPassage = async (passage) => {
+    if (!passage || !text(passage.id) || !text(passage.title)) throw new Error('INVALID_PASSAGE')
+    const existing = await pool.query('SELECT sort_order, created_at FROM passages WHERE id = $1', [text(passage.id)])
+    const sortOrder = existing.rows[0]?.sort_order ?? 0
+    await pool.query(
+      `INSERT INTO passages (id, title, source_text, analysis, sort_order, created_at)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6, NOW()))
+       ON CONFLICT (id) DO UPDATE SET
+         title = EXCLUDED.title,
+         source_text = EXCLUDED.source_text,
+         analysis = EXCLUDED.analysis`,
+      [text(passage.id), storePassageTitle(passage.title), storePassageSource(passage.sourceText),
+        JSON.stringify(passageAnalysisPayload(passage)), sortOrder,
+        timestamp(passage.createdAt) || existing.rows[0]?.created_at || null],
+    )
+    const listed = await listPassages()
+    return listed.passages.find((item) => item.id === text(passage.id)) || null
+  }
+
+  const patchPassageProgress = async (id, progress) => {
+    const passageId = text(id)
+    if (!passageId || passageId === BOOKS_META_ID) throw new Error('INVALID_PASSAGE')
+    const result = await pool.query('SELECT analysis FROM passages WHERE id = $1', [passageId])
+    if (!result.rows[0]) throw new Error('PASSAGE_NOT_FOUND')
+    const analysis = result.rows[0].analysis && typeof result.rows[0].analysis === 'object' ? result.rows[0].analysis : {}
+    const nextProgress = progress && typeof progress === 'object' ? progress : {}
+    await pool.query(
+      'UPDATE passages SET analysis = $2::jsonb WHERE id = $1',
+      [passageId, JSON.stringify({ ...analysis, progress: nextProgress })],
+    )
+    const listed = await listPassages()
+    return listed.passages.find((item) => item.id === passageId) || null
+  }
+
+  const replacePassageBooks = async (booksInput) => {
+    const books = normalizePassageBooks({ books: booksInput }, [])
+    await pool.query(
+      `INSERT INTO passages (id, title, source_text, analysis, sort_order, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (id) DO UPDATE SET analysis = EXCLUDED.analysis`,
+      [BOOKS_META_ID, '课本分组', '', JSON.stringify({ books, sentences: [] }), 0],
+    )
+    return (await listPassages()).books
   }
 
   const listIncompleteWords = async (limit = 20) => {
@@ -368,5 +558,5 @@ export function createDatabase(connectionString) {
     await pool.query('DELETE FROM words WHERE id = $1', [text(id)])
   }
 
-  return { initialize, health, getState, replaceState, listIncompleteWords, countIncompleteWords, updateWordLexicon, unitHasTerm, deleteWord, listPassages, replacePassages, close: () => pool.end() }
+  return { initialize, health, getState, replaceState, patchSettings, patchWord, listIncompleteWords, countIncompleteWords, updateWordLexicon, unitHasTerm, deleteWord, listPassages, replacePassages, upsertPassage, patchPassageProgress, replacePassageBooks, close: () => pool.end() }
 }
