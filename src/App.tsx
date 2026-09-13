@@ -641,6 +641,7 @@ function App() {
               search={search} onSearch={setSearch}
               onTest={() => setView('test')}
               onDictation={() => openDictation('plan')}
+              onWordbook={() => setView('wordbook')}
               practiceOnly={practiceOnly}
             />
           )}
@@ -671,7 +672,15 @@ function App() {
               />
             </Suspense>
           )}
-          {view === 'wordbook' && <WordbookView units={units} onRemove={(wordId, targetUnitId) => { updateWord(wordId, { starred: false }, targetUnitId); setToast('已移出生词本') }} />}
+          {view === 'wordbook' && (
+            <WordbookView
+              units={units}
+              practiceOnly={practiceOnly}
+              onOpenStudy={() => setView('study')}
+              onUpdate={(wordId, targetUnitId, changes) => updateWord(wordId, changes, targetUnitId)}
+              onRemove={(wordId, targetUnitId) => { updateWord(wordId, { starred: false }, targetUnitId); setToast('已移出生词本') }}
+            />
+          )}
           {view === 'errorbook' && (
             <Suspense fallback={<div className="wide-empty compact"><b>加载中…</b></div>}>
               <ErrorBookView

@@ -1,8 +1,8 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import {
   AudioLines, Bell, BookMarked, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronLeft, ChevronRight,
-  Clock3, FileText, GraduationCap, Headphones, Home, Import, Keyboard, LayoutGrid, LibraryBig, List, Menu,
-  Mic, NotebookPen, Palette, PanelLeft, PanelLeftClose, Pause, Plus, Search, Settings, Sparkles, SquarePen,
+  Circle, Clock3, FileText, GraduationCap, Headphones, Home, Import, Keyboard, LayoutGrid, LibraryBig, List, Menu,
+  Mic, MoreHorizontal, NotebookPen, Palette, PanelLeft, PanelLeftClose, Pause, Plus, Search, Settings, Sparkles, SquarePen,
   Sprout, Target, Trash2, Trophy, UploadCloud, UserRound, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, apiUrl, setAccessToken } from './api'
@@ -250,7 +250,11 @@ export function MobileTabBar({ view, reviewCount, onView }: { view: View; review
     { id: 'review', label: '复习', icon: <Clock3 size={21} />, count: reviewCount },
     { id: 'settings', label: '我的', icon: <UserRound size={21} /> },
   ]
-  const active = view === 'wordbook' || view === 'errorbook' || view === 'test' || view === 'library' ? '' : view
+  const active = view === 'wordbook'
+    ? 'study'
+    : view === 'errorbook' || view === 'test' || view === 'library'
+      ? ''
+      : view
   return (
     <nav className="mobile-tabbar" aria-label="应用导航">
       {items.map((item) => (
@@ -357,12 +361,13 @@ export function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onRena
   )
 }
 
-export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onEdit, onToggleStar, onDeleteWord, onSearch, onTest, onDictation, practiceOnly = false }: {
+export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onEdit, onToggleStar, onDeleteWord, onSearch, onTest, onDictation, onWordbook, practiceOnly = false }: {
   unit: Unit; units: Unit[]; selectedWord?: Word; search: string; onUnit: (id: string) => void; onSelect: (id: string) => void; onImport: () => void
   onEdit: (word: Word, changes: Partial<Word>) => void
   onToggleStar: (word: Word) => void
   onDeleteWord: (word: Word) => void
   onSearch: (value: string) => void; onTest: () => void; onDictation: () => void
+  onWordbook?: () => void
   practiceOnly?: boolean
 }) {
   const { voiceGender } = useContext(SettingsContext)
@@ -414,6 +419,7 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
           <b>{mastered}/{unit.words.length} 已掌握</b>
         </div>
         <div className="hero-actions study-heading-actions">
+          {onWordbook && <button className="secondary-button" onClick={onWordbook}><BookMarked size={16} strokeWidth={1.6} />生词本</button>}
           <button className="secondary-button" onClick={onDictation}><Keyboard size={16} strokeWidth={1.6} />听写</button>
           <button className="secondary-button" onClick={onTest}><GraduationCap size={16} strokeWidth={1.6} />单元测试</button>
           {!practiceOnly && <button className="primary-button" onClick={onImport}><UploadCloud size={16} strokeWidth={1.6} />导入单词</button>}
@@ -890,18 +896,254 @@ export function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit
   )
 }
 
-export function WordbookView({ units, onRemove }: { units: Unit[]; onRemove: (wordId: string, unitId: string) => void }) {
+export function WordbookView({
+  units,
+  onUpdate,
+  onRemove,
+  onOpenStudy,
+  practiceOnly = false,
+}: {
+  units: Unit[]
+  onUpdate: (wordId: string, unitId: string, changes: Partial<Word>) => void
+  onRemove: (wordId: string, unitId: string) => void
+  onOpenStudy?: () => void
+  practiceOnly?: boolean
+}) {
+  const { voiceGender } = useContext(SettingsContext)
+  const [filter, setFilter] = useState<'all' | 'learning' | 'mastered'>('all')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const entries = units.flatMap((unit) => unit.words.filter((word) => word.starred).map((word) => ({ word, unit })))
+  const filtered = entries.filter(({ word }) => (
+    filter === 'all' || (filter === 'mastered' ? word.mastered : !word.mastered)
+  ))
+  const selected = filtered.find((item) => item.word.id === selectedId)
+    || entries.find((item) => item.word.id === selectedId)
+    || null
+
+  const formatDate = (value?: number) => {
+    if (!Number.isFinite(value)) return ''
+    const date = new Date(Number(value))
+    const y = date.getFullYear()
+    const m = String(date.getMonth() + 1).padStart(2, '0')
+    const d = String(date.getDate()).padStart(2, '0')
+    return `${y}/${m}/${d}`
+  }
+
+  const speakTerm = (event: React.MouseEvent, term: string) => {
+    event.stopPropagation()
+    if (term) void speakJapanese(term, voiceGender)
+  }
+
   return (
-    <div className="page hub-page">
-      <section className="hub-hero"><div><span className="eyebrow">PERSONAL WORDBOOK</span><h1>生词本</h1><p>这里保存你主动标记的单词，跨单元集中查看。</p></div><span className="hero-count"><b>{entries.length}</b> 个生词</span></section>
-      {entries.length ? <section className="collection-list">{entries.map(({ word, unit }) => <article key={word.id} className="collection-card">
-        <span className="collection-unit" style={{ color: unit.color }}>{unit.name}</span>
-        <div className="collection-word"><b className="jp">{word.term}</b><span className="jp">{word.reading}</span></div>
-        <p>{word.meaning}</p><div className="collection-example"><span className="jp">{word.example}</span><small>{word.translation}</small></div>
-        <VolumeButton word={word} />
-        <button className="remove-word" onClick={() => onRemove(word.id, unit.id)}><Trash2 size={15} />移出</button>
-      </article>)}</section> : <div className="wide-empty"><BookMarked /><h2>生词本还是空的</h2><p>在“学习”页打开词卡，点击右上角的生词本图标即可收藏。</p></div>}
+    <div className="page hub-page wordbook-page">
+      <section className="wordbook-hero">
+        <div>
+          <h1><Sprout size={20} strokeWidth={1.7} />生词本</h1>
+          <p>积累每一个单词，遇见更好的自己</p>
+        </div>
+        {!practiceOnly && onOpenStudy && (
+          <button type="button" className="wordbook-import" onClick={onOpenStudy}>
+            <UploadCloud size={16} strokeWidth={1.7} />导入
+          </button>
+        )}
+      </section>
+
+      <div className="wordbook-filters" role="tablist" aria-label="生词筛选">
+        <button type="button" className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部</button>
+        <button type="button" className={filter === 'learning' ? 'active' : ''} onClick={() => setFilter('learning')}>
+          <Circle size={13} strokeWidth={2} />未掌握
+        </button>
+        <button type="button" className={filter === 'mastered' ? 'active' : ''} onClick={() => setFilter('mastered')}>
+          <CheckCircle2 size={13} strokeWidth={2} />已掌握
+        </button>
+      </div>
+
+      {filtered.length ? (
+        <section className="wordbook-list">
+          {filtered.map(({ word, unit }) => (
+            <article
+              key={word.id}
+              className="wordbook-row"
+              onClick={() => setSelectedId(word.id)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  setSelectedId(word.id)
+                }
+              }}
+            >
+              <button
+                type="button"
+                className="wordbook-speak"
+                aria-label={`朗读 ${word.term}`}
+                onClick={(event) => speakTerm(event, word.term)}
+              >
+                <Volume2 size={18} strokeWidth={1.7} />
+              </button>
+              <div className="wordbook-row-main">
+                <b className="jp">{word.term}</b>
+                <span className="jp wordbook-reading">{word.reading}</span>
+                <small>
+                  {word.partOfSpeech ? `${word.partOfSpeech.split('・')[0]} · ` : ''}
+                  {word.meaning || '暂无释义'}
+                </small>
+              </div>
+              <div className="wordbook-row-meta">
+                <em>{formatDate(word.createdAt)}</em>
+                <span className={word.mastered ? 'ok' : ''}>
+                  {word.mastered
+                    ? <><CheckCircle2 size={14} strokeWidth={2} />已掌握</>
+                    : <><Circle size={14} strokeWidth={2} />未掌握</>}
+                </span>
+              </div>
+              <ChevronRight className="wordbook-chevron" size={16} strokeWidth={1.7} aria-hidden />
+              <span className="sr-only">{unit.name}</span>
+            </article>
+          ))}
+        </section>
+      ) : (
+        <div className="wide-empty">
+          <BookMarked />
+          <h2>{entries.length ? '没有符合筛选的生词' : '生词本还是空的'}</h2>
+          <p>{entries.length ? '试试切换「全部 / 未掌握 / 已掌握」。' : '在「单词学习」打开词卡，点击右上角生词本图标即可收藏。'}</p>
+        </div>
+      )}
+
+      {selected && (
+        <WordbookSheet
+          word={selected.word}
+          unitName={selected.unit.name}
+          onClose={() => setSelectedId(null)}
+          onUpdate={(changes) => onUpdate(selected.word.id, selected.unit.id, changes)}
+          onRemove={() => {
+            onRemove(selected.word.id, selected.unit.id)
+            setSelectedId(null)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function WordbookSheet({
+  word,
+  unitName,
+  onClose,
+  onUpdate,
+  onRemove,
+}: {
+  word: Word
+  unitName: string
+  onClose: () => void
+  onUpdate: (changes: Partial<Word>) => void
+  onRemove: () => void
+}) {
+  const { voiceGender } = useContext(SettingsContext)
+  const [notesDraft, setNotesDraft] = useState(word.notes || '')
+  const similar = splitWordList(word.similarWords)
+  const synonyms = splitWordList(word.synonyms)
+  const romaji = word.romaji || toRomaji(word.reading)
+
+  useEffect(() => {
+    setNotesDraft(word.notes || '')
+  }, [word.id, word.notes])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="wordbook-sheet-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="wordbook-sheet" role="dialog" aria-modal="true" aria-label={`${word.term} 词卡`}>
+        <div className="wordbook-sheet-handle" aria-hidden />
+        <header className="wordbook-sheet-head">
+          <button
+            type="button"
+            className="wordbook-speak"
+            aria-label={`朗读 ${word.term}`}
+            onClick={() => { if (word.term) void speakJapanese(word.term, voiceGender) }}
+          >
+            <Volume2 size={18} strokeWidth={1.7} />
+          </button>
+          <div className="wordbook-sheet-title">
+            <b className="jp">{word.term}</b>
+            <span className="jp">{word.reading}</span>
+            <div className="wordbook-sheet-tags">
+              {romaji && <small className="romaji">{romaji}</small>}
+              <em className={word.mastered ? 'ok' : ''}>{word.mastered ? '已掌握' : '未掌握'}</em>
+              <small className="wordbook-unit">{unitName}</small>
+            </div>
+          </div>
+          <button type="button" className="wordbook-sheet-more" aria-label="关闭" onClick={onClose}>
+            <MoreHorizontal size={18} strokeWidth={1.7} />
+          </button>
+        </header>
+
+        <div className="wordbook-sheet-body">
+          <div className="wordbook-block">
+            <label>中文释义</label>
+            <p>{word.meaning || '暂无释义'}</p>
+          </div>
+          {(word.example || word.translation) && (
+            <div className="wordbook-block">
+              <label>例句</label>
+              {word.example && <p className="jp">{word.example}</p>}
+              {word.translation && <small>{word.translation}</small>}
+            </div>
+          )}
+          {(similar.length > 0 || synonyms.length > 0) && (
+            <div className="wordbook-related">
+              <div className="wordbook-block">
+                <label>相似词</label>
+                {similar.length
+                  ? <div className="word-chips">{similar.map((item, index) => <span key={`sim-${word.id}-${index}`} className="jp">{item}</span>)}</div>
+                  : <p className="muted">暂无</p>}
+              </div>
+              <div className="wordbook-block">
+                <label>同义词</label>
+                {synonyms.length
+                  ? <div className="word-chips">{synonyms.map((item, index) => <span key={`syn-${word.id}-${index}`} className="jp">{item}</span>)}</div>
+                  : <p className="muted">暂无</p>}
+              </div>
+            </div>
+          )}
+          <div className="wordbook-block">
+            <label>我的笔记</label>
+            <textarea
+              className="notes-input"
+              value={notesDraft}
+              maxLength={200}
+              placeholder="写下你的记忆联想…"
+              onChange={(event) => setNotesDraft(event.target.value)}
+              onBlur={() => {
+                if ((word.notes || '') !== notesDraft) onUpdate({ notes: notesDraft.slice(0, 200) })
+              }}
+            />
+            <small className="notes-count">{notesDraft.length}/200</small>
+          </div>
+        </div>
+
+        <footer className="wordbook-sheet-actions">
+          <button type="button" className="wordbook-marked" onClick={onRemove}>
+            <BookMarked size={16} strokeWidth={1.7} />已标记
+          </button>
+          <button
+            type="button"
+            className={`primary-button ${word.mastered ? 'wordbook-mastered' : ''}`}
+            onClick={() => onUpdate(word.mastered
+              ? { mastered: false }
+              : { mastered: true, ...scheduleReview(word, true) })}
+          >
+            <Check size={16} strokeWidth={2} />{word.mastered ? '已掌握' : '标为掌握'}
+          </button>
+        </footer>
+      </section>
     </div>
   )
 }
