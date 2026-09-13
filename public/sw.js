@@ -1,7 +1,7 @@
 /* 言の葉 KOTONOHA — offline-first service worker.
    静态资源 cache-first；页面导航 network-first 回退缓存。
    /api/state 与 /api/passages 永不缓存，避免离线读到过期词库/课文。 */
-const CACHE = 'kotonoha-v6'
+const CACHE = 'kotonoha-v7'
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png']
 
 self.addEventListener('install', (event) => {

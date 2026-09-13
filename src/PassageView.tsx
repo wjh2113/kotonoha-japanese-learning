@@ -797,13 +797,12 @@ export function PassageView() {
                                 <em>{index + 1}</em>
                                 <span className="passage-bilingual-jp">
                                   <span className="jp">
-                                    {highlightGrammarInText(item.text, grammarTerms).map((part, partIndex) => (
+                                    {highlightGrammarInText(item.reading || item.text, grammarTerms).map((part, partIndex) => (
                                       part.hit
                                         ? <span key={`${item.id}-g-${partIndex}`} className="grammar-hit">{part.text}</span>
                                         : <span key={`${item.id}-t-${partIndex}`}>{part.text}</span>
                                     ))}
                                   </span>
-                                  {item.reading && <small className="jp passage-furi">{item.reading}</small>}
                                 </span>
                                 {hasChineseTranslation(item.translation) && (
                                   <span className="passage-bilingual-tr">{item.translation}</span>
