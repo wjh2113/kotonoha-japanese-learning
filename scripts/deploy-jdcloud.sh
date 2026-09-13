@@ -49,7 +49,13 @@ sudo rsync -a \
 cd "\${REMOTE_DIR}"
 
 if [[ -f "\${STAGING}/.env.localupload" ]]; then
-  sudo cp "\${STAGING}/.env.localupload" "\${REMOTE_DIR}/.env"
+  # Only bootstrap .env when missing. Never overwrite an existing production .env
+  # with a possibly empty local upload (would wipe LLM_GATEWAY_API_KEY).
+  if [[ ! -f "\${REMOTE_DIR}/.env" ]]; then
+    sudo cp "\${STAGING}/.env.localupload" "\${REMOTE_DIR}/.env"
+  else
+    sudo cp "\${STAGING}/.env.localupload" "\${REMOTE_DIR}/.env.localupload"
+  fi
 fi
 if [[ ! -f "\${REMOTE_DIR}/.env" ]]; then
   sudo cp "\${REMOTE_DIR}/.env.example" "\${REMOTE_DIR}/.env"
