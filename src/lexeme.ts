@@ -19,6 +19,7 @@ export type ImportLexeme = {
   partOfSpeech?: string
   romaji?: string
   example?: string
+  translation?: string
   pronunciationNote?: string
   memoryTip?: string
   synonyms?: string
@@ -34,6 +35,7 @@ function cleanExtras(extras?: ImportExtras): ImportExtras {
     partOfSpeech: clean(extras.partOfSpeech),
     romaji: clean(extras.romaji),
     example: clean(extras.example),
+    translation: clean(extras.translation),
     pronunciationNote: clean(extras.pronunciationNote),
     memoryTip: clean(extras.memoryTip),
     synonyms: clean(extras.synonyms),

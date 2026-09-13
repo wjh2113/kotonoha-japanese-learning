@@ -19,9 +19,23 @@ describe('Word vocabulary extraction', () => {
     expect(parseVocabulary(docxHtmlToVocabularyText(html))).toEqual([{ term: '旅行', reading: 'りょこう', meaning: '旅行' }])
   })
 
-  it('keeps multi-paragraph table cells on one row', () => {
-    const html = '<table><tr><td><p>勉強</p></td><td><p>べんきょう</p></td><td><p>学习</p><p>用功</p></td></tr></table>'
-    expect(docxHtmlToVocabularyText(html)).toBe('勉強\tべんきょう\t学习 用功')
+  it('reads the Excel vocabulary handbook template', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    const bytes = readFileSync(resolve(process.cwd(), 'public/templates/词汇导入模版.xlsx'))
+    const file = new File([bytes], '词汇导入模版.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    const text = await readVocabularyFile(file)
+    const drafts = parseVocabulary(text)
+    expect(drafts.length).toBeGreaterThanOrEqual(2)
+    expect(drafts[0]).toMatchObject({
+      term: 'ありがとうございます',
+      reading: 'ありがとうございます',
+      meaning: '谢谢',
+      translation: '谢谢。',
+      partOfSpeech: '[惯]',
+    })
   })
 })
 

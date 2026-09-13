@@ -63,6 +63,7 @@ export type ImportDraft = {
   partOfSpeech?: string
   romaji?: string
   example?: string
+  translation?: string
   pronunciationNote?: string
   memoryTip?: string
   synonyms?: string

@@ -29,9 +29,35 @@ describe('parseVocabulary', () => {
     }])
   })
 
-  it('parses synonym and similar-word columns by header', () => {
-    const table = '单词\t假名\t词性\t中文释义\t罗马音\t例句\t发音注意事项\t记忆技巧\t同义词\t形近词\n桜\tさくら\t名词\t樱花\tsakura\t桜が咲きました。\t\t\t櫻花、サクラ\t桜花、桃'
-    expect(parseVocabulary(table)[0]).toMatchObject({ term: '桜', synonyms: '櫻花、サクラ', similarWords: '桜花、桃' })
+  it('parses vocabulary handbook 12-column template with 序号 and 例句译文', () => {
+    const table = [
+      '序号\t单词\t假名\t词性\t中文释义\t罗马音\t例句\t例句译文\t发音注意事项\t记忆技巧\t同义词\t形近词',
+      '1\tすみません\tすみません\t[惯]\t对不起；劳驾\tsumimasen\tすみません。\t劳驾。\t整体读五拍\t搭话通用\tごめんなさい\t—',
+    ].join('\n')
+    expect(parseVocabulary(table)[0]).toMatchObject({
+      term: 'すみません',
+      reading: 'すみません',
+      partOfSpeech: '[惯]',
+      meaning: '对不起；劳驾',
+      romaji: 'sumimasen',
+      example: 'すみません。',
+      translation: '劳驾。',
+      pronunciationNote: '整体读五拍',
+      memoryTip: '搭话通用',
+      synonyms: 'ごめんなさい',
+      similarWords: '—',
+    })
+  })
+
+  it('parses handbook rows without header when leading index is present', () => {
+    const row = '2\t方\tかた\t[名]\t人（位）\tkata\tあの方は田中先生です。\t那位是田中老师。\t读 かた\t礼貌说法\t人（ひと）\t方向（ほうこう）'
+    expect(parseVocabulary(row)[0]).toMatchObject({
+      term: '方',
+      reading: 'かた',
+      meaning: '人（位）',
+      translation: '那位是田中老师。',
+      similarWords: '方向（ほうこう）',
+    })
   })
 
   it('splits word-list cells into chips', () => {

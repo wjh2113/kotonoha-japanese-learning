@@ -1036,7 +1036,16 @@ body { background: var(--cream); color: var(--ink); }
 }
 .errorbook-row:last-child { border-bottom: 0; }
 .errorbook-row b { display: block; font-size: 16px; }
-.errorbook-row span { color: var(--accent-ink); font-size: 12px; }
+.import-template-row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 14px;
+}
+.import-template-link {
+  height: 38px; padding: 0 14px; border-radius: 12px; text-decoration: none;
+  display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700;
+  border: 1px solid color-mix(in srgb, var(--red) 35%, var(--line)); color: var(--red-dark); background: #fff;
+}
+.import-template-row small { color: var(--muted); font-size: 12px; }
+
 .errorbook-row > p { margin: 0; color: #65676c; font-size: 13px; }
 .errorbook-row-actions { display: flex; gap: 6px; }
 .errorbook-row-actions button {

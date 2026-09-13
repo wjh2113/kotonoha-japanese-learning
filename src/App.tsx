@@ -1399,7 +1399,8 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
           meaning: String(draft.meaning || '').trim() || merged.meaning,
           partOfSpeech: String(draft.partOfSpeech || '').trim() || merged.partOfSpeech,
           example: String(draft.example || '').trim() || merged.example,
-          ...(String(draft.example || '').trim() ? { exampleReading: '', translation: '' } : {}),
+          exampleReading: String(draft.example || '').trim() ? '' : merged.exampleReading,
+          translation: String(draft.translation || '').trim() || (String(draft.example || '').trim() ? (merged.translation || '') : merged.translation),
           romaji: String(draft.romaji || '').trim() || merged.romaji,
           pronunciationNote: String(draft.pronunciationNote || '').trim() || merged.pronunciationNote,
           memoryTip: String(draft.memoryTip || '').trim() || merged.memoryTip,
@@ -1422,13 +1423,19 @@ function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose: () =>
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <section className="modal import-modal">
         <button className="modal-close" onClick={onClose}><X /></button>
-        <span className="modal-icon"><Import /></span><span className="eyebrow">SMART IMPORT</span><h2>导入到「{unit.name}」</h2><p>粘贴单词或上传文件。支持表格列：单词、假名、词性、中文释义、罗马音、例句、发音注意事项、记忆技巧、同义词、形近词：表格里已有的内容直接采用，只有缺失的字段才交给 AI 补全。</p>
+        <span className="modal-icon"><Import /></span><span className="eyebrow">SMART IMPORT</span>        <h2>导入到「{unit.name}」</h2><p>支持词汇手册 Excel 模版（序号、单词、假名、词性、中文释义、罗马音、例句、例句译文、发音注意事项、记忆技巧、同义词、形近词）。表格已有内容直接采用，仅缺失字段才交给 AI 补全。</p>
         {!drafts.length ? <>
-          <button className="drop-zone" disabled={fileReading} onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); readFile(e.dataTransfer.files[0]) }}>{fileReading ? <span className="spinner dark" /> : <UploadCloud />}<b>{fileReading ? '正在读取 Word 文档…' : '拖入 Word、TXT、CSV 或 JSON 文件'}</b><span>Word 支持段落、列表与三列表格 · DOCX 最大 5MB</span></button>
-          <input ref={fileRef} type="file" accept=".docx,.doc,.txt,.csv,.json,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden onChange={(e) => readFile(e.target.files?.[0])} />
+          <div className="import-template-row">
+            <a className="secondary-button import-template-link" href="/templates/词汇导入模版.xlsx" download="词汇导入模版.xlsx">
+              <FileText size={16} />下载导入模版
+            </a>
+            <small>与「词汇手册」同列结构，填好后可直接上传 .xlsx</small>
+          </div>
+          <button className="drop-zone" disabled={fileReading} onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); readFile(e.dataTransfer.files[0]) }}>{fileReading ? <span className="spinner dark" /> : <UploadCloud />}<b>{fileReading ? '正在读取文件…' : '拖入 Excel / Word / TXT / CSV / JSON'}</b><span>推荐直接上传词汇手册 .xlsx · 也可从 Excel 复制后粘贴</span></button>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls,.docx,.doc,.txt,.csv,.json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden onChange={(e) => readFile(e.target.files?.[0])} />
           <div className="or"><span />或直接粘贴<span /></div>
-          <textarea className="import-textarea" value={raw} onChange={(e) => setRaw(e.target.value)} placeholder={'猫\n食べる, たべる, 吃\n单词\t假名\t词性\t中文释义\t罗马音\t例句\t发音注意事项\t记忆技巧\n桜\tさくら\t名词\t樱花\tsakura\t桜が咲きました。\t\t“撒库拉”谐音'} />
-          <small className="format-hint"><FileText size={14} />每行一个词；支持“单词, 读音, 释义”，也支持从 Excel 直接复制的 8 列表格（带表头自动识别）。扫描稿里的批注行会被自动过滤。</small>
+          <textarea className="import-textarea" value={raw} onChange={(e) => setRaw(e.target.value)} placeholder={'序号\t单词\t假名\t词性\t中文释义\t罗马音\t例句\t例句译文\t发音注意事项\t记忆技巧\t同义词\t形近词\n1\tすみません\tすみません\t[惯]\t对不起；劳驾\tsumimasen\tすみません。\t劳驾。\t整体读五拍\t搭话通用\tごめんなさい\t—'} />
+          <small className="format-hint"><FileText size={14} />推荐用模版 Excel 上传；从表格复制时请保留表头。也兼容「单词, 读音, 释义」三列简表。</small>
           {notice && <div className="modal-notice">{notice}</div>}
           <button className="primary-button modal-submit" disabled={!raw.trim()} onClick={() => parse()}>解析单词<ChevronRight size={18} /></button>
         </> : <>

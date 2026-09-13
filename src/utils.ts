@@ -11,19 +11,46 @@ const TABLE_HEADER_ALIASES: Array<[keyof ImportDraft, RegExp]> = [
   ['meaning', /^(中文释义|释义|意思|中文|meaning|definition)$/i],
   ['romaji', /^(罗马音|ローマ字|romaji|romanji)$/i],
   ['example', /^(例句|例文|example|sentence)$/i],
+  ['translation', /^(例句译文|例句翻译|译文|翻译|translation)$/i],
   ['pronunciationNote', /^(发音注意事项|发音注意|发音|pronunciation)/i],
   ['memoryTip', /^(记忆技巧|记忆法|记忆|口诀|memory|memo)/i],
   ['synonyms', /^(同义词|近义词|同义|近义|synonym)/i],
   ['similarWords', /^(形近词|相似词|形近|similar)/i],
 ]
 
+/** Ignore index/serial columns from vocabulary handbooks. */
+const TABLE_HEADER_SKIP = /^(序号|編號|编号|no\.?|index|#)$/i
+
 function matchTableHeader(cols: string[]): Array<keyof ImportDraft | null> | null {
   const keys = cols.map((col) => {
     const label = col.trim()
+    if (!label || TABLE_HEADER_SKIP.test(label)) return null
     const hit = TABLE_HEADER_ALIASES.find(([, pattern]) => pattern.test(label))
     return hit ? hit[0] : null
   })
   return keys.includes('term') && keys.filter(Boolean).length >= 2 ? keys : null
+}
+
+function splitImportColumns(line: string) {
+  if (line.includes('\t')) return line.split('\t').map((part) => part.trim())
+  const out: string[] = []
+  let current = ''
+  let quoted = false
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i]
+    if (char === '"') {
+      quoted = !quoted
+      continue
+    }
+    if ((char === ',' || char === '，') && !quoted) {
+      out.push(current.trim())
+      current = ''
+      continue
+    }
+    current += char
+  }
+  out.push(current.trim())
+  return out
 }
 
 function draftFromTableRow(cols: string[], header: Array<keyof ImportDraft | null> | null): ImportDraft | null {
@@ -34,9 +61,28 @@ function draftFromTableRow(cols: string[], header: Array<keyof ImportDraft | nul
     }
     return String(cols[index] || '').trim()
   }
-  const term = pick('term', 0)
-  if (!term) return null
-  const wide = header ? Boolean(header.includes('romaji') || header.includes('partOfSpeech')) : cols.length >= 4
+  // Handbook template: 序号 单词 假名 词性 中文释义 罗马音 例句 例句译文 发音注意事项 记忆技巧 同义词 形近词
+  const handbook = !header && cols.length >= 11 && /^\d+$/.test(String(cols[0] || '').trim())
+  const term = handbook ? pick('term', 1) : pick('term', 0)
+  if (!term || TABLE_HEADER_SKIP.test(term) || term === '单词') return null
+  const wide = header
+    ? Boolean(header.includes('romaji') || header.includes('partOfSpeech') || header.includes('translation'))
+    : cols.length >= 4
+  if (handbook) {
+    return {
+      term,
+      reading: pick('reading', 2) || undefined,
+      partOfSpeech: pick('partOfSpeech', 3) || undefined,
+      meaning: pick('meaning', 4) || undefined,
+      romaji: pick('romaji', 5) || undefined,
+      example: pick('example', 6) || undefined,
+      translation: pick('translation', 7) || undefined,
+      pronunciationNote: pick('pronunciationNote', 8) || undefined,
+      memoryTip: pick('memoryTip', 9) || undefined,
+      synonyms: pick('synonyms', 10) || undefined,
+      similarWords: pick('similarWords', 11) || undefined,
+    }
+  }
   return {
     term,
     reading: pick('reading', 1) || undefined,
@@ -44,10 +90,11 @@ function draftFromTableRow(cols: string[], header: Array<keyof ImportDraft | nul
     partOfSpeech: wide ? pick('partOfSpeech', 2) || undefined : undefined,
     romaji: wide ? pick('romaji', 4) || undefined : undefined,
     example: wide ? pick('example', 5) || undefined : undefined,
-    pronunciationNote: wide ? pick('pronunciationNote', 6) || undefined : undefined,
-    memoryTip: wide ? pick('memoryTip', 7) || undefined : undefined,
-    synonyms: wide ? pick('synonyms', 8) || undefined : undefined,
-    similarWords: wide ? pick('similarWords', 9) || undefined : undefined,
+    translation: wide ? pick('translation', 6) || undefined : undefined,
+    pronunciationNote: wide ? pick('pronunciationNote', header?.includes('translation') ? 7 : 6) || undefined : undefined,
+    memoryTip: wide ? pick('memoryTip', header?.includes('translation') ? 8 : 7) || undefined : undefined,
+    synonyms: wide ? pick('synonyms', header?.includes('translation') ? 9 : 8) || undefined : undefined,
+    similarWords: wide ? pick('similarWords', header?.includes('translation') ? 10 : 9) || undefined : undefined,
   }
 }
 
@@ -65,6 +112,7 @@ function rawImportDrafts(raw: string): ImportDraft[] {
         partOfSpeech: String(item.partOfSpeech || item.pos || item['词性'] || '').trim() || undefined,
         romaji: String(item.romaji || item['罗马音'] || '').trim() || undefined,
         example: String(item.example || item.sentence || item['例句'] || '').trim() || undefined,
+        translation: String(item.translation || item['例句译文'] || item['译文'] || '').trim() || undefined,
         pronunciationNote: String(item.pronunciationNote || item['发音注意事项'] || item['发音注意'] || '').trim() || undefined,
         memoryTip: String(item.memoryTip || item['记忆技巧'] || item['记忆法'] || '').trim() || undefined,
         synonyms: String(item.synonyms || item['同义词'] || item['近义词'] || '').trim() || undefined,
@@ -77,7 +125,7 @@ function rawImportDrafts(raw: string): ImportDraft[] {
   let header: Array<keyof ImportDraft | null> | null = null
   const out: ImportDraft[] = []
   for (const line of lines) {
-    const cols = line.split(/\t|,|，/).map((part) => part.trim())
+    const cols = splitImportColumns(line)
     if (!header) {
       const matched = matchTableHeader(cols)
       if (matched) { header = matched; continue }
@@ -101,13 +149,14 @@ export function makeFallbackWord(draft: ImportDraft): Word {
   const known = fallbackLexicon[term] || {}
   const reading = cleaned.reading || draft.reading || known.reading || toHiragana(term)
   const userExample = String(draft.example || '').trim()
+  const userTranslation = String(draft.translation || '').trim()
   return {
     id: uid(), term, reading,
     meaning: draft.meaning || cleaned.meaning || known.meaning || '待补充释义',
     partOfSpeech: String(draft.partOfSpeech || '').trim() || known.partOfSpeech || '词性待确认',
     example: userExample || known.example || `${term}を勉強します。`,
     exampleReading: userExample ? '' : (known.exampleReading || `${reading}を べんきょうします。`),
-    translation: userExample ? '' : (known.translation || `学习“${term}”这个词。`),
+    translation: userExample ? (userTranslation || '') : (userTranslation || known.translation || `学习“${term}”这个词。`),
     romaji: String(draft.romaji || '').trim() || toRomaji(reading) || undefined,
     pronunciationNote: String(draft.pronunciationNote || '').trim() || undefined,
     memoryTip: String(draft.memoryTip || '').trim() || undefined,
