@@ -346,9 +346,10 @@ export function LibraryView({ units, unitId, onUnit, onImport, onNewUnit, onRena
   )
 }
 
-export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onEdit, onSearch, onTest, onDictation }: {
+export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect, onImport, onEdit, onToggleStar, onSearch, onTest, onDictation }: {
   unit: Unit; units: Unit[]; selectedWord?: Word; search: string; onUnit: (id: string) => void; onSelect: (id: string) => void; onImport: () => void
   onEdit: (word: Word, changes: Partial<Word>) => void
+  onToggleStar: (word: Word) => void
   onSearch: (value: string) => void; onTest: () => void; onDictation: () => void
 }) {
   const { voiceGender } = useContext(SettingsContext)
@@ -424,6 +425,7 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
           {selectedWord ? <WordDetail
             word={selectedWord}
             onEdit={(changes) => onEdit(selectedWord, changes)}
+            onToggleStar={onToggleStar}
             position={selectedIndex >= 0 ? selectedIndex + 1 : 0} total={filtered.length}
             onPrevious={() => {
               if (selectedIndex <= 0) return
@@ -495,8 +497,8 @@ function VolumeButton({ word, small = false, sentence = false }: { word: Word; s
   return <button className={`volume-button ${small ? 'small' : ''} ${speaking ? 'speaking' : ''}`} onClick={speak} aria-label="朗读">{speaking ? <Pause size={small ? 14 : 19} /> : <Volume2 size={small ? 14 : 19} />}</button>
 }
 
-function WordDetail({ word, onEdit, position, total, onPrevious, onNext }: {
-  word: Word; onEdit: (changes: Partial<Word>) => void
+function WordDetail({ word, onEdit, onToggleStar, position, total, onPrevious, onNext }: {
+  word: Word; onEdit: (changes: Partial<Word>) => void; onToggleStar: (word: Word) => void
   position: number; total: number; onPrevious: () => void; onNext: () => void
 }) {
   const [editing, setEditing] = useState(false)
@@ -549,6 +551,15 @@ function WordDetail({ word, onEdit, position, total, onPrevious, onNext }: {
         <span className="mastery-dots" aria-label={`掌握度 ${dots}/5`}>
           {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < dots ? 'on' : ''} />)}
         </span>
+        <button
+          type="button"
+          onClick={() => onToggleStar(word)}
+          aria-label={word.starred ? '移出生词本' : '加入生词本'}
+          className={word.starred ? 'starred' : ''}
+          title={word.starred ? '移出生词本' : '加入生词本'}
+        >
+          <BookMarked size={17} strokeWidth={1.6} />
+        </button>
         <button onClick={() => setEditing((open) => !open)} aria-label={editing ? '取消编辑' : '编辑词卡'}><SquarePen size={17} strokeWidth={1.6} /></button>
       </div>
       <div className="detail-main-word">

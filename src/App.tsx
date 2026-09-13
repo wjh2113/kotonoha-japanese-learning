@@ -59,6 +59,8 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [toast, setToast] = useState('')
   const [databaseReady, setDatabaseReady] = useState(false)
+  const [enrichBusy, setEnrichBusy] = useState(false)
+  const [enrichRemaining, setEnrichRemaining] = useState(0)
   const databaseErrorShown = useRef(false)
   const persistPaused = useRef(true)
   const persistBusy = useRef(false)
@@ -104,6 +106,51 @@ function App() {
     }
   }, [])
 
+  const applyEnrichedWords = (words: Word[]) => {
+    if (!words.length) return
+    const byId = new Map(words.map((word) => [word.id, word]))
+    setUnits((current) => current.map((unit) => ({
+      ...unit,
+      words: unit.words.map((word) => {
+        const updated = byId.get(word.id)
+        return updated ? { ...word, ...updated } : word
+      }),
+    })))
+  }
+
+  const runEnrichMissing = async (cancelled?: () => boolean) => {
+    setEnrichBusy(true)
+    try {
+      for (let step = 0; step < 6; step += 1) {
+        if (cancelled?.()) return
+        const response = await apiFetch('/api/enrich-missing', { method: 'POST' })
+        const data = await response.json().catch(() => ({})) as {
+          words?: Word[]
+          remaining?: number
+          filled?: number
+          error?: string
+        }
+        if (cancelled?.()) return
+        if (Array.isArray(data.words) && data.words.length) applyEnrichedWords(data.words)
+        const remaining = Number(data.remaining) || 0
+        setEnrichRemaining(remaining)
+        if (!response.ok) {
+          if (remaining > 0) setToast(`自动补全暂停：${data.error || '请稍后重试或手动编辑词卡'}`)
+          break
+        }
+        if (!remaining) break
+        if (!data.filled && remaining > 0) {
+          setToast(`仍有 ${remaining} 个词缺核心字段，可点编辑手动补全`)
+          break
+        }
+      }
+    } catch {
+      setToast('自动补全暂时失败，可点编辑手动补全')
+    } finally {
+      if (!cancelled?.()) setEnrichBusy(false)
+    }
+  }
+
   useEffect(() => {
     if (auth !== 'ok') return
     let cancelled = false
@@ -125,28 +172,10 @@ function App() {
         persistPaused.current = true
         setDatabaseReady(true)
         try {
-          const hasIncompleteCore = (Array.isArray(stored.units) ? stored.units : units)
-            .some((item: { words?: Word[] }) => (item.words || []).some((word) => isCoreLexiconIncomplete(word)))
-          if (hasIncompleteCore) {
-            for (let step = 0; step < 6; step += 1) {
-              const response = await apiFetch('/api/enrich-missing', { method: 'POST' })
-              const data = await response.json()
-              if (cancelled) return
-              if (Array.isArray(data.words) && data.words.length) {
-                const byId = new Map((data.words as Word[]).map((word) => [word.id, word]))
-                setUnits((current) => current.map((unit) => ({
-                  ...unit,
-                  words: unit.words.map((word) => {
-                    const updated = byId.get(word.id)
-                    return updated ? { ...word, ...updated } : word
-                  }),
-                })))
-              }
-              if (!response.ok) break
-              if (!data.remaining) break
-              if (!data.filled && data.remaining > 0) break
-            }
-          }
+          const sourceUnits = (Array.isArray(stored.units) ? stored.units : units) as Unit[]
+          const incomplete = sourceUnits.reduce((sum, item) => sum + (item.words || []).filter((word) => isCoreLexiconIncomplete(word)).length, 0)
+          setEnrichRemaining(incomplete)
+          if (incomplete > 0) await runEnrichMissing(() => cancelled)
         } catch { /* keep whatever the database already has */ }
         if (!cancelled) {
           persistPaused.current = false
@@ -264,7 +293,6 @@ function App() {
   const starredCount = units.reduce((sum, item) => sum + item.words.filter((word) => word.starred).length, 0)
   const errorBookCount = units.reduce((sum, item) => sum + item.words.filter((word) => word.wrongBook && !word.mastered).length, 0)
   const reviewCount = units.reduce((sum, item) => sum + item.words.filter((word) => getReviewState(word).due).length, 0)
-  const missingCoreFields = units.reduce((sum, item) => sum + item.words.filter((word) => isCoreLexiconIncomplete(word)).length, 0)
 
   const bumpStreak = () => {
     setSettings((current) => {
@@ -281,9 +309,14 @@ function App() {
 
   const updateWord = (wordId: string, changes: Partial<Word>, targetUnitId = unitId) => {
     skipNextUnitsPersist.current = true
-    setUnits((current) => current.map((item) => item.id === targetUnitId
-      ? { ...item, words: item.words.map((word) => word.id === wordId ? { ...word, ...changes } : word) }
-      : item))
+    setUnits((current) => {
+      const ownsWord = current.some((item) => item.id === targetUnitId && item.words.some((word) => word.id === wordId))
+      const fallbackId = ownsWord ? targetUnitId : current.find((item) => item.words.some((word) => word.id === wordId))?.id
+      if (!fallbackId) return current
+      return current.map((item) => item.id === fallbackId
+        ? { ...item, words: item.words.map((word) => word.id === wordId ? { ...word, ...changes } : word) }
+        : item)
+    })
     queueWordPatch(wordId, changes)
     bumpStreak()
   }
@@ -407,21 +440,10 @@ function App() {
           : `已导入 ${saved.length} 个单词到「${targetUnit.name}」`)
         // Only backfill missing core fields; optional columns stay empty.
         if (saved.some((word) => isCoreLexiconIncomplete(word))) {
-          for (let step = 0; step < 6; step += 1) {
-            const enrich = await apiFetch('/api/enrich-missing', { method: 'POST' })
-            const payload = await enrich.json()
-            if (Array.isArray(payload.words) && payload.words.length) {
-              const byId = new Map((payload.words as Word[]).map((word) => [word.id, word]))
-              setUnits((current) => current.map((unit) => ({
-                ...unit,
-                words: unit.words.map((word) => {
-                  const updated = byId.get(word.id)
-                  return updated ? { ...word, ...updated } : word
-                }),
-              })))
-            }
-            if (!enrich.ok || !payload.remaining || (!payload.filled && payload.remaining > 0)) break
-          }
+          const incomplete = [...units.find((item) => item.id === targetUnit.id)?.words || [], ...saved]
+            .filter((word) => isCoreLexiconIncomplete(word)).length
+          setEnrichRemaining(incomplete)
+          await runEnrichMissing()
         }
       } catch {
         setToast('导入单词失败，请稍后重试')
@@ -490,8 +512,8 @@ function App() {
           reviewCount={reviewCount}
         />
         <MobileTopBar view={view} settings={settings} onView={nav} onSettingsChange={setSettings} onMenu={() => setMobileNav((current) => !current)} reviewCount={reviewCount} />
-        {missingCoreFields > 0 && (
-          <div className="enrich-banner">正在补全核心字段（假名 / 罗马音 / 中文释义 / 例句），还剩 {missingCoreFields} 个。同义词与记忆技巧等可选列不会自动补全。</div>
+        {enrichBusy && (
+          <div className="enrich-banner">正在补全核心字段（假名 / 罗马音 / 中文释义 / 例句），还剩 {enrichRemaining} 个。同义词与记忆技巧等可选列不会自动补全。</div>
         )}
         <main className="main">
           {view === 'home' && <HomeView units={units} unit={unit} settings={settings} onView={nav} />}
@@ -501,6 +523,11 @@ function App() {
               unit={unit} units={units} selectedWord={selectedWord} onUnit={setUnitId}
               onSelect={setSelectedId} onImport={() => openImport()}
               onEdit={(word, changes) => updateWord(word.id, changes)}
+              onToggleStar={(word) => {
+                const nextStarred = !word.starred
+                updateWord(word.id, { starred: nextStarred })
+                setToast(nextStarred ? '已加入生词本' : '已移出生词本')
+              }}
               search={search} onSearch={setSearch}
               onTest={() => setView('test')}
               onDictation={() => openDictation('plan')}
