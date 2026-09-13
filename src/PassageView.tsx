@@ -993,8 +993,15 @@ export function PassageView() {
                   >
                     <ChevronLeft size={22} strokeWidth={1.8} />
                   </button>
-                  <h1>跟读练习</h1>
-                  <span className="passage-mobile-shadow-spacer" />
+                  <h1>{(() => {
+                    const lesson = catalogLessons.find((item) => item.key === selectedLessonKey)
+                    const label = lesson?.lessonName || passage.title
+                    return `${label} 跟读练习`
+                  })()}</h1>
+                  <button type="button" className="passage-mobile-shadow-btn" aria-current="page">
+                    <Mic size={15} strokeWidth={1.8} />跟读
+                  </button>
+                  <Sprout className="passage-mobile-leaf" size={16} strokeWidth={1.8} aria-hidden />
                 </header>
               )}
 
@@ -1013,37 +1020,48 @@ export function PassageView() {
                   onBack={() => { setPlayingFull(false); stopSpeaking(); setMode('source') }}
                 />
               ) : mode === 'shadow' && sentence ? (
-                <div className="shadow-layout shadow-design">
-                  <section className="shadow-list-card">
-                    <header>
-                      <b><FileText size={15} strokeWidth={1.6} />逐句原文</b>
-                      <small>{sentenceIndex + 1} / {passage.sentences.length}</small>
-                    </header>
-                    <ol className="passage-sentences shadow-list">
-                      {passage.sentences.map((item, index) => (
-                        <li key={item.id}>
-                          <button type="button" className={index === sentenceIndex ? 'active' : ''} onClick={() => { setSentenceIndex(index); void speakJapanese(item.text, voiceGender, { sentence: true }) }}>
-                            <em>{index + 1}</em>
-                            <span className="intensive-line-play" aria-hidden><Play size={14} strokeWidth={1.6} /></span>
-                            <span className="jp">{item.text}</span>
-                          </button>
-                        </li>
-                      ))}
-                    </ol>
-                    <footer>
-                      <button type="button" className="intensive-play-all" onClick={playAll}>
-                        {playingFull ? <Pause size={15} strokeWidth={1.6} /> : <Play size={15} strokeWidth={1.6} />}
-                        {playingFull ? '停止播放' : '播放全部'}
-                      </button>
-                    </footer>
-                  </section>
+                <div className={`shadow-layout shadow-design${practiceOnly ? ' shadow-mobile' : ''}`}>
+                  {!practiceOnly && (
+                    <section className="shadow-list-card">
+                      <header>
+                        <b><FileText size={15} strokeWidth={1.6} />逐句原文</b>
+                        <small>{sentenceIndex + 1} / {passage.sentences.length}</small>
+                      </header>
+                      <ol className="passage-sentences shadow-list">
+                        {passage.sentences.map((item, index) => (
+                          <li key={item.id}>
+                            <button type="button" className={index === sentenceIndex ? 'active' : ''} onClick={() => { setSentenceIndex(index); void speakJapanese(item.text, voiceGender, { sentence: true }) }}>
+                              <em>{index + 1}</em>
+                              <span className="intensive-line-play" aria-hidden><Play size={14} strokeWidth={1.6} /></span>
+                              <span className="jp">{item.text}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ol>
+                      <footer>
+                        <button type="button" className="intensive-play-all" onClick={playAll}>
+                          {playingFull ? <Pause size={15} strokeWidth={1.6} /> : <Play size={15} strokeWidth={1.6} />}
+                          {playingFull ? '停止播放' : '播放全部'}
+                        </button>
+                      </footer>
+                    </section>
+                  )}
                   <article className="shadow-panel">
+                    {practiceOnly && (
+                      <div className="shadow-progress-pill" aria-label={`进度 ${sentenceIndex + 1} / ${passage.sentences.length}`}>
+                        {sentenceIndex + 1} / {passage.sentences.length}
+                      </div>
+                    )}
                     <header>
                       <b><Bot size={15} strokeWidth={1.6} />AI 发音评估</b>
-                      <small>{sentenceIndex + 1} / {passage.sentences.length}</small>
+                      {!practiceOnly && <small>{sentenceIndex + 1} / {passage.sentences.length}</small>}
                     </header>
-                    <h3 className="jp shadow-target">{sentence.reading || sentence.text}</h3>
-                    {hasChineseTranslation(sentence.translation) && <p className="translation">{sentence.translation}</p>}
+                    <h3 className="jp shadow-target">
+                      {renderPassageJp(sentence, [])}
+                    </h3>
+                    {hasChineseTranslation(sentence.translation) && (
+                      <p className="translation shadow-translation">{sentence.translation}</p>
+                    )}
                     <PronunciationPractice
                       variant="shadow"
                       referenceText={sentence.text}
@@ -1058,6 +1076,14 @@ export function PassageView() {
                       }}
                     />
                     <div className="shadow-footer">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={sentenceIndex <= 0}
+                        onClick={() => setSentenceIndex((i) => Math.max(0, i - 1))}
+                      >
+                        <ChevronLeft size={16} strokeWidth={1.6} />上一句
+                      </button>
                       <button type="button" className="secondary-button" onClick={() => setShadowRetry((n) => n + 1)}>
                         <RefreshCw size={15} strokeWidth={1.6} />重新跟读
                       </button>

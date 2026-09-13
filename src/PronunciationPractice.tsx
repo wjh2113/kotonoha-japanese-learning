@@ -1,5 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { CheckCircle2, Mic, Pause, TriangleAlert } from 'lucide-react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  AudioLines, CheckCircle2, MessageCircle, Mic, Music2, Pause, Target, TriangleAlert,
+} from 'lucide-react'
 import { usePronunciationPractice } from './pronunciation-practice'
 import { normalizeJapanese, pronunciationScoreFor } from './utils'
 import type { PassageToken } from './types'
@@ -26,6 +28,21 @@ function normalizeSavedScore(value?: number | null) {
   return score > 0 && score <= 100 ? score : null
 }
 
+function deriveMetrics(score: number) {
+  return {
+    accuracy: score,
+    fluency: Math.min(100, Math.max(0, Math.round(score + (score >= 70 ? 5 : 2)))),
+    intonation: Math.min(100, Math.max(0, Math.round(score - (score >= 70 ? 5 : 3)))),
+  }
+}
+
+function tokenWarnTip(token: PassageToken) {
+  const reading = String(token.reading || token.surface || '')
+  const kana = reading.match(/[ぁ-んァ-ン]/)?.[0]
+  if (kana) return `发音稍有偏差，建议加强「${kana}」的发音`
+  return '发音稍有偏差，建议再练'
+}
+
 export function PronunciationPractice({
   referenceText,
   referenceReading = '',
@@ -43,6 +60,8 @@ export function PronunciationPractice({
   const [transcript, setTranscript] = useState('')
   const [score, setScore] = useState<number | null>(savedScore)
   const [fromHistory, setFromHistory] = useState(Boolean(savedScore))
+  const holdRef = useRef(false)
+  const pendingStopRef = useRef(false)
   const practice = usePronunciationPractice((text) => {
     const next = scoreFn
       ? scoreFn(text)
@@ -59,6 +78,12 @@ export function PronunciationPractice({
     setFromHistory(Boolean(savedScore))
   }, [referenceText, resetKey, savedScore])
 
+  useEffect(() => {
+    if (!practice.recording || !pendingStopRef.current) return
+    pendingStopRef.current = false
+    practice.stop()
+  }, [practice.recording, practice])
+
   const startOrStop = () => {
     if (practice.recording) practice.stop()
     else {
@@ -68,26 +93,49 @@ export function PronunciationPractice({
     }
   }
 
+  const beginHold = () => {
+    if (practice.evaluating || practice.recording) return
+    holdRef.current = true
+    pendingStopRef.current = false
+    setTranscript('')
+    practice.start()
+  }
+
+  const endHold = () => {
+    if (!holdRef.current) return
+    holdRef.current = false
+    if (practice.recording) practice.stop()
+    else pendingStopRef.current = true
+  }
+
   const busy = practice.recording || practice.evaluating
   const showScore = score !== null && !busy
+  const metrics = showScore ? deriveMetrics(score) : null
 
   const recordButton = (
     <button
       type="button"
       className={`inline-record ${variant === 'compact' ? 'compact' : ''} ${practice.recording ? 'recording' : ''}`}
       disabled={practice.evaluating}
-      onClick={startOrStop}
-      aria-label={practice.evaluating ? '正在分析' : practice.recording ? '结束跟读' : '开始跟读'}
+      onClick={variant === 'shadow' ? undefined : startOrStop}
+      onPointerDown={variant === 'shadow' ? (event) => {
+        event.preventDefault()
+        beginHold()
+      } : undefined}
+      onPointerUp={variant === 'shadow' ? endHold : undefined}
+      onPointerCancel={variant === 'shadow' ? endHold : undefined}
+      onPointerLeave={variant === 'shadow' ? endHold : undefined}
+      onContextMenu={variant === 'shadow' ? (event) => event.preventDefault() : undefined}
+      aria-label={practice.evaluating ? '正在分析' : practice.recording ? '松开结束跟读' : '按住跟读'}
     >
       {practice.evaluating
         ? <span className="spinner" />
         : practice.recording
-          ? <Pause size={variant === 'compact' ? 15 : variant === 'shadow' ? 22 : 18} strokeWidth={1.6} />
-          : <Mic size={variant === 'compact' ? 15 : variant === 'shadow' ? 22 : 18} strokeWidth={1.6} />}
+          ? <Pause size={variant === 'compact' ? 15 : variant === 'shadow' ? 28 : 18} strokeWidth={1.6} />
+          : <Mic size={variant === 'compact' ? 15 : variant === 'shadow' ? 28 : 18} strokeWidth={1.6} />}
       {variant === 'inline' && (
         <span>{practice.evaluating ? '正在分析…' : practice.recording ? '结束录音' : '开始朗读'}</span>
       )}
-      {variant === 'shadow' && practice.evaluating && <span>正在解析语音…</span>}
     </button>
   )
 
@@ -121,62 +169,78 @@ export function PronunciationPractice({
     return (
       <div className="inline-practice shadow-practice">
         <div className="shadow-mic-wrap">
-          <div className="shadow-wave" aria-hidden>
-            {Array.from({ length: 10 }, (_, i) => <i key={`l${i}`} style={{ height: `${8 + ((i * 7) % 18)}px` }} />)}
+          <div className={`shadow-wave${practice.recording ? ' active' : ''}`} aria-hidden>
+            {Array.from({ length: 6 }, (_, i) => (
+              <i key={`l${i}`} style={{ height: `${12 + ((i * 9) % 28)}px` }} />
+            ))}
           </div>
           {recordButton}
-          <div className="shadow-wave" aria-hidden>
-            {Array.from({ length: 10 }, (_, i) => <i key={`r${i}`} style={{ height: `${8 + ((i * 5) % 18)}px` }} />)}
+          <div className={`shadow-wave shadow-wave-flip${practice.recording ? ' active' : ''}`} aria-hidden>
+            {Array.from({ length: 6 }, (_, i) => (
+              <i key={`r${i}`} style={{ height: `${12 + ((i * 7) % 28)}px` }} />
+            ))}
           </div>
         </div>
         <p className="shadow-hint">
           {practice.evaluating
             ? '正在解析语音，请稍候…'
             : practice.recording
-              ? '正在聆听，说完再点结束'
-              : (showScore ? '可再次点击麦克风重新跟读' : '点击麦克风开始跟读')}
+              ? '正在聆听，松开结束'
+              : '按住跟读'}
         </p>
         {practice.evaluating && <span className="shadow-analyzing-note">识别中，完成后会给出评分并保存</span>}
         {practice.error && <div className="speech-error">{practice.error}</div>}
-        {showScore && (
-          <>
+
+        {showScore && metrics && (
+          <div className="shadow-score-card">
             <div className="shadow-metrics">
               <div>
-                <b>{score}</b>
-                <small>{fromHistory ? '上次得分' : '发音准确度'}</small>
+                <span><Target size={14} strokeWidth={1.7} />发音准确度</span>
+                <b>{metrics.accuracy}<small>分</small></b>
               </div>
-              {savedBest !== null && (
-                <div>
-                  <b>{savedBest}</b>
-                  <small>历史最高</small>
-                </div>
-              )}
+              <div>
+                <span><AudioLines size={14} strokeWidth={1.7} />流畅度</span>
+                <b>{metrics.fluency}<small>分</small></b>
+              </div>
+              <div>
+                <span><Music2 size={14} strokeWidth={1.7} />音调</span>
+                <b>{metrics.intonation}<small>分</small></b>
+              </div>
             </div>
             <div className="shadow-overall">
-              <span>整体评分</span>
-              <div className="shadow-overall-bar"><i style={{ width: `${score}%` }} /></div>
-              <b>{score} / 100</b>
-            </div>
-            {!fromHistory && (
-              <div className="shadow-tokens">
-                {tokenRows.map((token, index) => {
-                  const spoken = normalizeJapanese(transcript)
-                  const target = normalizeJapanese(token.surface)
-                  const ok = !spoken || !target || spoken.includes(target) || score >= 70
-                  return (
-                    <article key={`${token.surface}-${index}`} className={ok ? 'ok' : 'warn'}>
-                      <b className="jp">{token.surface}</b>
-                      <span>
-                        {ok
-                          ? <><CheckCircle2 size={14} strokeWidth={1.6} />发音正确</>
-                          : <><TriangleAlert size={14} strokeWidth={1.6} />发音稍有偏差，建议再练</>}
-                      </span>
-                    </article>
-                  )
-                })}
+              <div className="shadow-overall-bar" aria-hidden>
+                <i style={{ width: `${score}%` }} />
+                <em style={{ left: `${score}%` }} />
               </div>
-            )}
-          </>
+              <p>整体评分：{score} / 100</p>
+            </div>
+          </div>
+        )}
+
+        {showScore && !fromHistory && (
+          <section className="shadow-tokens-block" aria-label="逐字反馈">
+            <header>
+              <MessageCircle size={15} strokeWidth={1.7} />
+              <b>逐字反馈</b>
+            </header>
+            <div className="shadow-tokens">
+              {tokenRows.map((token, index) => {
+                const spoken = normalizeJapanese(transcript)
+                const target = normalizeJapanese(token.surface)
+                const ok = !spoken || !target || spoken.includes(target) || score >= 70
+                return (
+                  <article key={`${token.surface}-${index}`} className={ok ? 'ok' : 'warn'}>
+                    <b className="jp">{token.surface}</b>
+                    <span>
+                      {ok
+                        ? <><CheckCircle2 size={14} strokeWidth={1.7} />发音正确</>
+                        : <><TriangleAlert size={14} strokeWidth={1.7} />{tokenWarnTip(token)}</>}
+                    </span>
+                  </article>
+                )
+              })}
+            </div>
+          </section>
         )}
       </div>
     )
