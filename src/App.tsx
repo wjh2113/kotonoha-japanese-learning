@@ -6,7 +6,8 @@ import { HomeView } from './HomeView'
 import { SettingsContext, DEFAULT_SETTINGS } from './settings-context'
 import type { AppSettings, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fallbackUnitTheme, isPlaceholderTheme } from './theme'
-import { isPlaceholderMeaning, recordQuizAnswer } from './quiz'
+import { recordQuizAnswer } from './quiz'
+import { isCoreLexiconIncomplete } from './lexeme'
 import {
   AccessGate, AppHeader, ConfirmDeleteUnitModal, DesktopTopBar, ImportModal,
   LibraryView, MobileTabBar, MobileTopBar, NewUnitModal, ReviewView, SettingsView, StudyView,
@@ -124,9 +125,9 @@ function App() {
         persistPaused.current = true
         setDatabaseReady(true)
         try {
-          const hasPlaceholders = (Array.isArray(stored.units) ? stored.units : units)
-            .some((item: { words?: { meaning?: string }[] }) => (item.words || []).some((word) => isPlaceholderMeaning(word.meaning)))
-          if (hasPlaceholders) {
+          const hasIncompleteCore = (Array.isArray(stored.units) ? stored.units : units)
+            .some((item: { words?: Word[] }) => (item.words || []).some((word) => isCoreLexiconIncomplete(word)))
+          if (hasIncompleteCore) {
             for (let step = 0; step < 6; step += 1) {
               const response = await apiFetch('/api/enrich-missing', { method: 'POST' })
               const data = await response.json()
@@ -263,7 +264,7 @@ function App() {
   const starredCount = units.reduce((sum, item) => sum + item.words.filter((word) => word.starred).length, 0)
   const errorBookCount = units.reduce((sum, item) => sum + item.words.filter((word) => word.wrongBook && !word.mastered).length, 0)
   const reviewCount = units.reduce((sum, item) => sum + item.words.filter((word) => getReviewState(word).due).length, 0)
-  const missingMeanings = units.reduce((sum, item) => sum + item.words.filter((word) => isPlaceholderMeaning(word.meaning)).length, 0)
+  const missingCoreFields = units.reduce((sum, item) => sum + item.words.filter((word) => isCoreLexiconIncomplete(word)).length, 0)
 
   const bumpStreak = () => {
     setSettings((current) => {
@@ -408,6 +409,24 @@ function App() {
         setToast(dropped > 0
           ? `已导入 ${saved.length} 个单词到「${targetUnit.name}」（跳过 ${dropped} 个）`
           : `已导入 ${saved.length} 个单词到「${targetUnit.name}」`)
+        // Only backfill missing core fields; optional columns stay empty.
+        if (saved.some((word) => isCoreLexiconIncomplete(word))) {
+          for (let step = 0; step < 6; step += 1) {
+            const enrich = await apiFetch('/api/enrich-missing', { method: 'POST' })
+            const payload = await enrich.json()
+            if (Array.isArray(payload.words) && payload.words.length) {
+              const byId = new Map((payload.words as Word[]).map((word) => [word.id, word]))
+              setUnits((current) => current.map((unit) => ({
+                ...unit,
+                words: unit.words.map((word) => {
+                  const updated = byId.get(word.id)
+                  return updated ? { ...word, ...updated } : word
+                }),
+              })))
+            }
+            if (!enrich.ok || !payload.remaining || (!payload.filled && payload.remaining > 0)) break
+          }
+        }
       } catch {
         setToast('导入单词失败，请稍后重试')
       }
@@ -475,8 +494,8 @@ function App() {
           reviewCount={reviewCount}
         />
         <MobileTopBar view={view} settings={settings} onView={nav} onSettingsChange={setSettings} onMenu={() => setMobileNav((current) => !current)} reviewCount={reviewCount} />
-        {missingMeanings > 0 && (
-          <div className="enrich-banner">正在补全全部单词释义，还剩 {missingMeanings} 个。补完后测试会覆盖整个单元。</div>
+        {missingCoreFields > 0 && (
+          <div className="enrich-banner">正在补全核心字段（假名 / 罗马音 / 中文释义 / 例句），还剩 {missingCoreFields} 个。同义词与记忆技巧等可选列不会自动补全。</div>
         )}
         <main className="main">
           {view === 'home' && <HomeView units={units} unit={unit} settings={settings} onView={nav} />}

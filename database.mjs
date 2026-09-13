@@ -672,14 +672,27 @@ export function createDatabase(connectionString) {
   }
 
 
+  // Incomplete = missing any core upload field (单词/假名/罗马音/中文释义/例句).
+  // Optional columns (记忆技巧/同义词/形近词等) are never required.
+  const incompleteCoreSql = `
+       (
+         btrim(COALESCE(w.meaning, '')) = ''
+         OR w.meaning ~ '(待补充|未知|不明|暂无|未查询|词义缺失)'
+         OR lower(w.meaning) IN ('unknown', 'n/a', 'none')
+         OR w.meaning !~ '[一-鿿]'
+         OR btrim(COALESCE(w.reading, '')) = ''
+         OR w.reading !~ '[ぁ-んァ-ン]'
+         OR btrim(COALESCE(w.romaji, '')) = ''
+         OR btrim(COALESCE(w.example, '')) = ''
+         OR w.example ~ 'を勉強します'
+       )`
+
   const listIncompleteWords = async (limit = 20) => {
     const result = await pool.query(
-      `SELECT w.id, w.unit_id, w.term, w.reading, w.meaning, u.name AS unit_name
+      `SELECT w.id, w.unit_id, w.term, w.reading, w.meaning, w.romaji, w.example,
+              w.part_of_speech, w.example_reading, w.translation, u.name AS unit_name
        FROM words w JOIN units u ON u.id = w.unit_id
-       WHERE btrim(w.meaning) = ''
-          OR w.meaning ~ '(待补充|未知|不明|暂无|未查询|词义缺失)'
-          OR lower(w.meaning) IN ('unknown', 'n/a', 'none')
-          OR w.meaning !~ '[一-鿿]'
+       WHERE ${incompleteCoreSql}
        ORDER BY u.sort_order, w.sort_order, w.id
        LIMIT $1`,
       [Math.max(1, Math.min(Number(limit) || 20, 50))],
@@ -691,16 +704,17 @@ export function createDatabase(connectionString) {
       term: row.term,
       reading: row.reading,
       meaning: row.meaning,
+      romaji: row.romaji || '',
+      example: row.example || '',
+      partOfSpeech: row.part_of_speech || '',
+      exampleReading: row.example_reading || '',
+      translation: row.translation || '',
     }))
   }
 
   const countIncompleteWords = async () => {
     const result = await pool.query(
-      `SELECT COUNT(*)::int AS count FROM words
-       WHERE btrim(meaning) = ''
-          OR meaning ~ '(待补充|未知|不明|暂无|未查询|词义缺失)'
-          OR lower(meaning) IN ('unknown', 'n/a', 'none')
-          OR meaning !~ '[一-鿿]'`,
+      `SELECT COUNT(*)::int AS count FROM words w WHERE ${incompleteCoreSql}`,
     )
     return result.rows[0]?.count || 0
   }
@@ -710,7 +724,7 @@ export function createDatabase(connectionString) {
       `UPDATE words
        SET term = COALESCE(NULLIF($2, ''), term),
            reading = $3, meaning = $4, part_of_speech = $5, example = $6,
-           example_reading = $7, translation = $8
+           example_reading = $7, translation = $8, romaji = COALESCE(NULLIF($9, ''), romaji)
        WHERE id = $1
        RETURNING *`,
       [
@@ -722,6 +736,7 @@ export function createDatabase(connectionString) {
         text(fields.example).slice(0, 200),
         text(fields.exampleReading).slice(0, 200),
         text(fields.translation).slice(0, 200),
+        text(fields.romaji).slice(0, 120),
       ],
     )
     return result.rows[0] ? mapWordRow(result.rows[0]) : null

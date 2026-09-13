@@ -20,6 +20,16 @@ import * as lexeme from '../lexeme.mjs'
 
 export const looksLikeVocabularyTerm = lexeme.looksLikeVocabularyTerm as (term?: string) => boolean
 export const isChineseGloss = lexeme.isChineseGloss as (meaning?: string) => boolean
+export const hasUsableReading = lexeme.hasUsableReading as (term?: string, reading?: string) => boolean
+export const isPlaceholderExample = lexeme.isPlaceholderExample as (example?: string) => boolean
+export const hasUsableRomaji = lexeme.hasUsableRomaji as (romaji?: string) => boolean
+export const isCoreLexiconIncomplete = lexeme.isCoreLexiconIncomplete as (word?: {
+  term?: string
+  reading?: string
+  meaning?: string
+  example?: string
+  romaji?: string
+}) => boolean
 export const quizGloss = lexeme.quizGloss as (meaning?: string) => string
 export const extractImportDrafts = lexeme.extractImportDrafts as (
   term?: string,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractImportDrafts, extractUploadedLexeme, isChineseGloss, looksLikeVocabularyTerm, normalizeImportDrafts } from './src/lexeme'
+import { extractImportDrafts, extractUploadedLexeme, isChineseGloss, isCoreLexiconIncomplete, isPlaceholderExample, looksLikeVocabularyTerm, normalizeImportDrafts } from './src/lexeme'
 
 describe('extractUploadedLexeme', () => {
   it('keeps a short vocabulary term', () => {
@@ -68,5 +68,35 @@ describe('isChineseGloss', () => {
     expect(isChineseGloss('pan')).toBe(false)
     expect(isChineseGloss('报纸')).toBe(true)
     expect(isChineseGloss('下（雨、雪等）')).toBe(true)
+  })
+})
+
+describe('isCoreLexiconIncomplete', () => {
+  it('requires reading, romaji, Chinese meaning and a real example', () => {
+    expect(isCoreLexiconIncomplete({
+      term: '猫', reading: 'ねこ', romaji: 'neko', meaning: '猫', example: '猫が好きです。',
+    })).toBe(false)
+    expect(isCoreLexiconIncomplete({
+      term: '猫', reading: 'ねこ', romaji: 'neko', meaning: '猫', example: '',
+    })).toBe(true)
+    expect(isCoreLexiconIncomplete({
+      term: '猫', reading: 'ねこ', romaji: 'neko', meaning: '待补充释义', example: '猫が好きです。',
+    })).toBe(true)
+    expect(isCoreLexiconIncomplete({
+      term: '猫', reading: '', romaji: 'neko', meaning: '猫', example: '猫が好きです。',
+    })).toBe(true)
+    expect(isCoreLexiconIncomplete({
+      term: '猫', reading: 'ねこ', romaji: '', meaning: '猫', example: '猫が好きです。',
+    })).toBe(true)
+  })
+
+  it('treats auto stub examples as incomplete; optional columns do not matter', () => {
+    expect(isPlaceholderExample('猫を勉強します。')).toBe(true)
+    expect(isCoreLexiconIncomplete({
+      term: '猫', reading: 'ねこ', romaji: 'neko', meaning: '猫', example: '猫を勉強します。',
+    })).toBe(true)
+    expect(isCoreLexiconIncomplete({
+      term: '猫', reading: 'ねこ', romaji: 'neko', meaning: '猫', example: '猫が好きです。',
+    })).toBe(false)
   })
 })

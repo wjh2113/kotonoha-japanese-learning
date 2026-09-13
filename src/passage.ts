@@ -25,10 +25,9 @@ export function isPrimarilyChineseLine(text?: string) {
 
 export function sentenceNeedsAnalysis(sentence: PassageSentence) {
   if (isPrimarilyChineseLine(sentence.text)) return false
-  // 手册已带中文翻译时，仍需补读音与逐词；两者齐备才算完成。
+  // Handbook supplies 原文 + 假名注音 + 中文解释. Tokens are derived locally — never require LLM.
   const hasReading = Boolean(String(sentence.reading || '').trim())
-  const hasTokens = (sentence.tokens || []).length > 0
-  return !hasChineseTranslation(sentence.translation) || !hasTokens || !hasReading
+  return !hasChineseTranslation(sentence.translation) || !hasReading
 }
 
 export function passageNeedsAnalysis(passage: Passage) {
@@ -125,8 +124,53 @@ export function mergeAnalyzedSentences(current: PassageSentence[], analyzed: unk
 
 const PASSAGE_TABLE_HEADER = {
   text: /^(原文|日文|日语|句子|课文|text|sentence|japanese)$/i,
+  reading: /^(假名注音|假名|读音|注音|ふりがな|かな|reading|furigana|kana)$/i,
   translation: /^(中文解释|中文释义|中文|解释|释义|翻译|译文|translation|chinese|meaning)$/i,
   grammar: /^(语法考点|语法|考点|grammar)/i,
+}
+
+/**
+ * Turn annotated furigana like「私（わたし）は佐藤（さとう）さん」into display tokens.
+ * No model — only the （） annotations the author already wrote.
+ */
+export function tokensFromAnnotatedReading(reading: string): PassageSentence['tokens'] {
+  const raw = String(reading || '').trim()
+  if (!raw) return []
+  const tokens: PassageSentence['tokens'] = []
+  const pushGap = (gap: string) => {
+    const pattern = /([ぁ-んァ-ンー]+)|([^\s（）()]+)/g
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(gap))) {
+      const surface = String(match[1] || match[2] || '').trim()
+      if (!surface || /^[：:、。．，,！!？?\s]+$/.test(surface)) continue
+      tokens.push({
+        surface,
+        reading: /[ぁ-んァ-ンー]/.test(surface)
+          ? surface.replace(/[ァ-ヶ]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0x60))
+          : '',
+        meaning: '',
+      })
+    }
+  }
+  // Pull 漢字（かな） first so leading punctuation cannot swallow the kanji.
+  const rubyRe = /([おご]?[\u4e00-\u9fff]+[\u3040-\u30ffー]*)（([ぁ-んァ-ンー]+)）/g
+  let cursor = 0
+  for (const match of raw.matchAll(rubyRe)) {
+    const start = match.index || 0
+    if (cursor < start) pushGap(raw.slice(cursor, start))
+    tokens.push({ surface: match[1], reading: match[2], meaning: '' })
+    cursor = start + match[0].length
+  }
+  if (cursor < raw.length) pushGap(raw.slice(cursor))
+  return tokens.slice(0, 60)
+}
+
+function finalizePassageSentence(partial: Omit<PassageSentence, 'tokens'> & { tokens?: PassageSentence['tokens'] }): PassageSentence {
+  const reading = String(partial.reading || '').trim()
+  const tokens = (partial.tokens && partial.tokens.length)
+    ? partial.tokens
+    : tokensFromAnnotatedReading(reading)
+  return { ...partial, reading, tokens }
 }
 
 function parseGrammarCell(cell: string): PassageSentence['grammar'] {
@@ -170,19 +214,34 @@ export function parsePassageTable(raw: string): { sourceText: string; sentences:
   const lines = String(raw || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
   if (!lines.length) return null
   const rows = lines.map(splitPassageColumns).filter((row) => row.length && !isMarkdownSeparatorRow(row))
-  let header: { text: number; translation: number; grammar: number } | null = null
+  let header: { text: number; reading: number; translation: number; grammar: number } | null = null
   const first = rows[0]
   if (first?.length >= 2) {
     const find = (pattern: RegExp) => first.findIndex((col) => pattern.test(col))
     const text = find(PASSAGE_TABLE_HEADER.text)
+    const reading = find(PASSAGE_TABLE_HEADER.reading)
     const translation = find(PASSAGE_TABLE_HEADER.translation)
     const grammar = find(PASSAGE_TABLE_HEADER.grammar)
-    if (text >= 0 && translation >= 0) header = { text, translation, grammar: grammar >= 0 ? grammar : 2 }
+    if (text >= 0 && translation >= 0) {
+      header = {
+        text,
+        reading: reading >= 0 ? reading : -1,
+        translation,
+        grammar: grammar >= 0 ? grammar : -1,
+      }
+    }
   }
   const body = header ? rows.slice(1) : rows
-  const col = (row: string[], key: 'text' | 'translation' | 'grammar') => {
-    if (header) return row[header[key]] || ''
-    return row[key === 'text' ? 0 : key === 'translation' ? 1 : 2] || ''
+  const col = (row: string[], key: 'text' | 'reading' | 'translation' | 'grammar') => {
+    if (header) {
+      const index = header[key]
+      return index >= 0 ? (row[index] || '') : ''
+    }
+    // Legacy 2–3 col: 原文 | 中文解释 [| 语法]
+    if (key === 'text') return row[0] || ''
+    if (key === 'translation') return row[1] || ''
+    if (key === 'grammar') return row[2] || ''
+    return ''
   }
   const sentences: PassageSentence[] = []
   let sawMultiColumn = false
@@ -201,14 +260,13 @@ export function parsePassageTable(raw: string): { sourceText: string; sentences:
     if (row.length >= 2) sawMultiColumn = true
     if (!text) { attachGrammar(grammarCell); continue }
     if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(text)) { attachGrammar(grammarCell || text); continue }
-    sentences.push({
+    sentences.push(finalizePassageSentence({
       id: uid(),
       text,
-      reading: '',
+      reading: col(row, 'reading'),
       translation: col(row, 'translation'),
-      tokens: [],
       grammar: [],
-    })
+    }))
     if (grammarCell) attachGrammar(grammarCell)
   }
   if (!sawMultiColumn || !sentences.length) return null
@@ -307,10 +365,10 @@ function parseHandbookLessonBody(title: string, body: string): PassageLessonDraf
  * # 标题
  * ## 课文1：…
  * 学习目标：…
- * | 原文 | 中文解释 |
+ * | 原文 | 假名注音 | 中文解释 |
  * **语法考点**
  * - …
- * 一篇文件可含多课，每课拆成独立 Passage。
+ * 一篇文件可含多课，每课拆成独立 Passage。上传内容原样入库，不调用模型。
  */
 export function parsePassageHandbook(raw: string): ParsedPassageImport | null {
   const text = String(raw || '').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').trim()

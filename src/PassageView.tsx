@@ -7,8 +7,8 @@ import { apiFetch, readApiJson } from './api'
 import { readPassageSource } from './docx'
 import { isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import {
-  chunkItems, hasChineseTranslation, isPrimarilyChineseLine, isTransientPassage, mergeAnalyzedSentences, mergePassageBooks,
-  normalizePassageSentence, MAX_PASSAGES, PASSAGE_ANALYZE_CONCURRENCY, parsePassageHandbook, recordSentenceDictation, recordSentenceScore,
+  hasChineseTranslation, isTransientPassage, mergePassageBooks,
+  normalizePassageSentence, MAX_PASSAGES, parsePassageHandbook, recordSentenceDictation, recordSentenceScore,
   recoverInterruptedIngest, sentenceNeedsAnalysis,
 } from './passage'
 import { PassageIntensive } from './PassageIntensive'
@@ -97,30 +97,14 @@ export function PassageView() {
   const dirtyBooks = useRef(false)
   const deletedIds = useRef(new Set<string>())
   const ingesting = useRef(false)
-  const analyzing = useRef(new Set<string>())
-  const analyzeControllers = useRef(new Map<string, AbortController[]>())
   const ingestingIds = useRef(new Set<string>())
-  const resumed = useRef(false)
   const detailLoading = useRef(new Set<string>())
   const passagesRef = useRef<Passage[]>([])
   const booksRef = useRef<PassageBook[]>([])
-  const fillPassageRef = useRef<(id: string) => Promise<void>>(async () => undefined)
   const activeSentenceRef = useRef<HTMLLIElement | null>(null)
-
-  const abortAnalyzeForPassage = (passageId: string) => {
-    const list = analyzeControllers.current.get(passageId)
-    if (!list?.length) return
-    for (const controller of list) controller.abort()
-    analyzeControllers.current.delete(passageId)
-  }
 
   useEffect(() => () => {
     stopSpeaking()
-    for (const list of analyzeControllers.current.values()) {
-      for (const controller of list) controller.abort()
-    }
-    analyzeControllers.current.clear()
-    analyzing.current.clear()
   }, [])
 
   // Only follow the active line when the index changes — not on every render.
@@ -237,174 +221,6 @@ export function PassageView() {
     }
   }
 
-  const fillPassage = async (passageId: string) => {
-    if (analyzing.current.has(passageId)) return
-    analyzing.current.add(passageId)
-    try {
-      const current = passagesRef.current.find((item) => item.id === passageId)
-      if (!current) {
-        abortAnalyzeForPassage(passageId)
-        return
-      }
-      if (isTransientPassage(current) || current.sentences.some((sentence) => isPassagePlaceholder(sentence.text))) {
-        // Still being built by processIngest — wait for the next call with real source text.
-        if (ingestingIds.current.has(passageId)) return
-        patchPassage(passageId, {
-          status: 'error',
-          statusText: '课文识别未完成，请重新上传课文手册。',
-          sourceText: looksLikeErrorDocument(current.sourceText) ? '' : current.sourceText,
-          sentences: current.sentences.filter((sentence) => !isPassagePlaceholder(sentence.text)),
-          title: looksLikeErrorDocument(current.title) ? '课文' : current.title,
-        })
-        return
-      }
-      if (!current.sentences.length) {
-        // Light list payload still loading detail — wait instead of marking as failed.
-        if ((current.sentenceCount || 0) > 0 || detailLoading.current.has(passageId)) return
-        patchPassage(passageId, { status: 'error', statusText: '还没有可解析的句子，请重新上传课文手册。' })
-        return
-      }
-      const pending = current.sentences.filter(sentenceNeedsAnalysis)
-      if (!pending.length) {
-        // Mark Chinese notes as self-translated so UI leaves "生成中".
-        const normalized = current.sentences.map((sentence) => (
-          isPrimarilyChineseLine(sentence.text)
-            ? {
-                ...sentence,
-                translation: sentence.text,
-                reading: '',
-                tokens: [{ surface: sentence.text, reading: '', meaning: sentence.text }],
-                grammar: [],
-              }
-            : sentence
-        ))
-        patchPassage(passageId, { sentences: normalized, status: 'ready', statusText: '' })
-        return
-      }
-      // Prefill Chinese instructional lines (and repair any previously mis-merged results).
-      patchPassage(passageId, {
-        sentences: current.sentences.map((sentence) => (
-          isPrimarilyChineseLine(sentence.text)
-            ? {
-                ...sentence,
-                translation: sentence.text,
-                reading: '',
-                tokens: [{ surface: sentence.text, reading: '', meaning: sentence.text }],
-                grammar: [],
-              }
-            : sentence
-        )),
-      })
-      const latestForPending = passagesRef.current.find((item) => item.id === passageId) || current
-      const work = latestForPending.sentences.filter(sentenceNeedsAnalysis)
-      const total = latestForPending.sentences.length
-      // 表格导入的课文已有翻译，只需补读音/逐词，提示语区分开。
-      const fillingGapsOnly = work.length > 0 && work.every((sentence) => hasChineseTranslation(sentence.translation))
-      const progressLabel = (done: number) => fillingGapsOnly ? `正在补全读音与逐词注释 ${done}/${total}` : `正在生成整句翻译 ${done}/${total}`
-      let finished = total - work.length
-      let chunkErrors = 0
-      const chunks = chunkItems(work)
-      for (let offset = 0; offset < chunks.length; offset += PASSAGE_ANALYZE_CONCURRENCY) {
-        if (!analyzing.current.has(passageId) || !passagesRef.current.some((item) => item.id === passageId)) {
-          abortAnalyzeForPassage(passageId)
-          return
-        }
-        const batch = chunks.slice(offset, offset + PASSAGE_ANALYZE_CONCURRENCY)
-        patchPassage(passageId, { status: 'processing', statusText: progressLabel(finished) })
-        const results = await Promise.all(batch.map(async (chunk) => {
-          try {
-            const controller = new AbortController()
-            const registered = analyzeControllers.current.get(passageId) || []
-            registered.push(controller)
-            analyzeControllers.current.set(passageId, registered)
-            const timeout = window.setTimeout(() => controller.abort(), 100_000)
-            try {
-              const response = await apiFetch('/api/passage/analyze', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sentences: chunk.map((sentence) => ({ text: sentence.text })) }),
-                signal: controller.signal,
-              })
-              const data = await readApiJson<{ title?: string; sentences?: unknown[]; error?: string }>(response, '课文解析失败，请稍后重试。')
-              if (!response.ok) throw new Error(publicApiMessage(data.error, '课文解析失败，请稍后重试。'))
-              return { ok: true as const, data, size: chunk.length }
-            } finally {
-              window.clearTimeout(timeout)
-              const list = analyzeControllers.current.get(passageId)
-              if (list) {
-                const next = list.filter((item) => item !== controller)
-                if (next.length) analyzeControllers.current.set(passageId, next)
-                else analyzeControllers.current.delete(passageId)
-              }
-            }
-          } catch (reason) {
-            const aborted = Boolean(reason && typeof reason === 'object' && 'name' in reason && (reason as { name?: string }).name === 'AbortError')
-            if (!aborted) console.error('passage analyze chunk failed:', reason)
-            return { ok: false as const, size: chunk.length, ...(aborted ? { aborted: true as const } : {}) }
-          }
-        }))
-        if (results.some((result) => 'aborted' in result && result.aborted)) {
-          if (!passagesRef.current.some((item) => item.id === passageId)) {
-            abortAnalyzeForPassage(passageId)
-            return
-          }
-        }
-        let latest = passagesRef.current.find((item) => item.id === passageId)
-        if (!latest) {
-          abortAnalyzeForPassage(passageId)
-          return
-        }
-        let sentences = latest.sentences
-        let analyzedTitle = ''
-        for (const result of results) {
-          finished = Math.min(total, finished + result.size)
-          if (!result.ok) {
-            chunkErrors += 1
-            continue
-          }
-          sentences = mergeAnalyzedSentences(sentences, result.data.sentences || [])
-          if (!analyzedTitle) analyzedTitle = passageTitle(result.data.title, '')
-        }
-        patchPassage(passageId, {
-          sentences,
-          status: 'processing',
-          statusText: progressLabel(finished),
-          ...(latest.title === '课文' && analyzedTitle && !looksLikeErrorDocument(analyzedTitle) ? { title: analyzedTitle } : {}),
-        })
-      }
-      const latest = passagesRef.current.find((item) => item.id === passageId)
-      if (!latest) {
-        abortAnalyzeForPassage(passageId)
-        return
-      }
-      const stillMissing = latest.sentences.filter((sentence) => sentenceNeedsAnalysis(sentence))
-      const missingTranslation = stillMissing.filter((sentence) => !hasChineseTranslation(sentence.translation)).length
-      patchPassage(passageId, {
-        status: stillMissing.length ? 'error' : 'ready',
-        statusText: stillMissing.length
-          ? (chunkErrors
-            ? `还有 ${stillMissing.length} 句未补全读音/注释（${chunkErrors} 批失败），请重新上传或稍后重试`
-            : (missingTranslation
-              ? `还有 ${missingTranslation} 句没有中文翻译，请重新上传或稍后重试`
-              : `还有 ${stillMissing.length} 句未补全读音/注释，请重新上传或稍后重试`))
-          : '',
-      })
-    } catch (reason) {
-      const latest = passagesRef.current.find((item) => item.id === passageId)
-      patchPassage(passageId, {
-        status: 'error',
-        statusText: publicApiMessage(reason instanceof Error ? reason.message : '', '课文解析失败，请稍后重试。'),
-        ...(latest && looksLikeErrorDocument(latest.title) ? { title: '课文' } : {}),
-        ...(latest && looksLikeErrorDocument(latest.sourceText) ? { sourceText: '' } : {}),
-      })
-    } finally {
-      analyzing.current.delete(passageId)
-      ingestingIds.current.delete(passageId)
-      // 读音/逐词必须立刻写入 analysis JSONB，后续只读库。
-      await flushPersist()
-    }
-  }
-  fillPassageRef.current = fillPassage
 
   useEffect(() => {
     let cancelled = false
@@ -467,12 +283,6 @@ export function PassageView() {
             ? item.progress
             : full.progress,
         } : item))
-        if (full.sentences.some((sentence) => sentence.text && !isPassagePlaceholder(sentence.text) && sentenceNeedsAnalysis(sentence))) {
-          // 仅补全未完成/失败的课文；已 ready 且齐全的不会再调模型。
-          if (full.status === 'processing' || full.status === 'error') {
-            await fillPassageRef.current(full.id)
-          }
-        }
       } catch { /* keep light row */ }
       finally {
         detailLoading.current.delete(selectedId)
@@ -480,20 +290,6 @@ export function PassageView() {
     })()
     return () => { cancelled = true }
   }, [ready, selectedId])
-
-  useEffect(() => {
-    if (!ready || resumed.current) return
-    resumed.current = true
-    // 仅恢复「上传中断 / 补全失败」的课文，避免每次打开页面又打一轮大模型。
-    const pending = passages.filter((item) => (
-      !isTransientPassage(item)
-      && (item.status === 'processing' || item.status === 'error')
-      && item.sentences.some((sentence) => sentence.text && !isPassagePlaceholder(sentence.text) && sentenceNeedsAnalysis(sentence))
-    ))
-    void (async () => {
-      for (const item of pending) await fillPassageRef.current(item.id)
-    })()
-  }, [ready, passages])
 
   useEffect(() => {
     if (!ready || !persistEnabled.current) return
@@ -522,7 +318,7 @@ export function PassageView() {
     }
     const imported = parsePassageHandbook(text)
     if (!imported?.lessons.length) {
-      setNotice('未识别到「课文整理」手册格式。请使用下载的 .md 模版（含 ## 课文N 与「原文 / 中文解释」表）。')
+      setNotice('未识别到「课文整理」手册格式。请使用下载的 .md 模版（含 ## 课文N 与「原文 / 假名注音 / 中文解释」表）。')
       return
     }
     const room = MAX_PASSAGES - durableCount()
@@ -542,13 +338,16 @@ export function PassageView() {
     const created: Passage[] = []
     let selected = ''
     for (const lesson of lessons) {
+      const incomplete = lesson.sentences.filter(sentenceNeedsAnalysis).length
       const stub: Passage = {
         id: uid(),
         title: passageTitle(lesson.title),
         sourceText: lesson.sourceText,
         createdAt: Date.now(),
-        status: 'processing',
-        statusText: '手册已导入，正在补全读音与注释…',
+        status: incomplete ? 'error' : 'ready',
+        statusText: incomplete
+          ? `有 ${incomplete} 句缺少假名注音或中文解释，请补全模版后重新上传。`
+          : '',
         bookId: book?.id || '',
         bookName: book?.name || '',
         sentences: lesson.sentences,
@@ -557,36 +356,26 @@ export function PassageView() {
       commitPassages([stub, ...passagesRef.current.filter((item) => item.id !== stub.id)])
       markUpsert(stub.id)
       selected = stub.id
-      ingestingIds.current.add(stub.id)
       created.push(stub)
     }
     if (selected) {
       setSelectedId(selected)
       setMode('source')
     }
-    // 上传时一次性补全：等全部读音/逐词完成并落库后再关弹窗。
-    for (let index = 0; index < created.length; index += 1) {
-      const item = created[index]
-      setBusy(`正在补全读音与注释（${index + 1}/${created.length}）${item.title}`)
-      await fillPassage(item.id)
-    }
     setBusy('正在保存到数据库…')
     await flushPersist()
     setBusy('')
     setUploadOpen(false)
-    const failed = created.filter((item) => {
-      const live = passagesRef.current.find((row) => row.id === item.id)
-      return !live || live.status !== 'ready' || live.sentences.some(sentenceNeedsAnalysis)
-    })
+    const incompleteLessons = created.filter((item) => item.status !== 'ready')
     if (truncated) {
-      setNotice(`课文库最多 ${MAX_PASSAGES} 篇，本次仅导入 ${lessonList.length} / ${imported.lessons.length} 篇。${failed.length ? `其中 ${failed.length} 篇补全失败。` : '读音与注释已写入数据库。'}`)
-    } else if (failed.length) {
-      setNotice(`已导入 ${lessonList.length} 篇，但有 ${failed.length} 篇读音/注释补全失败，可删除后重新上传。`)
+      setNotice(`课文库最多 ${MAX_PASSAGES} 篇，本次仅导入 ${lessonList.length} / ${imported.lessons.length} 篇。${incompleteLessons.length ? `其中 ${incompleteLessons.length} 篇核心列不完整。` : ''}`)
+    } else if (incompleteLessons.length) {
+      setNotice(`已导入 ${lessonList.length} 篇，但有 ${incompleteLessons.length} 篇缺少假名或中文解释，请按模版补全后重传。`)
     } else {
       setNotice(
         lessonList.length > 1
-          ? `已导入 ${lessonList.length} 篇课文（${imported.documentTitle || '手册'}），读音与注释已写入数据库。`
-          : '手册已导入，读音与注释已写入数据库。',
+          ? `已导入 ${lessonList.length} 篇课文（${imported.documentTitle || '手册'}），内容已原样写入数据库。`
+          : '手册已导入，内容已原样写入数据库。',
       )
     }
   }
@@ -605,7 +394,7 @@ export function PassageView() {
       setBusy('')
     } finally {
       ingesting.current = false
-      if (!analyzing.current.size) setBusy('')
+      setBusy('')
     }
   }
 
@@ -1066,7 +855,7 @@ export function PassageView() {
         <div className="wide-empty">
           <ScrollText />
           <h2>还没有课文</h2>
-          <p>请上传「课文整理」Markdown 手册（按模版填写）。系统会按「课文N」拆篇入库，翻译与语法考点原样保留。</p>
+          <p>请上传「课文整理」Markdown 手册（含原文、假名注音、中文解释）。系统按「课文N」拆篇入库，不调用模型。</p>
           <button onClick={() => setUploadOpen(true)}>添加课文</button>
         </div>
       )}
@@ -1078,12 +867,12 @@ export function PassageView() {
             <span className="modal-icon"><FileText /></span>
             <span className="eyebrow">PASSAGE HANDBOOK</span>
             <h2>添加课文</h2>
-            <p>仅支持「课文整理」Markdown 模版。不接受 Word、图片、粘贴或自由正文，以保证翻译与语法数据准确。</p>
+            <p>仅支持「课文整理」Markdown 模版（含假名注音列）。上传内容原样入库，不再调用模型补全。</p>
             <div className="import-template-row">
               <a className="secondary-button import-template-link" href="/templates/课文导入模版.md" download="课文导入模版.md">
                 下载导入模版
               </a>
-              <small>结构：# 课次 → ## 课文N → 原文/中文表 → 语法考点</small>
+              <small>结构：# 课次 → ## 课文N → 原文/假名注音/中文解释表 → 语法考点（上传原样入库，不调用模型）</small>
             </div>
             <label className="passage-add-title">课本/分组
               <span className="passage-book-row">

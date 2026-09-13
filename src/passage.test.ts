@@ -58,22 +58,43 @@ describe('parsePassageTable', () => {
 })
 
 describe('parsePassageHandbook', () => {
-  it('splits 课文整理 markdown into multiple lessons', () => {
+  it('splits 课文整理 markdown into multiple lessons with furigana', () => {
     const md = readFileSync(resolve(process.cwd(), 'public/templates/课文导入模版.md'), 'utf8')
     const parsed = parsePassageHandbook(md)
     expect(parsed).not.toBeNull()
-    expect(parsed!.documentTitle).toMatch(/第009课/)
-    expect(parsed!.lessons).toHaveLength(2)
+    expect(parsed!.documentTitle).toMatch(/第007课/)
+    expect(parsed!.lessons).toHaveLength(3)
     expect(parsed!.lessons[0].title).toMatch(/课文1/)
-    expect(parsed!.lessons[0].sentences.length).toBeGreaterThanOrEqual(5)
+    expect(parsed!.lessons[0].sentences.length).toBeGreaterThanOrEqual(3)
     expect(parsed!.lessons[0].sentences[0]).toMatchObject({
-      text: '店員：いらっしゃいませ。',
+      text: 'リン：あのう、私はリンです。佐藤さんですか。',
     })
-    expect(parsed!.lessons[0].sentences[0].translation).toMatch(/欢迎光临/)
-    expect(parsed!.lessons[0].learningGoal).toBeTruthy()
+    expect(parsed!.lessons[0].sentences[0].reading).toContain('わたし')
+    expect(parsed!.lessons[0].sentences[0].translation).toMatch(/佐藤/)
+    expect(parsed!.lessons[0].sentences[0].tokens.some((token) => token.surface === '私' && token.reading === 'わたし')).toBe(true)
     expect(parsed!.lessons[0].sentences.at(-1)!.grammar.length).toBeGreaterThanOrEqual(1)
     expect(parsed!.lessons[1].title).toMatch(/课文2/)
-    expect(parsed!.lessons[1].sentences.length).toBeGreaterThanOrEqual(8)
+    expect(parsed!.lessons[2].sentences.length).toBeGreaterThanOrEqual(4)
+  })
+})
+
+describe('furigana column', () => {
+  it('parses 假名注音 and derives tokens from 漢字（かな）', async () => {
+    const { tokensFromAnnotatedReading, sentenceNeedsAnalysis } = await import('./passage')
+    const md = [
+      '| 原文 | 假名注音 | 中文解释 |',
+      '| --- | --- | --- |',
+      '| 私は学生です。 | 私（わたし）は学生（がくせい）です。 | 我是学生。 |',
+    ].join('\n')
+    const parsed = parsePassageTable(md)
+    expect(parsed!.sentences[0].reading).toBe('私（わたし）は学生（がくせい）です。')
+    expect(sentenceNeedsAnalysis(parsed!.sentences[0])).toBe(false)
+    expect(tokensFromAnnotatedReading('私（わたし）は学生（がくせい）です。').map((t) => t.surface)).toEqual([
+      '私', 'は', '学生', 'です',
+    ])
+    expect(tokensFromAnnotatedReading('りん：あのう、私（わたし）はりんです。佐藤（さとう）さんですか。').some((t) => (
+      t.surface === '私' && t.reading === 'わたし'
+    ))).toBe(true)
   })
 })
 

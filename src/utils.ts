@@ -181,13 +181,15 @@ export function makeFallbackWord(draft: ImportDraft): Word {
   const reading = cleaned.reading || draft.reading || known.reading || toHiragana(term)
   const userExample = String(draft.example || '').trim()
   const userTranslation = String(draft.translation || '').trim()
+  const userMeaning = String(draft.meaning || cleaned.meaning || '').trim()
+  // Core fields only get local fallbacks. Never invent 同义词/记忆技巧 etc.
   return {
     id: uid(), term, reading,
-    meaning: draft.meaning || cleaned.meaning || known.meaning || '待补充释义',
-    partOfSpeech: String(draft.partOfSpeech || '').trim() || known.partOfSpeech || '词性待确认',
-    example: userExample || known.example || `${term}を勉強します。`,
-    exampleReading: userExample ? '' : (known.exampleReading || `${reading}を べんきょうします。`),
-    translation: userExample ? (userTranslation || '') : (userTranslation || known.translation || `学习“${term}”这个词。`),
+    meaning: userMeaning || known.meaning || '待补充释义',
+    partOfSpeech: String(draft.partOfSpeech || '').trim() || known.partOfSpeech || '',
+    example: userExample || known.example || '',
+    exampleReading: userExample ? '' : (known.exampleReading || ''),
+    translation: userExample ? userTranslation : (userTranslation || known.translation || ''),
     romaji: String(draft.romaji || '').trim() || toRomaji(reading) || undefined,
     pronunciationNote: String(draft.pronunciationNote || '').trim() || undefined,
     memoryTip: String(draft.memoryTip || '').trim() || undefined,

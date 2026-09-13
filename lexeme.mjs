@@ -50,6 +50,33 @@ export function isChineseGloss(meaning) {
   return true
 }
 
+/** Core upload fields only: 单词 / 假名 / 罗马音 / 中文释义 / 例句. Optional columns are ignored. */
+export function hasUsableReading(term, reading) {
+  const kana = String(reading || '').trim()
+  if (kana && /[\u3040-\u30ff]/.test(kana)) return true
+  const head = String(term || '').trim()
+  return Boolean(head && /^[\u3040-\u30ffー]+$/.test(head))
+}
+
+export function isPlaceholderExample(example) {
+  const text = String(example || '').trim()
+  if (!text) return true
+  // Auto-generated stubs from older imports — treat as missing so they can be filled once.
+  if (/を勉強します[。．]?$/.test(text)) return true
+  return false
+}
+
+export function hasUsableRomaji(romaji) {
+  return Boolean(String(romaji || '').trim())
+}
+
+export function isCoreLexiconIncomplete(word = {}) {
+  return !hasUsableReading(word.term, word.reading)
+    || !isChineseGloss(word.meaning)
+    || isPlaceholderExample(word.example)
+    || !hasUsableRomaji(word.romaji)
+}
+
 export function quizGloss(meaning) {
   return String(meaning || '')
     .trim()

@@ -3,7 +3,16 @@ import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createDatabase } from './database.mjs'
-import { extractUploadedLexeme, isChineseGloss, looksLikeVocabularyTerm, normalizeImportDrafts } from './lexeme.mjs'
+import {
+  extractUploadedLexeme,
+  hasUsableReading,
+  hasUsableRomaji,
+  isChineseGloss,
+  isCoreLexiconIncomplete,
+  isPlaceholderExample,
+  looksLikeVocabularyTerm,
+  normalizeImportDrafts,
+} from './lexeme.mjs'
 
 const app = express()
 const port = Number(process.env.PORT || 8787)
@@ -376,14 +385,16 @@ function isPlaceholderMeaning(meaning) {
 async function enrichWordsWithModel(words, unitName) {
   const system = [
     '你是严谨的日语教师。为中文母语的日语初学者解析词汇。',
+    '只补全核心字段：假名读音、罗马音、中文释义、例句（及例句读音/译文）。',
+    '不要生成同义词、近义词、形近词、记忆技巧、发音注意事项。',
     '释义必须用简短中文（2到12个汉字），禁止罗马音、英文、假名当释义。',
-    '释义简明准确；读音仅用平假名；词性使用中文；例句控制在 JLPT N5-N4 难度。',
+    '释义简明准确；读音仅用平假名；罗马音用 Hepburn；词性使用中文；例句控制在 JLPT N5-N4 难度。',
     '例句必须自然、短小，且包含目标词；提供准确中文翻译。',
     '保持输入顺序，每个输入只返回一个结果。',
     '若输入像笔记或批注，先抽出其中最核心的一个日语单词再解析，term 用抽出的单词。',
     '根据整组词汇归纳一个简短准确的中文主题说明，控制在4到12个汉字，不要重复单元名称。',
     '只返回一个 JSON 对象，不要 Markdown。格式严格为：',
-    '{"unitDescription":"","words":[{"term":"","reading":"","meaning":"","partOfSpeech":"","example":"","exampleReading":"","translation":""}]}',
+    '{"unitDescription":"","words":[{"term":"","reading":"","romaji":"","meaning":"","partOfSpeech":"","example":"","exampleReading":"","translation":""}]}',
     'words 中所有字段必须是非空字符串。unitDescription 尽量给出。',
   ].join('')
   const { data, headers } = await callGateway('/api/ai/chat', {
@@ -425,23 +436,37 @@ async function rewriteIncompleteRow(row) {
     await database.deleteWord(row.id)
     return null
   }
-  const meaning = String(lex.meaning || row.meaning || '').trim()
+  const term = lex.term
+  const reading = hasUsableReading(term, lex.reading || row.reading)
+    ? String(lex.reading || row.reading || term).trim()
+    : String(lex.reading || row.reading || '').trim()
+  const meaning = isChineseGloss(row.meaning)
+    ? String(row.meaning).trim()
+    : String(lex.meaning || row.meaning || '').trim()
+  const example = isPlaceholderExample(row.example) ? '' : String(row.example || '').trim()
+  const romaji = String(row.romaji || '').trim()
+  const partOfSpeech = String(row.partOfSpeech || '').trim() || '词性待确认'
   const word = await database.updateWordLexicon(row.id, {
-    term: lex.term,
-    reading: lex.reading || row.reading,
+    term,
+    reading,
     meaning: isPlaceholderMeaning(meaning) ? '待补充释义' : meaning,
-    partOfSpeech: '词性待确认',
-    example: `${lex.term}を勉強します。`,
-    exampleReading: '',
-    translation: `学习“${lex.term}”这个词。`,
+    partOfSpeech,
+    example,
+    exampleReading: String(row.exampleReading || '').trim(),
+    translation: String(row.translation || '').trim(),
+    romaji,
   })
-  return {
+  const next = {
     ...row,
-    term: lex.term,
-    reading: lex.reading || row.reading,
+    term,
+    reading,
     meaning: isPlaceholderMeaning(meaning) ? '' : meaning,
+    example,
+    romaji,
+    partOfSpeech,
     word,
   }
+  return next
 }
 
 async function persistEnrichedRow(row, extra, fallback) {
@@ -454,16 +479,30 @@ async function persistEnrichedRow(row, extra, fallback) {
     await database.deleteWord(row.id)
     return { filled: true, word: null }
   }
-  const meaning = String(extra.meaning || fallback.meaning || '').trim()
+  const reading = hasUsableReading(term, row.reading)
+    ? String(row.reading).trim()
+    : String(extra.reading || fallback.reading || row.reading || '').trim()
+  const meaning = isChineseGloss(row.meaning)
+    ? String(row.meaning).trim()
+    : String(extra.meaning || fallback.meaning || '').trim()
   if (isPlaceholderMeaning(meaning)) return { filled: false, word: null }
+  const example = !isPlaceholderExample(row.example)
+    ? String(row.example).trim()
+    : String(extra.example || '').trim()
+  if (isPlaceholderExample(example)) return { filled: false, word: null }
+  const romaji = hasUsableRomaji(row.romaji)
+    ? String(row.romaji).trim()
+    : String(extra.romaji || '').trim()
+  if (!hasUsableReading(term, reading) || !hasUsableRomaji(romaji)) return { filled: false, word: null }
   const word = await database.updateWordLexicon(row.id, {
     term,
-    reading: extra.reading || fallback.reading || row.reading,
+    reading,
     meaning,
-    partOfSpeech: extra.partOfSpeech || '名词',
-    example: extra.example || `${term}を勉強します。`,
-    exampleReading: extra.exampleReading,
-    translation: extra.translation || `学习“${term}”这个词。`,
+    partOfSpeech: String(row.partOfSpeech || '').trim() || extra.partOfSpeech || '名词',
+    example,
+    exampleReading: String(row.exampleReading || '').trim() || extra.exampleReading || '',
+    translation: String(row.translation || '').trim() || extra.translation || '',
+    romaji,
   })
   return { filled: true, word }
 }
@@ -498,7 +537,8 @@ async function enrichIncompleteBatch() {
         continue
       }
       if (rewritten.word) updatedById.set(rewritten.word.id, rewritten.word)
-      if (rewritten.meaning && !isPlaceholderMeaning(rewritten.meaning)) {
+      // Core fields already complete → skip model. Optional columns are never backfilled.
+      if (!isCoreLexiconIncomplete(rewritten)) {
         filled += 1
         continue
       }
@@ -692,79 +732,9 @@ app.post('/api/passage/ocr', (_req, res) => {
   res.status(410).json({ error: '图片 OCR 已下线，请粘贴课文 Markdown/文本。' })
 })
 
-async function analyzePassageWithModel(sourceText, exactSentences) {
-  const lines = Array.isArray(exactSentences)
-    ? exactSentences.map((item) => String(item || '').trim()).filter((text) => text && !looksLikeErrorDocument(text) && text !== '（正在识别课文…）').slice(0, 6)
-    : []
-  const system = [
-    '你是严谨的日语教师，服务中文母语的日语初学者。',
-    '把课文拆成句子。每句给出：原文、平假名读音、中文整句翻译、逐词注释、语法点。',
-    'tokens 按出现顺序覆盖整句；surface 用原文字形；reading 用平假名；meaning 用简明中文。',
-    'grammar 只标对理解有帮助的语法（助词、活用、句型），name 用日语或通用语法名，explanation 用中文。',
-    'translation 必须是完整中文句子，禁止留空，禁止只用日语或罗马音。对话行保留 A/B 角色。',
-    '不要输出思考过程或解释。最终答案必须是一个可解析的 JSON 对象（可放在 content）。格式：',
-    '{"title":"","sentences":[{"text":"","reading":"","translation":"","tokens":[{"surface":"","reading":"","meaning":""}],"grammar":[{"name":"","pattern":"","explanation":""}]}]}',
-  ]
-  if (lines.length) {
-    system.push('必须按给定句子逐条解析，不要合并、拆分、改写或省略。sentences 数量必须等于输入句数，text 必须与输入完全一致。')
-  }
-  const payload = {
-    tenantId,
-    capability: process.env.LLM_GATEWAY_PASSAGE_CAPABILITY || process.env.LLM_GATEWAY_ENRICH_CAPABILITY || 'fast-chat',
-    messages: [
-      { role: 'system', content: system.join('') },
-      { role: 'user', content: lines.length
-        ? `请解析这些已经拆好的日语句子：\n${lines.map((text, index) => `${index + 1}. ${text}`).join('\n')}`
-        : `请解析下面的日语课文：\n${sourceText}` },
-    ],
-    dataClass: 'internal',
-    fallback: true,
-    stream: false,
-    temperature: 0.15,
-    // Reasoning models burn tokens before content; keep headroom.
-    max_tokens: lines.length ? Math.min(4096, Math.max(2200, lines.length * 900)) : 4096,
-  }
-  const timeoutMs = lines.length ? 90_000 : 120_000
-  let lastError
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const { data } = await callGateway('/api/ai/chat', payload, timeoutMs)
-      const parsed = parseJsonContent(chatMessageText(data))
-      if (!Array.isArray(parsed.sentences) || !parsed.sentences.length) throw new Error('模型没有返回句子。')
-      if (looksLikeErrorDocument(String(parsed.title || ''))) parsed.title = ''
-      if (lines.length) {
-        parsed.sentences = lines.map((text, index) => {
-          const match = parsed.sentences.find((item) => String(item?.text || '').trim() === text) || parsed.sentences[index] || {}
-          return { ...match, text }
-        })
-      }
-      return parsed
-    } catch (error) {
-      lastError = error
-      const retryableStatus = [502, 503, 504].includes(error.status)
-      const retryableFormat = /JSON|没有返回句子|没有返回有效/i.test(String(error.message || ''))
-      if ((!retryableStatus && !retryableFormat) || attempt === 2) throw error
-      await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)))
-    }
-  }
-  throw lastError
-}
-
-app.post('/api/passage/analyze', rateLimit(60_000, 30), async (req, res) => {
-  const sourceText = String(req.body?.text || '').trim().slice(0, 8000)
-  const requested = Array.isArray(req.body?.sentences)
-    ? req.body.sentences.map((item) => String(item?.text || item || '').trim()).filter((text) => text && !looksLikeErrorDocument(text) && text !== '（正在识别课文…）').slice(0, 6)
-    : []
-  if (looksLikeErrorDocument(sourceText) || sourceText === '（正在识别课文…）') {
-    return res.status(400).json({ error: '课文原文无效，请重新上传或粘贴正文。' })
-  }
-  if (!sourceText && !requested.length) return res.status(400).json({ error: '请提供课文内容。' })
-  try {
-    res.json(await analyzePassageWithModel(sourceText, requested))
-  } catch (error) {
-    console.error(error)
-    res.status(publicStatus(error)).json({ error: clientGatewayMessage(error, '课文解析超时。', '课文解析失败，请稍后重试。') })
-  }
+// Frontend handbook upload is self-contained (原文/假名/中文); analyze endpoint retired.
+app.post('/api/passage/analyze', (_req, res) => {
+  res.status(410).json({ error: '课文 AI 解析已下线。请使用含「原文 / 假名注音 / 中文解释」的 Markdown 模版上传。' })
 })
 
 if (process.env.NODE_ENV === 'production') {

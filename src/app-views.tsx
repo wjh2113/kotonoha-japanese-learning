@@ -13,6 +13,7 @@ import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
 import type { AppSettings, ImportDraft, ThemeName, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fallbackUnitTheme, isPlaceholderTheme } from './theme'
 import { buildQuizOptions, isPlaceholderMeaning, optionLabel, orderQuizByWeakness, recordQuizAnswer, sharedDistractors, usableQuizWords } from './quiz'
+import { isCoreLexiconIncomplete } from './lexeme'
 import { formatReviewTime, getReviewState, makeFallbackWord, matchesTypingAnswer, masteryDots, parseVocabularyHandbook, proficiencyPercent, pronunciationScore, REVIEW_INTERVAL_DAYS, scheduleReview, splitWordList, toRomaji, uid } from './utils'
 
 const THEME_OPTIONS: { id: ThemeName; name: string; desc: string }[] = [
@@ -971,7 +972,7 @@ export function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose
     setLoading(true)
     setNotice('')
     try {
-      // 只用模版字段，不调用 AI，避免改写用户整理的释义/例句。
+      // 仅检查核心列；同义词/记忆技巧等空列不补全、不改写。
       const words = drafts.map(makeFallbackWord)
       onImported(words, fallbackUnitTheme(unit.name, [...unit.words, ...words]))
     } catch {
@@ -981,6 +982,14 @@ export function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose
     }
   }
 
+  const incompleteCore = drafts.filter((draft) => isCoreLexiconIncomplete({
+    term: draft.term,
+    reading: draft.reading,
+    meaning: draft.meaning,
+    example: draft.example,
+    romaji: draft.romaji || (draft.reading ? toRomaji(draft.reading) : ''),
+  })).length
+
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <section className="modal import-modal">
@@ -988,13 +997,13 @@ export function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose
         <span className="modal-icon"><Import /></span>
         <span className="eyebrow">VOCAB HANDBOOK</span>
         <h2>导入到「{unit.name}」</h2>
-        <p>仅支持「词汇手册」Excel 模版。表内字段原样入库，不再用 AI 改写，以保证数据准确。</p>
+        <p>必填列：单词、假名、罗马音、中文释义、例句。记忆技巧 / 同义词 / 形近词等为空时不会检查，也不会用 AI 补全。</p>
         {!drafts.length ? <>
           <div className="import-template-row">
             <a className="secondary-button import-template-link" href="/templates/词汇导入模版.xlsx" download="词汇导入模版.xlsx">
               <FileText size={16} />下载导入模版
             </a>
-            <small>列：序号｜单词｜假名｜词性｜中文释义｜罗马音｜例句｜例句译文｜发音注意事项｜记忆技巧｜同义词｜形近词</small>
+            <small>必填：序号｜单词｜假名｜中文释义｜罗马音｜例句　可选：词性｜例句译文｜发音注意｜记忆技巧｜同义词｜形近词</small>
           </div>
           <button
             className="drop-zone"
@@ -1018,6 +1027,9 @@ export function ImportModal({ unit, onClose, onImported }: { unit: Unit; onClose
           {notice && <div className="modal-notice">{notice}</div>}
         </> : <>
           <div className="preview-heading"><b>识别到 {drafts.length} 个单词</b><button type="button" onClick={() => setDrafts([])}>重新选择文件</button></div>
+          {incompleteCore > 0 && (
+            <div className="modal-notice">有 {incompleteCore} 个词缺少假名 / 罗马音 / 中文释义 / 例句之一，导入后仅会补全这些核心字段。</div>
+          )}
           <div className="import-preview">{drafts.map((draft, i) => <div key={`${draft.term}-${i}`}><span>{i + 1}</span><b className="jp">{draft.term}</b><small>{draft.reading || '—'}</small><em>{draft.meaning || '—'}</em></div>)}</div>
           {notice && <div className="modal-notice">{notice}</div>}
           <button className="primary-button modal-submit" disabled={loading} onClick={() => void importWords()}>

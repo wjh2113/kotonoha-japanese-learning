@@ -138,6 +138,13 @@ describe('Japanese pronunciation helpers', () => {
     expect(pronunciationScoreFor('きのうがっこうへいきました', '昨日学校へ行きました。', 'きのうがっこうへいきました')).toBe(100)
   })
 
+  it('leaves example empty when the spreadsheet cell is blank', () => {
+    const word = makeFallbackWord({ term: '未知語xyz', reading: 'みちりご', meaning: '测试' })
+    expect(word.example).toBe('')
+    expect(word.memoryTip).toBeUndefined()
+    expect(word.synonyms).toBeUndefined()
+  })
+
   it('uses the built-in fallback lexicon', () => {
     const word = makeFallbackWord({ term: '水' })
     expect(word.reading).toBe('みず')
