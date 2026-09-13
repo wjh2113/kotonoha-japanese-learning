@@ -554,6 +554,16 @@ app.patch('/api/passages/:id/progress', async (req, res) => {
   }
 })
 
+app.delete('/api/passages/:id', async (req, res) => {
+  try {
+    res.json(await database.deletePassage(req.params.id))
+  } catch (error) {
+    console.error(error)
+    if (error.message === 'PASSAGE_NOT_FOUND') return res.status(404).json({ error: '课文不存在。' })
+    res.status(error.message === 'INVALID_PASSAGE' ? 400 : 500).json({ error: '删除课文失败。' })
+  }
+})
+
 app.put('/api/passage-books', async (req, res) => {
   try {
     res.json({ books: await database.replacePassageBooks(req.body?.books || req.body) })

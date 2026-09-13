@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chunkItems, extractPassageVocab, unusedPassageVocab, isTransientPassage, listPassageBooks, mergeAnalyzedSentences, PASSAGE_ANALYZE_CHUNK, PASSAGE_ANALYZE_CONCURRENCY, passageNeedsAnalysis, passageProgressSummary, parsePassageHandbook, parsePassageTable, recordSentenceScore, recoverInterruptedIngest } from './passage'
+import { chunkItems, extractPassageVocab, unusedPassageVocab, isTransientPassage, listPassageBooks, mergeAnalyzedSentences, MAX_PASSAGES, PASSAGE_ANALYZE_CHUNK, PASSAGE_ANALYZE_CONCURRENCY, passageNeedsAnalysis, passageProgressSummary, parsePassageHandbook, parsePassageTable, recordSentenceScore, recoverInterruptedIngest } from './passage'
 import type { Passage } from './types'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -8,6 +8,7 @@ describe('parsePassageTable', () => {
   it('uses larger analyze chunks with limited concurrency', () => {
     expect(PASSAGE_ANALYZE_CHUNK).toBeGreaterThanOrEqual(4)
     expect(PASSAGE_ANALYZE_CONCURRENCY).toBeGreaterThanOrEqual(2)
+    expect(MAX_PASSAGES).toBe(50)
     expect(chunkItems([1, 2, 3, 4, 5, 6, 7], 6)).toEqual([[1, 2, 3, 4, 5, 6], [7]])
   })
   it('parses 原文/中文解释/语法考点 rows with a header', () => {

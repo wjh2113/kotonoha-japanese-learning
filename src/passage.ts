@@ -7,6 +7,8 @@ const PARTICLES = /^(は|が|を|に|の|と|も|で|へ|や|か|ね|よ|な|だ
 
 export const PASSAGE_ANALYZE_CHUNK = 6
 export const PASSAGE_ANALYZE_CONCURRENCY = 2
+/** Soft cap shown in UI; server validatePassages also enforces 50. */
+export const MAX_PASSAGES = 50
 
 export function hasChineseTranslation(text?: string) {
   return /[\u4e00-\u9fff]/.test(String(text || '').trim())

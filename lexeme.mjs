@@ -12,6 +12,21 @@ function firstMeaningClause(text) {
     .trim()
 }
 
+function cleanExtras(extras) {
+  if (!extras) return {}
+  const clean = (value) => String(value || '').trim() || undefined
+  return {
+    partOfSpeech: clean(extras.partOfSpeech),
+    romaji: clean(extras.romaji),
+    example: clean(extras.example),
+    translation: clean(extras.translation),
+    pronunciationNote: clean(extras.pronunciationNote),
+    memoryTip: clean(extras.memoryTip),
+    synonyms: clean(extras.synonyms),
+    similarWords: clean(extras.similarWords),
+  }
+}
+
 export function looksLikeVocabularyTerm(term) {
   const text = String(term || '').trim()
   return Boolean(
@@ -35,6 +50,15 @@ export function isChineseGloss(meaning) {
   return true
 }
 
+export function quizGloss(meaning) {
+  return String(meaning || '')
+    .trim()
+    .split(/[；;。]/)[0]
+    .replace(/（[^）]*[A-Za-z][^）]*）/g, '')
+    .trim()
+    .slice(0, 16)
+}
+
 function uniqueDrafts(items) {
   const out = []
   const seen = []
@@ -50,6 +74,7 @@ function uniqueDrafts(items) {
       term,
       reading: reading || undefined,
       meaning: meaning || undefined,
+      ...cleanExtras(item),
     })
   }
   return out
@@ -71,6 +96,46 @@ function collectCandidates(term, reading) {
   return found
 }
 
+export function extractImportDrafts(term, reading = '', meaning = '', extras) {
+  const rawTerm = String(term || '').trim()
+  const rawReading = String(reading || '').trim()
+  const rawMeaning = String(meaning || '').trim()
+  const extra = cleanExtras(extras)
+
+  const numbered = rawTerm.match(/^\s*\d+\.\s*([^\s：:]{1,16})（([ぁ-んァ-ンー]+)）\s*[：:]\s*(.+)$/s)
+  if (numbered) {
+    return uniqueDrafts([{
+      term: numbered[1].trim(),
+      reading: numbered[2],
+      meaning: firstMeaningClause(numbered[3]).slice(0, 40) || rawMeaning,
+      ...extra,
+    }])
+  }
+
+  const compact = rawTerm.match(/^([\u3040-\u30ff\u4e00-\u9fffー]{1,12})（([ぁ-んァ-ンー]+)）$/)
+  if (compact && looksLikeVocabularyTerm(compact[1])) {
+    return uniqueDrafts([{ term: compact[1], reading: compact[2], meaning: rawMeaning, ...extra }])
+  }
+
+  if (/东西用ある|记忆口诀/.test(rawTerm) || (rawTerm === 'ある' && /いる/.test(rawReading))) {
+    return uniqueDrafts([
+      { term: 'ある', reading: 'ある', meaning: '（物）有、在' },
+      { term: 'いる', reading: 'いる', meaning: '（人/动物）有、在' },
+    ])
+  }
+
+  if (looksLikeVocabularyTerm(rawTerm) && !NOTE_NOISE.test(rawReading) && rawTerm.length <= MAX_TERM) {
+    return uniqueDrafts([{ term: rawTerm, reading: rawReading, meaning: rawMeaning, ...extra }])
+  }
+
+  const drafts = uniqueDrafts(collectCandidates(rawTerm, rawReading).map((item) => ({
+    ...item,
+    meaning: item.meaning || rawMeaning,
+  })))
+  if (drafts.length) return drafts
+  return []
+}
+
 export function extractUploadedLexeme(term, reading = '') {
   const drafts = extractImportDrafts(term, reading)
   if (drafts[0]) {
@@ -84,46 +149,8 @@ export function extractUploadedLexeme(term, reading = '') {
   return { term: String(term || '').trim().slice(0, MAX_TERM), reading: String(reading || '').trim().slice(0, 24), cleaned: false }
 }
 
-export function extractImportDrafts(term, reading = '', meaning = '') {
-  const rawTerm = String(term || '').trim()
-  const rawReading = String(reading || '').trim()
-  const rawMeaning = String(meaning || '').trim()
-
-  const numbered = rawTerm.match(/^\s*\d+\.\s*([^\s：:]{1,16})（([ぁ-んァ-ンー]+)）\s*[：:]\s*(.+)$/s)
-  if (numbered) {
-    return uniqueDrafts([{
-      term: numbered[1].trim(),
-      reading: numbered[2],
-      meaning: firstMeaningClause(numbered[3]).slice(0, 40) || rawMeaning,
-    }])
-  }
-
-  const compact = rawTerm.match(/^([\u3040-\u30ff\u4e00-\u9fffー]{1,12})（([ぁ-んァ-ンー]+)）$/)
-  if (compact && looksLikeVocabularyTerm(compact[1])) {
-    return uniqueDrafts([{ term: compact[1], reading: compact[2], meaning: rawMeaning }])
-  }
-
-  if (/东西用ある|记忆口诀/.test(rawTerm) || (rawTerm === 'ある' && /いる/.test(rawReading))) {
-    return uniqueDrafts([
-      { term: 'ある', reading: 'ある', meaning: '（物）有、在' },
-      { term: 'いる', reading: 'いる', meaning: '（人/动物）有、在' },
-    ])
-  }
-
-  if (looksLikeVocabularyTerm(rawTerm) && !NOTE_NOISE.test(rawReading) && rawTerm.length <= MAX_TERM) {
-    return uniqueDrafts([{ term: rawTerm, reading: rawReading, meaning: rawMeaning }])
-  }
-
-  const drafts = uniqueDrafts(collectCandidates(rawTerm, rawReading).map((item) => ({
-    ...item,
-    meaning: item.meaning || rawMeaning,
-  })))
-  if (drafts.length) return drafts
-  return []
-}
-
 export function normalizeImportDrafts(drafts) {
   return uniqueDrafts((Array.isArray(drafts) ? drafts : []).flatMap((draft) => (
-    extractImportDrafts(draft?.term, draft?.reading, draft?.meaning)
+    extractImportDrafts(draft?.term, draft?.reading, draft?.meaning, draft)
   )))
 }

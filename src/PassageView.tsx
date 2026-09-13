@@ -8,7 +8,7 @@ import { readPassageSource } from './docx'
 import { isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import {
   chunkItems, hasChineseTranslation, isPrimarilyChineseLine, isTransientPassage, mergeAnalyzedSentences, mergePassageBooks,
-  normalizePassageSentence, PASSAGE_ANALYZE_CONCURRENCY, passageProgressSummary, parsePassageHandbook, recordSentenceDictation, recordSentenceScore,
+  normalizePassageSentence, MAX_PASSAGES, PASSAGE_ANALYZE_CONCURRENCY, passageProgressSummary, parsePassageHandbook, recordSentenceDictation, recordSentenceScore,
   recoverInterruptedIngest, sentenceNeedsAnalysis,
 } from './passage'
 import { PassageIntensive } from './PassageIntensive'
@@ -85,11 +85,17 @@ export function PassageView() {
   const [playLoop, setPlayLoop] = useState(false)
   const persistError = useRef(false)
   const persistEnabled = useRef(false)
+  const persistBusy = useRef(false)
+  const dirtyUpserts = useRef(new Set<string>())
+  const dirtyProgress = useRef(new Set<string>())
+  const dirtyBooks = useRef(false)
+  const deletedIds = useRef(new Set<string>())
   const ingesting = useRef(false)
   const analyzing = useRef(new Set<string>())
   const ingestingIds = useRef(new Set<string>())
   const resumed = useRef(false)
   const passagesRef = useRef<Passage[]>([])
+  const booksRef = useRef<PassageBook[]>([])
   const fillPassageRef = useRef<(id: string) => Promise<void>>(async () => undefined)
   const activeSentenceRef = useRef<HTMLLIElement | null>(null)
 
@@ -101,13 +107,95 @@ export function PassageView() {
     activeSentenceRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [sentenceIndex, mode, selectedId])
 
+  const durableCount = () => passagesRef.current.filter((item) => !isTransientPassage(item)).length
+
   const commitPassages = (next: Passage[]) => {
     passagesRef.current = next
     setPassages(next)
   }
 
+  const commitBooks = (next: PassageBook[]) => {
+    booksRef.current = next
+    setBooks(next)
+    dirtyBooks.current = true
+  }
+
+  const markUpsert = (id: string) => {
+    dirtyUpserts.current.add(id)
+    dirtyProgress.current.delete(id)
+  }
+
+  const markProgress = (id: string) => {
+    if (!dirtyUpserts.current.has(id)) dirtyProgress.current.add(id)
+  }
+
   const patchPassage = (id: string, changes: Partial<Passage>) => {
     commitPassages(passagesRef.current.map((item) => item.id === id ? { ...item, ...changes } : item))
+    const keys = Object.keys(changes)
+    if (keys.length === 1 && keys[0] === 'progress') markProgress(id)
+    else markUpsert(id)
+  }
+
+  const flushPersist = async () => {
+    if (!persistEnabled.current || persistBusy.current) return
+    persistBusy.current = true
+    try {
+      const upsertIds = [...dirtyUpserts.current]
+      const progressIds = [...dirtyProgress.current]
+      const removeIds = [...deletedIds.current]
+      const booksNeedSave = dirtyBooks.current
+      dirtyUpserts.current.clear()
+      dirtyProgress.current.clear()
+      deletedIds.current.clear()
+      dirtyBooks.current = false
+
+      for (const id of removeIds) {
+        const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}`, { method: 'DELETE' })
+        if (!response.ok && response.status !== 404) throw new Error('DELETE_FAILED')
+      }
+
+      for (const id of upsertIds) {
+        const passage = passagesRef.current.find((item) => item.id === id)
+        if (!passage || isTransientPassage(passage)) continue
+        const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(passage),
+        })
+        if (!response.ok) throw new Error('UPSERT_FAILED')
+      }
+
+      for (const id of progressIds) {
+        const passage = passagesRef.current.find((item) => item.id === id)
+        if (!passage || isTransientPassage(passage)) continue
+        const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}/progress`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ progress: passage.progress || {} }),
+        })
+        if (!response.ok) throw new Error('PROGRESS_FAILED')
+      }
+
+      if (booksNeedSave) {
+        const response = await apiFetch('/api/passage-books', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ books: booksRef.current }),
+        })
+        if (!response.ok) throw new Error('BOOKS_FAILED')
+      }
+      persistError.current = false
+    } catch {
+      if (!persistError.current) {
+        persistError.current = true
+        setNotice('课文保存失败，请检查服务状态')
+      }
+    } finally {
+      persistBusy.current = false
+      if (dirtyUpserts.current.size || dirtyProgress.current.size || dirtyBooks.current || deletedIds.current.size) {
+        void flushPersist()
+      }
+    }
   }
 
   const fillPassage = async (passageId: string) => {
@@ -256,9 +344,15 @@ export function PassageView() {
       const merged = [
         ...localKeep.filter((item) => !next.some((row) => row.id === item.id)),
         ...next,
-      ].slice(0, 50)
-      commitPassages(merged)
-      setBooks(mergePassageBooks(Array.isArray(data.books) ? data.books as { id: string; name: string }[] : [], merged))
+      ]
+      if (merged.length > MAX_PASSAGES) {
+        setNotice(`课文库最多 ${MAX_PASSAGES} 篇，已只保留最新 ${MAX_PASSAGES} 篇。`)
+      }
+      commitPassages(merged.slice(0, MAX_PASSAGES))
+      const nextBooks = mergePassageBooks(Array.isArray(data.books) ? data.books as { id: string; name: string }[] : [], merged)
+      booksRef.current = nextBooks
+      setBooks(nextBooks)
+      dirtyBooks.current = false
       setSelectedId((current) => merged.some((item) => item.id === current) ? current : (merged[0]?.id || ''))
       setReady(true)
     }).catch(() => {
@@ -281,29 +375,12 @@ export function PassageView() {
 
   useEffect(() => {
     if (!ready || !persistEnabled.current) return
-    const timer = window.setTimeout(async () => {
-      try {
-        const durable = passagesRef.current.filter((item) => !isTransientPassage(item))
-        // Never wipe the DB with [] while OCR stubs are still in flight.
-        if (!durable.length && passagesRef.current.some((item) => isTransientPassage(item) || ingestingIds.current.has(item.id))) {
-          return
-        }
-        const response = await apiFetch('/api/passages', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ passages: durable, books }),
-        })
-        if (!response.ok) throw new Error('WRITE_FAILED')
-        persistError.current = false
-      } catch {
-        if (!persistError.current) {
-          persistError.current = true
-          setNotice('课文保存失败，请检查服务状态')
-        }
-      }
-    }, 400)
+    const timer = window.setTimeout(() => { void flushPersist() }, 400)
     return () => window.clearTimeout(timer)
   }, [passages, books, ready])
+
+  // Keep booksRef in sync when setBooks is used without commitBooks (legacy paths).
+  useEffect(() => { booksRef.current = books }, [books])
 
   const passage = passages.find((item) => item.id === selectedId) || passages[0]
   const sentence = passage?.sentences[sentenceIndex]
@@ -332,8 +409,20 @@ export function PassageView() {
       setNotice('未识别到「课文整理」手册格式。请使用下载的 .md 模版（含 ## 课文N 与「原文 / 中文解释」表）。')
       return
     }
+    const room = MAX_PASSAGES - durableCount()
+    if (room <= 0) {
+      setNotice(`课文库已满（最多 ${MAX_PASSAGES} 篇），请先删除旧课文再导入。`)
+      return
+    }
+    let lessonList = imported.lessons
+    let truncated = false
+    if (lessonList.length > room) {
+      lessonList = lessonList.slice(0, room)
+      truncated = true
+    }
     const book = books.find((item) => item.id === draftBookId)
-    const lessons = [...imported.lessons].reverse()
+    // 倒序加入，使「课文1」排在列表最前并被选中
+    const lessons = [...lessonList].reverse()
     let selected = ''
     for (const [index, lesson] of lessons.entries()) {
       const isLast = index === lessons.length - 1
@@ -349,7 +438,8 @@ export function PassageView() {
         sentences: lesson.sentences,
       }
       persistEnabled.current = true
-      commitPassages([stub, ...passagesRef.current.filter((item) => item.id !== stub.id)].slice(0, 50))
+      commitPassages([stub, ...passagesRef.current.filter((item) => item.id !== stub.id)])
+      markUpsert(stub.id)
       selected = stub.id
       ingestingIds.current.add(stub.id)
       void fillPassage(stub.id)
@@ -360,11 +450,15 @@ export function PassageView() {
       }
     }
     if (selected) setSelectedId(selected)
-    setNotice(
-      imported.lessons.length > 1
-        ? `已导入 ${imported.lessons.length} 篇课文（${imported.documentTitle || '手册'}），正在后台补全读音。`
-        : '手册已导入，正在后台补全读音。',
-    )
+    if (truncated) {
+      setNotice(`课文库最多 ${MAX_PASSAGES} 篇，本次仅导入 ${lessonList.length} / ${imported.lessons.length} 篇，正在补全读音。`)
+    } else {
+      setNotice(
+        lessonList.length > 1
+          ? `已导入 ${lessonList.length} 篇课文（${imported.documentTitle || '手册'}），正在后台补全读音。`
+          : '手册已导入，正在后台补全读音。',
+      )
+    }
   }
 
   const readUpload = async (file?: File) => {
@@ -468,7 +562,7 @@ export function PassageView() {
     const name = window.prompt('课本名称，例如：大家的日语 第1册', '大家的日语 第1册')?.trim().slice(0, 80)
     if (!name) return
     const next = { id: uid(), name }
-    setBooks((current) => [...current, next])
+    commitBooks([...booksRef.current, next])
     setDraftBookId(next.id)
     if (assignCurrent && passage) patchPassage(passage.id, { bookId: next.id, bookName: next.name })
   }
@@ -476,14 +570,18 @@ export function PassageView() {
   const renameBook = (book: PassageBook) => {
     const name = window.prompt('课本名称', book.name)?.trim().slice(0, 80)
     if (!name) return
-    setBooks((current) => current.map((item) => item.id === book.id ? { ...item, name } : item))
-    commitPassages(passagesRef.current.map((item) => item.bookId === book.id ? { ...item, bookName: name } : item))
+    commitBooks(booksRef.current.map((item) => item.id === book.id ? { ...item, name } : item))
+    const nextPassages = passagesRef.current.map((item) => item.bookId === book.id ? { ...item, bookName: name } : item)
+    commitPassages(nextPassages)
+    nextPassages.filter((item) => item.bookId === book.id).forEach((item) => markUpsert(item.id))
   }
 
   const deleteBook = (book: PassageBook) => {
     if (!window.confirm(`删除课本「${book.name}」？课文会回到未分组，不会被删。`)) return
-    setBooks((current) => current.filter((item) => item.id !== book.id))
+    const affected = passagesRef.current.filter((item) => item.bookId === book.id).map((item) => item.id)
+    commitBooks(booksRef.current.filter((item) => item.id !== book.id))
     commitPassages(passagesRef.current.map((item) => item.bookId === book.id ? { ...item, bookId: '', bookName: '' } : item))
+    affected.forEach((id) => markUpsert(id))
     if (draftBookId === book.id) setDraftBookId('')
   }
 
@@ -630,6 +728,9 @@ export function PassageView() {
                   <button type="button" className="remove-word" onClick={() => {
                     if (!window.confirm(`删除课文「${passage.title}」？此操作不可恢复。`)) return
                     ingestingIds.current.delete(passage.id)
+                    deletedIds.current.add(passage.id)
+                    dirtyUpserts.current.delete(passage.id)
+                    dirtyProgress.current.delete(passage.id)
                     const remaining = passagesRef.current.filter((item) => item.id !== passage.id)
                     commitPassages(remaining)
                     setSelectedId(remaining[0]?.id || '')

@@ -493,6 +493,14 @@ export function createDatabase(connectionString) {
     return (await listPassages()).books
   }
 
+  const deletePassage = async (id) => {
+    const passageId = text(id)
+    if (!passageId || passageId === BOOKS_META_ID) throw new Error('INVALID_PASSAGE')
+    const result = await pool.query('DELETE FROM passages WHERE id = $1 RETURNING id', [passageId])
+    if (!result.rows[0]) throw new Error('PASSAGE_NOT_FOUND')
+    return { id: passageId }
+  }
+
   const listIncompleteWords = async (limit = 20) => {
     const result = await pool.query(
       `SELECT w.id, w.unit_id, w.term, w.reading, w.meaning, u.name AS unit_name
@@ -558,5 +566,5 @@ export function createDatabase(connectionString) {
     await pool.query('DELETE FROM words WHERE id = $1', [text(id)])
   }
 
-  return { initialize, health, getState, replaceState, patchSettings, patchWord, listIncompleteWords, countIncompleteWords, updateWordLexicon, unitHasTerm, deleteWord, listPassages, replacePassages, upsertPassage, patchPassageProgress, replacePassageBooks, close: () => pool.end() }
+  return { initialize, health, getState, replaceState, patchSettings, patchWord, listIncompleteWords, countIncompleteWords, updateWordLexicon, unitHasTerm, deleteWord, listPassages, replacePassages, upsertPassage, patchPassageProgress, replacePassageBooks, deletePassage, close: () => pool.end() }
 }
