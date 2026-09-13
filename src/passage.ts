@@ -25,12 +25,14 @@ export function isPrimarilyChineseLine(text?: string) {
 
 export function sentenceNeedsAnalysis(sentence: PassageSentence) {
   if (isPrimarilyChineseLine(sentence.text)) return false
-  return !hasChineseTranslation(sentence.translation) || !(sentence.tokens || []).length
+  // 手册已带中文翻译时，仍需补读音与逐词；两者齐备才算完成。
+  const hasReading = Boolean(String(sentence.reading || '').trim())
+  const hasTokens = (sentence.tokens || []).length > 0
+  return !hasChineseTranslation(sentence.translation) || !hasTokens || !hasReading
 }
 
 export function passageNeedsAnalysis(passage: Passage) {
   if (isTransientPassage(passage)) return false
-  if (passage.status === 'processing' || passage.status === 'error') return true
   return (passage.sentences || []).some(sentenceNeedsAnalysis)
 }
 
@@ -112,7 +114,7 @@ export function mergeAnalyzedSentences(current: PassageSentence[], analyzed: unk
     byLoose.delete(normalizeKey(match.text))
     return {
       ...sentence,
-      reading: sentence.reading || match.reading,
+      reading: sentence.reading || match.reading || match.tokens.map((token) => token.reading).filter(Boolean).join(''),
       // 用户表格里提供的翻译/语法优先，模型只补空缺。
       translation: hasChineseTranslation(sentence.translation) ? sentence.translation : match.translation,
       tokens: match.tokens.length ? match.tokens : sentence.tokens,

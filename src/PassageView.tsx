@@ -91,6 +91,7 @@ export function PassageView() {
   const persistError = useRef(false)
   const persistEnabled = useRef(false)
   const persistBusy = useRef(false)
+  const pendingFlush = useRef(false)
   const dirtyUpserts = useRef(new Set<string>())
   const dirtyProgress = useRef(new Set<string>())
   const dirtyBooks = useRef(false)
@@ -158,54 +159,74 @@ export function PassageView() {
   }
 
   const flushPersist = async () => {
-    if (!persistEnabled.current || persistBusy.current) return
+    if (!persistEnabled.current) return
+    pendingFlush.current = true
+    while (persistBusy.current) {
+      await new Promise((resolve) => window.setTimeout(resolve, 40))
+    }
+    if (!pendingFlush.current
+      && !dirtyUpserts.current.size
+      && !dirtyProgress.current.size
+      && !dirtyBooks.current
+      && !deletedIds.current.size) {
+      return
+    }
     persistBusy.current = true
     try {
-      const upsertIds = [...dirtyUpserts.current]
-      const progressIds = [...dirtyProgress.current]
-      const removeIds = [...deletedIds.current]
-      const booksNeedSave = dirtyBooks.current
-      dirtyUpserts.current.clear()
-      dirtyProgress.current.clear()
-      deletedIds.current.clear()
-      dirtyBooks.current = false
+      while (
+        pendingFlush.current
+        || dirtyUpserts.current.size
+        || dirtyProgress.current.size
+        || dirtyBooks.current
+        || deletedIds.current.size
+      ) {
+        pendingFlush.current = false
+        const upsertIds = [...dirtyUpserts.current]
+        const progressIds = [...dirtyProgress.current]
+        const removeIds = [...deletedIds.current]
+        const booksNeedSave = dirtyBooks.current
+        dirtyUpserts.current.clear()
+        dirtyProgress.current.clear()
+        deletedIds.current.clear()
+        dirtyBooks.current = false
 
-      for (const id of removeIds) {
-        const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}`, { method: 'DELETE' })
-        if (!response.ok && response.status !== 404) throw new Error('DELETE_FAILED')
-      }
+        for (const id of removeIds) {
+          const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}`, { method: 'DELETE' })
+          if (!response.ok && response.status !== 404) throw new Error('DELETE_FAILED')
+        }
 
-      for (const id of upsertIds) {
-        const passage = passagesRef.current.find((item) => item.id === id)
-        if (!passage || isTransientPassage(passage)) continue
-        const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(passage),
-        })
-        if (!response.ok) throw new Error('UPSERT_FAILED')
-      }
+        for (const id of upsertIds) {
+          const passage = passagesRef.current.find((item) => item.id === id)
+          if (!passage || isTransientPassage(passage)) continue
+          const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(passage),
+          })
+          if (!response.ok) throw new Error('UPSERT_FAILED')
+        }
 
-      for (const id of progressIds) {
-        const passage = passagesRef.current.find((item) => item.id === id)
-        if (!passage || isTransientPassage(passage)) continue
-        const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}/progress`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ progress: passage.progress || {} }),
-        })
-        if (!response.ok) throw new Error('PROGRESS_FAILED')
-      }
+        for (const id of progressIds) {
+          const passage = passagesRef.current.find((item) => item.id === id)
+          if (!passage || isTransientPassage(passage)) continue
+          const response = await apiFetch(`/api/passages/${encodeURIComponent(id)}/progress`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ progress: passage.progress || {} }),
+          })
+          if (!response.ok) throw new Error('PROGRESS_FAILED')
+        }
 
-      if (booksNeedSave) {
-        const response = await apiFetch('/api/passage-books', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ books: booksRef.current }),
-        })
-        if (!response.ok) throw new Error('BOOKS_FAILED')
+        if (booksNeedSave) {
+          const response = await apiFetch('/api/passage-books', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ books: booksRef.current }),
+          })
+          if (!response.ok) throw new Error('BOOKS_FAILED')
+        }
+        persistError.current = false
       }
-      persistError.current = false
     } catch {
       if (!persistError.current) {
         persistError.current = true
@@ -213,9 +234,6 @@ export function PassageView() {
       }
     } finally {
       persistBusy.current = false
-      if (dirtyUpserts.current.size || dirtyProgress.current.size || dirtyBooks.current || deletedIds.current.size) {
-        void flushPersist()
-      }
     }
   }
 
@@ -359,11 +377,16 @@ export function PassageView() {
         abortAnalyzeForPassage(passageId)
         return
       }
-      const missing = latest.sentences.filter((sentence) => !hasChineseTranslation(sentence.translation)).length
+      const stillMissing = latest.sentences.filter((sentence) => sentenceNeedsAnalysis(sentence))
+      const missingTranslation = stillMissing.filter((sentence) => !hasChineseTranslation(sentence.translation)).length
       patchPassage(passageId, {
-        status: missing ? 'error' : 'ready',
-        statusText: missing
-          ? (chunkErrors ? `还有 ${missing} 句没有中文翻译（${chunkErrors} 批失败），可点重试` : `还有 ${missing} 句没有中文翻译，可点重试`)
+        status: stillMissing.length ? 'error' : 'ready',
+        statusText: stillMissing.length
+          ? (chunkErrors
+            ? `还有 ${stillMissing.length} 句未补全读音/注释（${chunkErrors} 批失败），请重新上传或稍后重试`
+            : (missingTranslation
+              ? `还有 ${missingTranslation} 句没有中文翻译，请重新上传或稍后重试`
+              : `还有 ${stillMissing.length} 句未补全读音/注释，请重新上传或稍后重试`))
           : '',
       })
     } catch (reason) {
@@ -376,6 +399,9 @@ export function PassageView() {
       })
     } finally {
       analyzing.current.delete(passageId)
+      ingestingIds.current.delete(passageId)
+      // 读音/逐词必须立刻写入 analysis JSONB，后续只读库。
+      await flushPersist()
     }
   }
   fillPassageRef.current = fillPassage
@@ -442,7 +468,10 @@ export function PassageView() {
             : full.progress,
         } : item))
         if (full.sentences.some((sentence) => sentence.text && !isPassagePlaceholder(sentence.text) && sentenceNeedsAnalysis(sentence))) {
-          await fillPassageRef.current(full.id)
+          // 仅补全未完成/失败的课文；已 ready 且齐全的不会再调模型。
+          if (full.status === 'processing' || full.status === 'error') {
+            await fillPassageRef.current(full.id)
+          }
         }
       } catch { /* keep light row */ }
       finally {
@@ -455,8 +484,10 @@ export function PassageView() {
   useEffect(() => {
     if (!ready || resumed.current) return
     resumed.current = true
+    // 仅恢复「上传中断 / 补全失败」的课文，避免每次打开页面又打一轮大模型。
     const pending = passages.filter((item) => (
       !isTransientPassage(item)
+      && (item.status === 'processing' || item.status === 'error')
       && item.sentences.some((sentence) => sentence.text && !isPassagePlaceholder(sentence.text) && sentenceNeedsAnalysis(sentence))
     ))
     void (async () => {
@@ -484,7 +515,7 @@ export function PassageView() {
     stopSpeaking()
   }, [selectedId])
 
-  const queueHandbook = (text: string) => {
+  const queueHandbook = async (text: string) => {
     if (!ready) {
       setNotice('课文库还在加载，请稍后再试。')
       return
@@ -508,16 +539,16 @@ export function PassageView() {
     const book = books.find((item) => item.id === draftBookId)
     // 倒序加入，使「课文1」排在列表最前并被选中
     const lessons = [...lessonList].reverse()
+    const created: Passage[] = []
     let selected = ''
-    for (const [index, lesson] of lessons.entries()) {
-      const isLast = index === lessons.length - 1
+    for (const lesson of lessons) {
       const stub: Passage = {
         id: uid(),
         title: passageTitle(lesson.title),
         sourceText: lesson.sourceText,
         createdAt: Date.now(),
         status: 'processing',
-        statusText: '手册已导入，正在补全读音…',
+        statusText: '手册已导入，正在补全读音与注释…',
         bookId: book?.id || '',
         bookName: book?.name || '',
         sentences: lesson.sentences,
@@ -527,21 +558,35 @@ export function PassageView() {
       markUpsert(stub.id)
       selected = stub.id
       ingestingIds.current.add(stub.id)
-      void fillPassage(stub.id)
-      if (isLast) {
-        setSelectedId(stub.id)
-        setMode('source')
-        setUploadOpen(false)
-      }
+      created.push(stub)
     }
-    if (selected) setSelectedId(selected)
+    if (selected) {
+      setSelectedId(selected)
+      setMode('source')
+    }
+    // 上传时一次性补全：等全部读音/逐词完成并落库后再关弹窗。
+    for (let index = 0; index < created.length; index += 1) {
+      const item = created[index]
+      setBusy(`正在补全读音与注释（${index + 1}/${created.length}）${item.title}`)
+      await fillPassage(item.id)
+    }
+    setBusy('正在保存到数据库…')
+    await flushPersist()
+    setBusy('')
+    setUploadOpen(false)
+    const failed = created.filter((item) => {
+      const live = passagesRef.current.find((row) => row.id === item.id)
+      return !live || live.status !== 'ready' || live.sentences.some(sentenceNeedsAnalysis)
+    })
     if (truncated) {
-      setNotice(`课文库最多 ${MAX_PASSAGES} 篇，本次仅导入 ${lessonList.length} / ${imported.lessons.length} 篇，正在补全读音。`)
+      setNotice(`课文库最多 ${MAX_PASSAGES} 篇，本次仅导入 ${lessonList.length} / ${imported.lessons.length} 篇。${failed.length ? `其中 ${failed.length} 篇补全失败。` : '读音与注释已写入数据库。'}`)
+    } else if (failed.length) {
+      setNotice(`已导入 ${lessonList.length} 篇，但有 ${failed.length} 篇读音/注释补全失败，可删除后重新上传。`)
     } else {
       setNotice(
         lessonList.length > 1
-          ? `已导入 ${lessonList.length} 篇课文（${imported.documentTitle || '手册'}），正在后台补全读音。`
-          : '手册已导入，正在后台补全读音。',
+          ? `已导入 ${lessonList.length} 篇课文（${imported.documentTitle || '手册'}），读音与注释已写入数据库。`
+          : '手册已导入，读音与注释已写入数据库。',
       )
     }
   }
@@ -554,12 +599,13 @@ export function PassageView() {
     setNotice('')
     try {
       const source = await readPassageSource(file)
-      queueHandbook(source.text)
+      await queueHandbook(source.text)
     } catch (reason) {
       setNotice(reason instanceof Error ? reason.message : '课文读取失败。')
+      setBusy('')
     } finally {
       ingesting.current = false
-      setBusy('')
+      if (!analyzing.current.size) setBusy('')
     }
   }
 

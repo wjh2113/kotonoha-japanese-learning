@@ -528,7 +528,26 @@ export function createDatabase(connectionString) {
       ? passage.sentences.filter((item) => {
         const line = text(item?.text)
         return line && !looksLikeErrorDocument(line) && line !== '（正在识别课文…）'
-      }).slice(0, 80)
+      }).slice(0, 80).map((item) => ({
+        id: text(item?.id).slice(0, 40),
+        text: text(item?.text).slice(0, 500),
+        reading: text(item?.reading).slice(0, 500),
+        translation: text(item?.translation).slice(0, 800),
+        tokens: Array.isArray(item?.tokens)
+          ? item.tokens.slice(0, 60).map((token) => ({
+            surface: text(token?.surface).slice(0, 80),
+            reading: text(token?.reading).slice(0, 80),
+            meaning: text(token?.meaning).slice(0, 120),
+          })).filter((token) => token.surface)
+          : [],
+        grammar: Array.isArray(item?.grammar)
+          ? item.grammar.slice(0, 8).map((point) => ({
+            name: text(point?.name).slice(0, 80),
+            pattern: text(point?.pattern).slice(0, 120),
+            explanation: text(point?.explanation).slice(0, 400),
+          })).filter((point) => point.name)
+          : [],
+      }))
       : []
     const progress = passage.progress && typeof passage.progress === 'object' ? passage.progress : {}
     return {
