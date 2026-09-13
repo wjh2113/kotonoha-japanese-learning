@@ -14,7 +14,7 @@ import { speakJapanese } from './speech'
 
 type Screen =
   | { name: 'hub' }
-  | { name: 'lesson'; lessonId: string }
+  | { name: 'lesson'; lessonId: string; previewPointId?: string }
   | { name: 'point'; lessonId: string; pointId: string }
   | { name: 'quiz'; lessonId: string; pointId?: string; wrongOnly?: boolean }
 
@@ -36,6 +36,7 @@ function pointStatus(progress: GrammarProgressState, lessonId: string, pointId: 
 
 function BlockView({ block }: { block: GrammarBlock }) {
   const { voiceGender } = useContext(SettingsContext)
+  const [tableOpen, setTableOpen] = useState(false)
   if (block.type === 'section') {
     return <h3 className={`grammar-section-title kind-${block.kind}`}>{block.title}</h3>
   }
@@ -76,6 +77,8 @@ function BlockView({ block }: { block: GrammarBlock }) {
     )
   }
   if (block.type === 'table') {
+    const long = block.rows.length > 4
+    const rows = long && !tableOpen ? block.rows.slice(0, 4) : block.rows
     return (
       <div className="grammar-table-wrap">
         <table className="grammar-table">
@@ -83,17 +86,38 @@ function BlockView({ block }: { block: GrammarBlock }) {
             <tr>{block.headers.map((cell) => <th key={cell}>{cell}</th>)}</tr>
           </thead>
           <tbody>
-            {block.rows.map((row, index) => (
+            {rows.map((row, index) => (
               <tr key={`${row[0]}-${index}`}>
                 {row.map((cell, cellIndex) => <td key={`${cell}-${cellIndex}`}>{cell}</td>)}
               </tr>
             ))}
           </tbody>
         </table>
+        {long && (
+          <button type="button" className="grammar-table-toggle" onClick={() => setTableOpen((open) => !open)}>
+            {tableOpen ? '收起表格' : `展开全部（${block.rows.length} 行）`}
+          </button>
+        )}
       </div>
     )
   }
   return null
+}
+
+function orderQuizByWeakness(
+  rows: Array<{ point: GrammarPoint; question: GrammarQuestion }>,
+  progress: GrammarProgressState,
+  lessonId: string,
+) {
+  return [...rows].sort((left, right) => {
+    const leftProg = progress[lessonId]?.points[left.point.id]
+    const rightProg = progress[lessonId]?.points[right.point.id]
+    const leftWrong = leftProg?.wrongQuestionIds?.includes(left.question.id) ? 1000 : 0
+    const rightWrong = rightProg?.wrongQuestionIds?.includes(right.question.id) ? 1000 : 0
+    const leftWeak = (leftProg?.wrong || 0) - (leftProg?.correct || 0)
+    const rightWeak = (rightProg?.wrong || 0) - (rightProg?.correct || 0)
+    return (rightWrong + rightWeak) - (leftWrong + leftWeak)
+  })
 }
 
 function QuizSession({
@@ -130,6 +154,20 @@ function QuizSession({
 
   if (finished) {
     const correct = questions.filter(({ question }) => results[question.id] === question.answer).length
+    const byPoint = new Map<string, { title: string; total: number; hit: number }>()
+    for (const row of questions) {
+      const current = byPoint.get(row.point.id) || { title: row.point.title, total: 0, hit: 0 }
+      current.total += 1
+      if (results[row.question.id] === row.question.answer) current.hit += 1
+      byPoint.set(row.point.id, current)
+    }
+    const weakBars = [...byPoint.values()]
+      .map((item) => ({
+        ...item,
+        miss: item.total - item.hit,
+        pct: item.total ? Math.round((item.hit / item.total) * 100) : 0,
+      }))
+      .sort((a, b) => a.pct - b.pct)
     return (
       <div className="page grammar-page">
         <div className="result-card grammar-result">
@@ -137,6 +175,16 @@ function QuizSession({
           <h1>{correct >= questions.length * 0.8 ? 'よくできました！' : 'もう一度、確認しよう。'}</h1>
           <p>{title}已完成 <b>{questions.length}</b> 题，答对 {correct} 题。</p>
           <div className="result-score">{questions.length ? Math.round((correct / questions.length) * 100) : 0}<small>分</small></div>
+          {weakBars.length > 1 && (
+            <div className="grammar-weak-bars" aria-label="分语法点正确率">
+              {weakBars.map((item) => (
+                <div key={item.title}>
+                  <span><b>{item.title}</b><em>{item.pct}%</em></span>
+                  <i><em style={{ width: `${item.pct}%` }} /></i>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="result-actions">
             <button type="button" onClick={onExit}>返回课次</button>
             <button
@@ -231,13 +279,23 @@ function QuizSession({
   )
 }
 
-export function GrammarView({ practiceOnly = false }: { practiceOnly?: boolean }) {
+export function GrammarView({
+  practiceOnly = false,
+  initialLessonId,
+  initialLessonNo,
+}: {
+  practiceOnly?: boolean
+  initialLessonId?: string
+  initialLessonNo?: number
+}) {
   const [lessons, setLessons] = useState<GrammarLesson[]>([])
   const [progress, setProgress] = useState<GrammarProgressState>({})
   const [screen, setScreen] = useState<Screen>({ name: 'hub' })
+  const [courseFilter, setCourseFilter] = useState('全部')
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true)
   const progressRef = useRef(progress)
+  const focusApplied = useRef(false)
   progressRef.current = progress
 
   useEffect(() => {
@@ -252,6 +310,24 @@ export function GrammarView({ practiceOnly = false }: { practiceOnly?: boolean }
     })()
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    focusApplied.current = false
+  }, [initialLessonId, initialLessonNo])
+
+  useEffect(() => {
+    if (loading || focusApplied.current || !lessons.length) return
+    const byId = initialLessonId ? findLesson(lessons, initialLessonId) : null
+    const byNo = !byId && initialLessonNo
+      ? lessons.find((item) => item.lesson === initialLessonNo) || null
+      : null
+    const hit = byId || byNo
+    if (hit) {
+      setScreen({ name: 'lesson', lessonId: hit.id })
+      setCourseFilter(hit.course || '全部')
+      focusApplied.current = true
+    }
+  }, [loading, lessons, initialLessonId, initialLessonNo])
 
   useEffect(() => {
     if (loading) return
@@ -276,13 +352,43 @@ export function GrammarView({ practiceOnly = false }: { practiceOnly?: boolean }
       ? points.filter((point) => point.id === screen.pointId)
       : points
     const rows = scoped.flatMap((point) => point.questions.map((question) => ({ point, question })))
-    if (!screen.wrongOnly) return rows
-    const wrongIds = new Set(
-      Object.values(progress[activeLesson.id]?.points || {})
-        .flatMap((row) => row.wrongQuestionIds || []),
-    )
-    return rows.filter((row) => wrongIds.has(row.question.id))
+    if (screen.wrongOnly) {
+      const wrongIds = new Set(
+        Object.values(progress[activeLesson.id]?.points || {})
+          .flatMap((row) => row.wrongQuestionIds || []),
+      )
+      return rows.filter((row) => wrongIds.has(row.question.id))
+    }
+    // 本课综合：弱项 / 错题靠前；单点小测保持讲义顺序
+    if (!screen.pointId) return orderQuizByWeakness(rows, progress, activeLesson.id)
+    return rows
   }, [screen, activeLesson, progress])
+
+  const courses = useMemo(() => {
+    const names = [...new Set(lessons.map((item) => item.course).filter(Boolean))]
+    return ['全部', ...names]
+  }, [lessons])
+  const filteredLessons = courseFilter === '全部'
+    ? lessons
+    : lessons.filter((item) => item.course === courseFilter)
+  const hubTotals = useMemo(() => {
+    let studied = 0
+    let totalPoints = 0
+    let correct = 0
+    let answered = 0
+    for (const lesson of filteredLessons) {
+      const summary = lessonProgressSummary(lesson, progress[lesson.id])
+      studied += summary.studied
+      totalPoints += summary.totalPoints
+      correct += summary.correct
+      answered += summary.answered
+    }
+    return {
+      studied,
+      totalPoints,
+      accuracy: answered ? Math.round((correct / answered) * 100) : 0,
+    }
+  }, [filteredLessons, progress])
 
   const onUpload = async (file: File | null) => {
     if (!file) return
@@ -374,9 +480,12 @@ export function GrammarView({ practiceOnly = false }: { practiceOnly?: boolean }
     const summary = lessonProgressSummary(activeLesson, progress[activeLesson.id])
     const points = flattenGrammarPoints(activeLesson)
     const firstPoint = points[0]
+    const previewPoint = points.find((item) => item.id === screen.previewPointId)
+      || points[0]
+      || null
     return (
-      <div className="page grammar-page">
-        <button type="button" className="back-link" onClick={() => setScreen({ name: 'hub' })}>
+      <div className="page grammar-page grammar-lesson-screen">
+        <button type="button" className="back-link grammar-lesson-back" onClick={() => setScreen({ name: 'hub' })}>
           <ChevronLeft size={17} />语法目录
         </button>
         <section className="grammar-lesson-hero">
@@ -394,33 +503,56 @@ export function GrammarView({ practiceOnly = false }: { practiceOnly?: boolean }
           </div>
         </section>
 
-        {activeLesson.parts.map((part) => (
-          <section key={part.id} className="grammar-part">
-            <header><b>{part.title}</b><small>{part.points.length} 点</small></header>
-            <div className="grammar-point-list">
-              {part.points.map((point) => {
-                const status = pointStatus(progress, activeLesson.id, point.id)
-                const row = progress[activeLesson.id]?.points[point.id]
-                const answered = (row?.correct || 0) + (row?.wrong || 0)
-                return (
-                  <button
-                    key={point.id}
-                    type="button"
-                    className={`grammar-point-row status-${status}`}
-                    onClick={() => setScreen({ name: 'point', lessonId: activeLesson.id, pointId: point.id })}
-                  >
-                    <em>{point.index}</em>
-                    <div>
-                      <b>{point.title}</b>
-                      <small>{point.questions.length} 题 · {status}{answered ? ` · 练过 ${answered}` : ''}</small>
-                    </div>
-                    <ChevronRight size={16} />
-                  </button>
-                )
-              })}
-            </div>
-          </section>
-        ))}
+        <div className="grammar-lesson-aside">
+          {activeLesson.parts.map((part) => (
+            <section key={part.id} className="grammar-part">
+              <header><b>{part.title}</b><small>{part.points.length} 点</small></header>
+              <div className="grammar-point-list">
+                {part.points.map((point) => {
+                  const status = pointStatus(progress, activeLesson.id, point.id)
+                  const row = progress[activeLesson.id]?.points[point.id]
+                  const answered = (row?.correct || 0) + (row?.wrong || 0)
+                  return (
+                    <button
+                      key={point.id}
+                      type="button"
+                      className={`grammar-point-row status-${status}${previewPoint?.id === point.id ? ' previewing' : ''}`}
+                      onMouseEnter={() => setScreen({ name: 'lesson', lessonId: activeLesson.id, previewPointId: point.id })}
+                      onFocus={() => setScreen({ name: 'lesson', lessonId: activeLesson.id, previewPointId: point.id })}
+                      onClick={() => setScreen({ name: 'point', lessonId: activeLesson.id, pointId: point.id })}
+                    >
+                      <em>{point.index}</em>
+                      <div>
+                        <b>{point.title}</b>
+                        <small>{point.questions.length} 题 · {status}{answered ? ` · 练过 ${answered}` : ''}</small>
+                      </div>
+                      <ChevronRight size={16} />
+                    </button>
+                  )
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+
+        <aside className="grammar-lesson-preview" aria-label="语法点预览">
+          {previewPoint ? (
+            <>
+              <em>{String(previewPoint.index).padStart(2, '0')}</em>
+              <h2>{previewPoint.title}</h2>
+              <p>{previewPoint.questions.length} 道随堂测验 · 点击左侧进入完整学习卡</p>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => setScreen({ name: 'point', lessonId: activeLesson.id, pointId: previewPoint.id })}
+              >
+                打开学习卡
+              </button>
+            </>
+          ) : (
+            <p>选择语法点开始学习。</p>
+          )}
+        </aside>
 
         <div className="grammar-lesson-actions">
           <button
@@ -451,7 +583,7 @@ export function GrammarView({ practiceOnly = false }: { practiceOnly?: boolean }
     )
   }
 
-  const grouped = lessons.reduce<Record<string, GrammarLesson[]>>((acc, lesson) => {
+  const grouped = filteredLessons.reduce<Record<string, GrammarLesson[]>>((acc, lesson) => {
     const key = `${lesson.course} · 单元${lesson.unit}${lesson.unitTitle ? ` ${lesson.unitTitle}` : ''}`
     acc[key] = acc[key] || []
     acc[key].push(lesson)
@@ -484,7 +616,29 @@ export function GrammarView({ practiceOnly = false }: { practiceOnly?: boolean }
         )}
       </section>
       {notice && <p className="grammar-notice">{notice}</p>}
-      {lessons.length ? (
+      {lessons.length > 0 && (
+        <div className="grammar-hub-toolbar">
+          <div className="grammar-course-filter" role="tablist" aria-label="课程筛选">
+            {courses.map((course) => (
+              <button
+                key={course}
+                type="button"
+                role="tab"
+                aria-selected={courseFilter === course}
+                className={courseFilter === course ? 'active' : undefined}
+                onClick={() => setCourseFilter(course)}
+              >
+                {course}
+              </button>
+            ))}
+          </div>
+          <p className="grammar-hub-progress">
+            已学语法点 <b>{hubTotals.studied}/{hubTotals.totalPoints}</b>
+            {hubTotals.totalPoints > 0 && <> · 正确率 <b>{hubTotals.accuracy}%</b></>}
+          </p>
+        </div>
+      )}
+      {filteredLessons.length ? (
         Object.entries(grouped).map(([group, items]) => (
           <section key={group} className="grammar-group">
             <header><BookOpen size={16} /><b>{group}</b></header>
@@ -504,7 +658,7 @@ export function GrammarView({ practiceOnly = false }: { practiceOnly?: boolean }
                       <small>{summary.totalPoints} 语法点 · {summary.totalQuestions} 题</small>
                     </div>
                     <div className="grammar-lesson-card-meta">
-                      <span>已学 {summary.studied}/{summary.totalPoints}</span>
+                      <span>已学 {summary.studied}/{summary.totalPoints} · 正确率 {summary.accuracy}%</span>
                       <i><em style={{ width: `${(summary.studied / Math.max(summary.totalPoints, 1)) * 100}%` }} /></i>
                     </div>
                   </button>
@@ -516,8 +670,14 @@ export function GrammarView({ practiceOnly = false }: { practiceOnly?: boolean }
       ) : (
         <div className="wide-empty">
           <ClipboardList />
-          <h2>还没有语法课</h2>
-          <p>{practiceOnly ? '请先在电脑端上传语法 Markdown。' : '上传讲义 Markdown 后即可学习与测验。'}</p>
+          <h2>{lessons.length ? '该课程暂无课次' : '还没有语法课'}</h2>
+          <p>
+            {lessons.length
+              ? '换一个课程筛选试试。'
+              : practiceOnly
+                ? '请先在电脑端上传语法 Markdown。'
+                : '上传讲义 Markdown 后即可学习与测验。'}
+          </p>
         </div>
       )}
     </div>

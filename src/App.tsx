@@ -51,6 +51,7 @@ function App() {
   })
   const [unitId, setUnitId] = useState(units[0]?.id || '')
   const [view, setView] = useState<View>('home')
+  const [grammarFocus, setGrammarFocus] = useState<{ lessonNo?: number; lessonId?: string } | null>(null)
   const [dictationMode, setDictationMode] = useState<DictationMode>('plan')
   const [dictationSeed, setDictationSeed] = useState<Word[]>([])
   const [selectedId, setSelectedId] = useState(units[0]?.words[0]?.id || '')
@@ -521,6 +522,7 @@ function App() {
       setDictationMode('plan')
       setDictationSeed([])
     }
+    if (next === 'grammar') setGrammarFocus(null)
     setView(next)
     setMobileNav(false)
   }
@@ -710,7 +712,7 @@ function App() {
           {view === 'review' && (
             <ReviewView
               units={units}
-              onOpenGrammar={() => setView('grammar')}
+              onOpenGrammar={() => { setGrammarFocus(null); setView('grammar') }}
               onReview={(word, targetUnitId, remembered) => {
                 updateWord(word.id, { mastered: remembered || word.mastered, ...scheduleReview(word, remembered) }, targetUnitId)
                 setToast(remembered ? '已安排下一次复习' : '10 分钟后会再次提醒')
@@ -719,12 +721,21 @@ function App() {
           )}
           {view === 'grammar' && (
             <Suspense fallback={<div className="wide-empty compact"><b>加载中…</b></div>}>
-              <GrammarView practiceOnly={practiceOnly} />
+              <GrammarView
+                practiceOnly={practiceOnly}
+                initialLessonId={grammarFocus?.lessonId}
+                initialLessonNo={grammarFocus?.lessonNo}
+              />
             </Suspense>
           )}
           {view === 'passage' && (
             <Suspense fallback={<div className="wide-empty compact"><b>加载中…</b></div>}>
-              <PassageView />
+              <PassageView
+                onOpenGrammar={(opts) => {
+                  setGrammarFocus(opts?.lessonNo ? { lessonNo: opts.lessonNo } : null)
+                  setView('grammar')
+                }}
+              />
             </Suspense>
           )}
           {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} starredCount={starredCount} errorBookCount={errorBookCount} onView={nav} />}

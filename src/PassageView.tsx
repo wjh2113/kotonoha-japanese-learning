@@ -1,6 +1,6 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import {
-  BookOpen, Bot, ChevronDown, ChevronLeft, ChevronRight, Copy, FileText, Headphones, LoaderCircle, Mic, Pause, Play,
+  BookOpen, Bot, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Copy, FileText, Headphones, LoaderCircle, Mic, Pause, Play,
   RefreshCw, Repeat, ScrollText, SquarePen, Sprout, Trash2, UploadCloud, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, readApiJson } from './api'
@@ -29,6 +29,12 @@ function passageTitle(value?: string, fallback = '课文') {
 
 function isSpeakableJapanese(text: string) {
   return /[\u3040-\u30ff\u3400-\u9fffー]/.test(text)
+}
+
+function extractPassageLessonNo(passage?: Passage | null) {
+  const raw = `${passage?.lessonName || ''} ${passage?.title || ''}`
+  const match = raw.match(/第\s*0*(\d+)\s*课/) || raw.match(/第\s*0*(\d+)\s*課/)
+  return match ? Number(match[1]) : undefined
 }
 
 function renderPassageJp(
@@ -146,7 +152,11 @@ function hydratePassage(item: unknown): Passage | null {
   return recoverInterruptedIngest(hydrated)
 }
 
-export function PassageView() {
+export function PassageView({
+  onOpenGrammar,
+}: {
+  onOpenGrammar?: (opts?: { lessonNo?: number; lessonName?: string }) => void
+}) {
   const { voiceGender } = useContext(SettingsContext)
   const practiceOnly = isPracticeOnlyClient()
   const [passages, setPassages] = useState<Passage[]>([])
@@ -1257,7 +1267,8 @@ export function PassageView() {
                           <ChevronDown size={18} strokeWidth={1.7} />
                         </button>
                         {grammarOpen && (
-                          grammarPoints.length ? (
+                          <>
+                          {grammarPoints.length ? (
                             <div className="passage-grammar-cards">
                               {grammarPoints.map((point, index) => (
                                 <article key={`${point.name}-${index}`}>
@@ -1276,7 +1287,21 @@ export function PassageView() {
                             <p className="passage-grammar-empty">
                               {passage.status === 'processing' ? '语法点整理中，解析完成后会显示在这里。' : '本课暂无语法标注。'}
                             </p>
-                          )
+                          )}
+                          {onOpenGrammar && (
+                            <button
+                              type="button"
+                              className="secondary-button passage-grammar-jump"
+                              onClick={() => onOpenGrammar({
+                                lessonNo: extractPassageLessonNo(passage),
+                                lessonName: passage.lessonName || passage.title,
+                              })}
+                            >
+                              <ClipboardList size={15} strokeWidth={1.7} />
+                              去语法学习
+                            </button>
+                          )}
+                          </>
                         )}
                       </section>
                     </>
