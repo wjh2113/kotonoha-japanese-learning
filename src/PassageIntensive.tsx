@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, CheckCircle2, ChevronLeft, FileText, Headphones, Pause, Play, SquarePen, Star } from 'lucide-react'
+import { Check, CheckCircle2, ChevronLeft, FileText, Headphones, Pause, Play, SquarePen, Star, X } from 'lucide-react'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
 import type { Passage, PassageSentence, VoiceGender } from './types'
 import { normalizeJapanese } from './utils'
@@ -15,7 +15,9 @@ type Props = {
   onBack: () => void
 }
 
-function lineMatch(input: string, sentence: PassageSentence) {
+type MatchKind = 'exact' | 'close' | 'miss' | 'empty' | null
+
+function lineMatch(input: string, sentence: PassageSentence): Exclude<MatchKind, 'empty' | null> | null {
   const typed = normalizeJapanese(input)
   if (!typed) return null
   const targets = [sentence.text, sentence.reading].map(normalizeJapanese).filter(Boolean)
@@ -49,6 +51,7 @@ export function PassageIntensive({
       next[sentence.id] = drafts[sentence.id] ?? passage.progress?.[sentence.id]?.dictation ?? ''
     }
     setDrafts(next)
+    setProof(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [passage.id])
 
@@ -83,6 +86,11 @@ export function PassageIntensive({
     }
   }
 
+  const checkAnswers = () => {
+    saveAll()
+    setProof(true)
+  }
+
   const visibleIndexes = useMemo(() => {
     if (!starredOnly) return passage.sentences.map((_, index) => index)
     return passage.sentences
@@ -92,6 +100,28 @@ export function PassageIntensive({
 
   const rowIndexes = starredOnly ? visibleIndexes : passage.sentences.map((_, index) => index)
   const filledCount = passage.sentences.filter((item) => (drafts[item.id] || '').trim()).length
+
+  const score = useMemo(() => {
+    if (!proof) return null
+    let exact = 0
+    let close = 0
+    let miss = 0
+    let empty = 0
+    for (const index of rowIndexes) {
+      const item = passage.sentences[index]
+      if (!item) continue
+      const typed = drafts[item.id] || ''
+      if (!typed.trim()) {
+        empty += 1
+        continue
+      }
+      const kind = lineMatch(typed, item)
+      if (kind === 'exact') exact += 1
+      else if (kind === 'close') close += 1
+      else miss += 1
+    }
+    return { exact, close, miss, empty, total: rowIndexes.length }
+  }, [proof, rowIndexes, passage.sentences, drafts])
 
   return (
     <div className="intensive-page intensive-design">
@@ -162,29 +192,53 @@ export function PassageIntensive({
               if (!item) return null
               const active = index === sentenceIndex
               const typed = drafts[item.id] || ''
-              const match = proof ? lineMatch(typed, item) : (typed.trim() ? 'filled' : null)
+              const match: MatchKind = proof
+                ? (typed.trim() ? lineMatch(typed, item) : 'empty')
+                : (typed.trim() ? 'filled' : null)
               return (
-                <label key={item.id} className={`intensive-input-row ${active ? 'active' : ''} ${match || ''}`}>
+                <div key={item.id} className={`intensive-input-row ${active ? 'active' : ''} ${match || ''}`}>
                   <em>{index + 1}</em>
                   <button type="button" className="intensive-line-play" onClick={() => playOne(index)} aria-label="播放这句">
                     <Play size={14} strokeWidth={1.6} />
                   </button>
-                  <input
-                    value={typed}
-                    placeholder="请听写这句的日文"
-                    onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
-                    onFocus={() => onIndex(index)}
-                    onBlur={() => onDictation(item.id, drafts[item.id] || '')}
-                  />
-                  {(match === 'exact' || match === 'filled') && <CheckCircle2 size={16} strokeWidth={1.6} className="intensive-check-icon" />}
+                  <div className="intensive-input-main">
+                    <input
+                      value={typed}
+                      placeholder="请听写这句的日文"
+                      onChange={(event) => {
+                        setProof(false)
+                        setDrafts((current) => ({ ...current, [item.id]: event.target.value }))
+                      }}
+                      onFocus={() => onIndex(index)}
+                      onBlur={() => onDictation(item.id, drafts[item.id] || '')}
+                    />
+                    {proof && match === 'exact' && <small className="intensive-answer-hint ok">正确</small>}
+                    {proof && match === 'close' && (
+                      <small className="intensive-answer-hint soft">接近 · 参考：<span className="jp">{item.text}</span></small>
+                    )}
+                    {proof && match === 'miss' && (
+                      <small className="intensive-answer-hint bad">不正确 · 原文：<span className="jp">{item.text}</span></small>
+                    )}
+                    {proof && match === 'empty' && (
+                      <small className="intensive-answer-hint bad">未填写 · 原文：<span className="jp">{item.text}</span></small>
+                    )}
+                  </div>
+                  {match === 'exact' && <CheckCircle2 size={16} strokeWidth={1.6} className="intensive-check-icon" />}
                   {match === 'close' && <Check size={16} strokeWidth={1.6} className="intensive-check-icon soft" />}
-                </label>
+                  {(match === 'miss' || match === 'empty') && <X size={16} strokeWidth={1.6} className="intensive-check-icon bad" />}
+                </div>
               )
             })}
           </div>
           <footer className="intensive-actions">
-            <button type="button" className="secondary-button" onClick={() => { setProof(true); saveAll() }}>
-              <Check size={15} strokeWidth={1.6} />检查答案
+            {score && (
+              <div className="intensive-result" role="status">
+                正确 {score.exact} · 接近 {score.close} · 错误 {score.miss} · 未填 {score.empty}
+                <span>（共 {score.total} 句）</span>
+              </div>
+            )}
+            <button type="button" className="secondary-button" onClick={checkAnswers}>
+              <Check size={15} strokeWidth={1.6} />{proof ? '重新检查' : '检查答案'}
             </button>
           </footer>
         </section>
