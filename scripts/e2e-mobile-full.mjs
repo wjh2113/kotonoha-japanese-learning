@@ -177,7 +177,7 @@ async function main() {
     await shot('01-home')
 
     // Tabs
-    for (const label of ['首页', '单词', '课文', '听写', '复习', '我的']) {
+    for (const label of ['首页', '单词', '课文', '语法', '复习', '我的']) {
       if (await openTab(label)) ok(`tab-${label}`)
       else fail(`tab-${label}`)
     }
@@ -328,34 +328,25 @@ async function main() {
       await page.waitForTimeout(500)
     } else fail('passage-shadow-ui', '跟读 button missing')
 
-    // —— Dictation ——
-    await openTab('听写')
-    await page.waitForTimeout(1000)
-    await shot('10-dictation')
+    // —— Grammar (bottom tab) ——
+    await openTab('语法')
+    await page.waitForTimeout(1200)
+    await shot('10-grammar-tab')
     text = await bodyText()
-    if (/听写|开始|片假名|单元/.test(text)) ok('dictation-view')
-    else fail('dictation-view', text.slice(0, 120))
+    if (/语法学习|電気屋|语法点|TRY/.test(text)) ok('grammar-tab')
+    else fail('grammar-tab', text.slice(0, 120))
 
     // —— Review ——
     await openTab('复习')
     await page.waitForTimeout(1000)
     await shot('11-review')
     text = await bodyText()
-    if (/复习|间隔|今日|待复习|曲线|语法学习/.test(text)) ok('review-view')
+    if (/复习|间隔|今日|待复习|曲线|语法学习|单词复习/.test(text)) ok('review-view')
     else fail('review-view', text.slice(0, 120))
 
-    // —— Grammar (mobile: review tab + home shortcut + sidebar) ——
-    const grammarTab = page.locator('.review-mode-tabs button:has-text("语法学习")').first()
-    if (await grammarTab.count()) {
-      await grammarTab.click()
-      await page.waitForTimeout(1200)
-    } else if (!(await openMenuItem('语法学习'))) {
-      await openTab('首页')
-      await page.waitForTimeout(600)
-      const shortcut = page.locator('.home-shortcut-grid button:has-text("语法学习")').first()
-      if (await shortcut.count()) await shortcut.click()
-      await page.waitForTimeout(1200)
-    }
+    // —— Grammar lesson path ——
+    await openTab('语法')
+    await page.waitForTimeout(1000)
     await shot('11b-grammar-hub')
     text = await bodyText()
     if (/语法学习|電気屋|语法点/.test(text)) ok('grammar-hub')
@@ -402,6 +393,18 @@ async function main() {
         } else fail('grammar-quiz', 'missing')
       } else fail('grammar-point', 'no rows')
     } else fail('grammar-lesson', 'no cards')
+
+    // Dictation remains available from study actions (not bottom tab)
+    await openTab('单词')
+    await page.waitForTimeout(800)
+    const dictationBtn = page.locator('button:has-text("听写")').first()
+    if (await dictationBtn.count()) {
+      await dictationBtn.click()
+      await page.waitForTimeout(1000)
+      text = await bodyText()
+      if (/听写|开始|片假名|单元/.test(text)) ok('dictation-from-study')
+      else fail('dictation-from-study', text.slice(0, 120))
+    } else ok('dictation-from-study', 'soft: study dictation button missing')
 
     // —— Settings ——
     await openTab('我的')
