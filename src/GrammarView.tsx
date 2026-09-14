@@ -528,9 +528,14 @@ export function GrammarView({
                       key={point.id}
                       type="button"
                       className={`grammar-point-row status-${status}${previewPoint?.id === point.id ? ' previewing' : ''}`}
-                      onMouseEnter={() => setScreen({ name: 'lesson', lessonId: activeLesson.id, previewPointId: point.id })}
-                      onFocus={() => setScreen({ name: 'lesson', lessonId: activeLesson.id, previewPointId: point.id })}
-                      onClick={() => setScreen({ name: 'point', lessonId: activeLesson.id, pointId: point.id })}
+                      onClick={() => {
+                        // 手机无右侧预览，进入独立学习卡；桌面直接在右侧展示全文
+                        if (typeof window !== 'undefined' && window.matchMedia('(max-width: 860px)').matches) {
+                          setScreen({ name: 'point', lessonId: activeLesson.id, pointId: point.id })
+                          return
+                        }
+                        setScreen({ name: 'lesson', lessonId: activeLesson.id, previewPointId: point.id })
+                      }}
                     >
                       <em>{point.index}</em>
                       <div>
@@ -546,22 +551,57 @@ export function GrammarView({
           ))}
         </div>
 
-        <aside className="grammar-lesson-preview" aria-label="语法点预览">
+        <aside className="grammar-lesson-preview" aria-label="语法点内容">
           {previewPoint ? (
             <>
-              <em>{String(previewPoint.index).padStart(2, '0')}</em>
-              <h2>{previewPoint.title}</h2>
-              <p>{previewPoint.questions.length} 道随堂测验 · 点击左侧进入完整学习卡</p>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => setScreen({ name: 'point', lessonId: activeLesson.id, pointId: previewPoint.id })}
-              >
-                打开学习卡
-              </button>
+              <header className="grammar-lesson-preview-head">
+                <em>{String(previewPoint.index).padStart(2, '0')}</em>
+                <div>
+                  <h2>{previewPoint.title}</h2>
+                  <p>{previewPoint.questions.length} 道随堂测验</p>
+                </div>
+                <button
+                  type="button"
+                  className="grammar-point-speak"
+                  aria-label="朗读语法点标题"
+                  onPointerDown={() => unlockSpeech()}
+                  onClick={() => void speakJapanese(previewPoint.title, voiceGender, { sentence: true })}
+                >
+                  <Volume2 size={18} strokeWidth={1.7} />
+                </button>
+              </header>
+              <article className="grammar-point-card grammar-lesson-preview-body">
+                {previewPoint.blocks.map((block, index) => (
+                  <BlockView key={`${previewPoint.id}-${index}`} block={block} />
+                ))}
+              </article>
+              <div className="grammar-lesson-preview-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    setProgress((prev) => markGrammarPointStudied(prev, activeLesson.id, previewPoint.id))
+                    const next = points.find((item) => item.index === previewPoint.index + 1)
+                    if (next) setScreen({ name: 'lesson', lessonId: activeLesson.id, previewPointId: next.id })
+                  }}
+                >
+                  标记已学{points.some((item) => item.index === previewPoint.index + 1) ? '并下一语法点' : ''}
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={!previewPoint.questions.length}
+                  onClick={() => {
+                    setProgress((prev) => markGrammarPointStudied(prev, activeLesson.id, previewPoint.id))
+                    setScreen({ name: 'quiz', lessonId: activeLesson.id, pointId: previewPoint.id })
+                  }}
+                >
+                  开始本点测验（{previewPoint.questions.length}）
+                </button>
+              </div>
             </>
           ) : (
-            <p>选择语法点开始学习。</p>
+            <p>选择左侧语法点开始学习。</p>
           )}
         </aside>
 
