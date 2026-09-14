@@ -3036,3 +3036,4 @@ body { background: var(--cream); color: var(--ink); }
     width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center;
     background: #3f6b4f; color: #fff; font-style: normal; font-weight: 800;
   }
+}
