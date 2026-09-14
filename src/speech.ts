@@ -8,8 +8,14 @@ const FEMALE_VOICE_HINT = /nanami|ayumi|haruka|kyoko|sayaka|female|woman|女性|
 let cachedVoices: SpeechSynthesisVoice[] = []
 let voicesLoading: Promise<SpeechSynthesisVoice[]> | null = null
 let speechUnlocked = false
-let activeAudio: HTMLAudioElement | null = null
+let sharedAudio: HTMLAudioElement | null = null
+let blobUrl: string | null = null
 let audioToken = 0
+let audioContext: AudioContext | null = null
+let activeSource: AudioBufferSourceNode | null = null
+
+/** Tiny silent WAV so the shared <audio> can be primed inside a user gesture. */
+const SILENT_WAV = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA'
 
 function speechAvailable() {
   return typeof window !== 'undefined' && typeof window.speechSynthesis !== 'undefined'
@@ -56,10 +62,11 @@ export async function loadSpeechVoices() {
   return voicesLoading
 }
 
-/** Warm voices + unlock TTS inside a user gesture (required on iOS / some WebViews). */
+/** Warm voices + unlock the shared audio element inside a user gesture. */
 export function unlockSpeech() {
   if (speechUnlocked) {
     void loadSpeechVoices()
+    primeSharedAudio()
     return
   }
   speechUnlocked = true
@@ -71,8 +78,7 @@ export function unlockSpeech() {
       // ignore
     }
   }
-  // Do NOT play a warm Audio here — it steals the user-gesture on Android WebView
-  // and causes the real word TTS play() to be blocked.
+  primeSharedAudio()
 }
 
 export function selectJapaneseVoice(voices: SpeechSynthesisVoice[], voiceGender: VoiceGender) {
@@ -97,48 +103,143 @@ function resumeSpeechSoon() {
   window.setTimeout(kick, 250)
 }
 
-function stopAudioPlayback() {
-  audioToken += 1
-  if (!activeAudio) return
+function getAudioContext() {
+  if (typeof window === 'undefined') return null
+  const Ctx = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!Ctx) return null
+  if (!audioContext || audioContext.state === 'closed') audioContext = new Ctx()
+  return audioContext
+}
+
+function getSharedAudio() {
+  if (typeof window === 'undefined') return null
+  if (sharedAudio) return sharedAudio
   try {
-    activeAudio.pause()
-    activeAudio.removeAttribute('src')
-    activeAudio.load()
+    const AudioCtor = window.Audio || (globalThis as typeof globalThis & { Audio?: typeof Audio }).Audio
+    if (!AudioCtor) return null
+    const audio = new AudioCtor()
+    audio.preload = 'auto'
+    audio.setAttribute('playsinline', 'true')
+    audio.setAttribute('webkit-playsinline', 'true')
+    ;(audio as HTMLAudioElement & { playsInline?: boolean }).playsInline = true
+    sharedAudio = audio
+    return audio
+  } catch {
+    return null
+  }
+}
+
+function primeSharedAudio() {
+  const ctx = getAudioContext()
+  if (ctx && ctx.state === 'suspended') {
+    void ctx.resume().catch(() => {})
+  }
+  const audio = getSharedAudio()
+  if (!audio) return
+  try {
+    if (!audio.src) audio.src = SILENT_WAV
+    const playPromise = audio.play()
+    if (playPromise && typeof playPromise.catch === 'function') {
+      void playPromise.catch(() => {})
+    }
   } catch {
     // ignore
   }
-  activeAudio = null
 }
 
-function chunkText(text: string, max = 80) {
+function stopAudioPlayback() {
+  audioToken += 1
+  if (activeSource) {
+    try { activeSource.stop() } catch { /* ignore */ }
+    activeSource = null
+  }
+  if (blobUrl) {
+    URL.revokeObjectURL(blobUrl)
+    blobUrl = null
+  }
+  if (!sharedAudio) return
+  try {
+    sharedAudio.pause()
+    sharedAudio.currentTime = 0
+  } catch {
+    // ignore
+  }
+}
+
+/** Split on particles / punctuation so each clip stays a single Youdao MP3. */
+export function chunkJapaneseForTts(text: string, max = 12) {
   const raw = String(text || '').trim()
-  if (raw.length <= max) return raw ? [raw] : []
+  if (!raw) return []
+  if (raw.length <= max) return [raw]
   const parts: string[] = []
   let buffer = ''
   for (const ch of raw) {
     buffer += ch
-    if (buffer.length >= max && /[。．.!！?？、，,\s]/.test(ch)) {
-      parts.push(buffer.trim())
-      buffer = ''
-    } else if (buffer.length >= max + 20) {
-      parts.push(buffer.trim())
+    const boundary = /[。．.!！?？、，,\s]|[はがをにでとはもへのねよ]/u.test(ch)
+    if ((boundary && buffer.length >= 2) || buffer.length >= max) {
+      const piece = buffer.trim()
+      if (piece) parts.push(piece)
       buffer = ''
     }
   }
   if (buffer.trim()) parts.push(buffer.trim())
-  return parts
+  return parts.length ? parts : [raw]
 }
 
 function ttsAudioUrl(text: string) {
   return apiUrl(`/api/tts?q=${encodeURIComponent(text)}`)
 }
 
-async function playAudioUrl(url: string, token: number) {
-  const audio = new Audio()
-  audio.preload = 'auto'
-  activeAudio = audio
-  // Assign src then play in the same turn so mobile WebViews keep the user gesture.
-  audio.src = url
+async function fetchTtsBlob(text: string) {
+  const response = await fetch(ttsAudioUrl(text))
+  const type = String(response.headers.get('content-type') || '')
+  if (!response.ok || type.includes('json') || type.includes('html')) {
+    throw new Error('tts-http')
+  }
+  const blob = await response.blob()
+  if (blob.size < 400) throw new Error('tts-empty')
+  return blob
+}
+
+async function playSharedBlob(blob: Blob, token: number) {
+  const ctx = getAudioContext()
+  if (ctx) {
+    if (ctx.state === 'suspended') {
+      try { await ctx.resume() } catch { /* ignore */ }
+    }
+    const data = await blob.arrayBuffer()
+    if (token !== audioToken) return
+    const buffer = await ctx.decodeAudioData(data.slice(0))
+    if (token !== audioToken) return
+    await new Promise<void>((resolve, reject) => {
+      const source = ctx.createBufferSource()
+      source.buffer = buffer
+      source.connect(ctx.destination)
+      activeSource = source
+      source.onended = () => {
+        if (activeSource === source) activeSource = null
+        resolve()
+      }
+      try {
+        source.start()
+      } catch (reason) {
+        reject(reason instanceof Error ? reason : new Error('audio-tts-failed'))
+        return
+      }
+      window.setTimeout(() => {
+        if (token !== audioToken) return
+        if (activeSource === source) resolve()
+      }, Math.ceil(buffer.duration * 1000) + 800)
+    })
+    return
+  }
+
+  const audio = getSharedAudio()
+  if (!audio) throw new Error('audio-unavailable')
+  if (blobUrl) URL.revokeObjectURL(blobUrl)
+  blobUrl = URL.createObjectURL(blob)
+  audio.muted = false
+  audio.src = blobUrl
   await new Promise<void>((resolve, reject) => {
     let settled = false
     const finish = () => {
@@ -146,7 +247,6 @@ async function playAudioUrl(url: string, token: number) {
       settled = true
       audio.onended = null
       audio.onerror = null
-      audio.onplaying = null
       resolve()
     }
     const fail = (reason: string) => {
@@ -154,14 +254,10 @@ async function playAudioUrl(url: string, token: number) {
       settled = true
       audio.onended = null
       audio.onerror = null
-      audio.onplaying = null
       reject(new Error(reason))
     }
     audio.onended = finish
     audio.onerror = () => fail('audio-tts-failed')
-    audio.onplaying = () => {
-      // Playback actually started — keep waiting for onended.
-    }
     const playPromise = audio.play()
     if (playPromise && typeof playPromise.then === 'function') {
       playPromise.catch(() => fail('audio-tts-blocked'))
@@ -169,27 +265,26 @@ async function playAudioUrl(url: string, token: number) {
     window.setTimeout(() => {
       if (token !== audioToken) return
       if (audio.paused && audio.currentTime === 0) fail('audio-tts-timeout')
-    }, 8000)
+    }, 12_000)
   })
-  if (token !== audioToken) return
-  if (activeAudio === audio) activeAudio = null
 }
 
 async function speakWithAudioFallback(text: string, options: {
   onStart?: () => void
   onEnd?: () => void
 } = {}) {
-  const parts = chunkText(text)
+  const parts = chunkJapaneseForTts(text)
   if (!parts.length) {
     options.onEnd?.()
     return
   }
+  primeSharedAudio()
   const token = ++audioToken
   options.onStart?.()
   try {
     for (const part of parts) {
       if (token !== audioToken) return
-      await playAudioUrl(ttsAudioUrl(part), token)
+      await playSharedBlob(await fetchTtsBlob(part), token)
     }
   } finally {
     if (token === audioToken) options.onEnd?.()

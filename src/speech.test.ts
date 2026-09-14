@@ -47,9 +47,11 @@ function installSpeechMock(voices: FakeVoice[] = [{ lang: 'ja-JP', name: 'Kyoko'
         currentTime = 0
         paused = true
         volume = 1
+        muted = false
         onended: (() => void) | null = null
         onerror: (() => void) | null = null
         src = ''
+        setAttribute() {}
         play() {
           this.paused = false
           queueMicrotask(() => this.onended?.())
@@ -62,6 +64,8 @@ function installSpeechMock(voices: FakeVoice[] = [{ lang: 'ja-JP', name: 'Kyoko'
     },
     configurable: true,
   })
+  // @ts-expect-error test shim
+  globalThis.Audio = window.Audio
   Object.defineProperty(globalThis, 'speechSynthesis', {
     value: speechSynthesis,
     configurable: true,
@@ -115,6 +119,38 @@ describe('speakJapanese mobile gesture safety', () => {
     expect(spokeBeforeAwait).toBe(true)
     expect(spoken[0]?.text).toBe('学校')
     expect(spoken[0]?.lang).toBe('ja-JP')
+  })
+
+  it('chunks Japanese sentences on particle boundaries', async () => {
+    const { chunkJapaneseForTts } = await import('./speech')
+    const parts = chunkJapaneseForTts('わたしは毎日日本語を勉強します。', 12)
+    expect(parts.length).toBeGreaterThan(1)
+    expect(parts.join('')).toBe('わたしは毎日日本語を勉強します。')
+    expect(parts.every((part) => part.length <= 12)).toBe(true)
+  })
+
+  it('uses audio TTS fetch on mobile instead of speechSynthesis', async () => {
+    const { speechSynthesis } = installSpeechMock()
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }),
+    })
+    Object.defineProperty(window, 'AudioContext', { configurable: true, value: undefined })
+    Object.defineProperty(window, 'webkitAudioContext', { configurable: true, value: undefined })
+    const fetchMock = vi.fn(async () => new Response(new Uint8Array(512), {
+      status: 200,
+      headers: { 'content-type': 'audio/mpeg' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:tts')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+
+    const { speakJapanese } = await import('./speech')
+    await speakJapanese('これは本です。', 'female', { sentence: true })
+
+    expect(fetchMock).toHaveBeenCalled()
+    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/api/tts')
+    expect(speechSynthesis.speak).not.toHaveBeenCalled()
   })
 
   it('speaks immediately when voices are already cached', async () => {

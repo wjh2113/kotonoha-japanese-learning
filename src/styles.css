@@ -2873,7 +2873,11 @@ body { background: var(--cream); color: var(--ink); }
   .grammar-lesson-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .grammar-point-hero {
-  grid-template-columns: auto 1fr; align-items: start;
+  grid-template-columns: auto 1fr auto; align-items: start;
+}
+.grammar-point-speak {
+  width: 42px; height: 42px; border: 1px solid #d7e0d2; border-radius: 12px;
+  background: #fff; color: #2f6a45; cursor: pointer; display: grid; place-items: center;
 }
 .grammar-point-hero > em {
   width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center;

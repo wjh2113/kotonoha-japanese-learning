@@ -144,53 +144,11 @@ async function fetchBaiduTts(text) {
   )
 }
 
-/** Prefer particle / punctuation boundaries so Youdao accepts short clear clips. */
-function splitJapaneseTtsChunks(text, maxLen = 8) {
-  const value = String(text || '').trim()
-  if (!value) return []
-  if (value.length <= maxLen) return [value]
-  const chunks = []
-  let buf = ''
-  for (const ch of value) {
-    buf += ch
-    const boundary = /[。．.!！?？、，,\s]|[はがをにでとはもへのねよ]/u.test(ch)
-    if ((boundary && buf.length >= 2) || buf.length >= maxLen) {
-      const piece = buf.trim()
-      if (piece) chunks.push(piece)
-      buf = ''
-    }
-  }
-  if (buf.trim()) chunks.push(buf.trim())
-  return chunks.length ? chunks : [value]
-}
-
 async function synthesizeJapaneseTts(text) {
-  // Youdao ~160kbps is clear; Baidu ~16kbps/8kHz is noisy on longer lines — prefer Youdao.
+  // Single MP3 only. Concatenating Youdao/Baidu frames (mixed sample rates)
+  // is inaudible in Android WebView / Capacitor.
   const whole = await fetchYoudaoTts(text)
   if (whole) return whole
-
-  const chunks = splitJapaneseTtsChunks(text, 8)
-  if (chunks.length > 1 || text.length > 8) {
-    const parts = []
-    for (const chunk of chunks) {
-      let buf = await fetchYoudaoTts(chunk)
-      if (!buf && chunk.length > 3) {
-        for (const sub of splitJapaneseTtsChunks(chunk, 3)) {
-          buf = await fetchYoudaoTts(sub)
-          if (!buf) buf = await fetchBaiduTts(sub)
-          if (!buf) return null
-          parts.push(buf)
-          buf = null
-        }
-        continue
-      }
-      if (!buf) buf = await fetchBaiduTts(chunk)
-      if (!buf) return null
-      parts.push(buf)
-    }
-    if (parts.length) return Buffer.concat(parts)
-  }
-
   return fetchBaiduTts(text)
 }
 

@@ -10,7 +10,7 @@ import {
 } from './grammar-store'
 import type { GrammarBlock, GrammarLesson, GrammarPoint, GrammarProgressState, GrammarQuestion } from './grammar-types'
 import { SettingsContext } from './settings-context'
-import { speakJapanese } from './speech'
+import { speakJapanese, unlockSpeech } from './speech'
 
 type Screen =
   | { name: 'hub' }
@@ -66,6 +66,7 @@ function BlockView({ block }: { block: GrammarBlock }) {
             key={`${item.jp}-${item.zh}`}
             type="button"
             className="grammar-example"
+            onPointerDown={() => unlockSpeech()}
             onClick={() => void speakJapanese(item.jp, voiceGender, { sentence: true })}
           >
             <span className="jp">{item.jp}</span>
@@ -440,6 +441,15 @@ export function GrammarView({
             <h1>{activePoint.title}</h1>
             <p>{activeLesson.title} · {activePoint.questions.length} 道测验</p>
           </div>
+          <button
+            type="button"
+            className="grammar-point-speak"
+            aria-label="朗读语法点标题"
+            onPointerDown={() => unlockSpeech()}
+            onClick={() => void speakJapanese(activePoint.title, voiceGender, { sentence: true })}
+          >
+            <Volume2 size={18} strokeWidth={1.7} />
+          </button>
         </header>
         <article className="grammar-point-card">
           {activePoint.blocks.map((block, index) => (

@@ -17,7 +17,7 @@ import {
 import { PassageIntensive } from './PassageIntensive'
 import { PronunciationPractice } from './PronunciationPractice'
 import { SettingsContext } from './settings-context'
-import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
+import { speakJapanese, speakJapaneseQueue, stopSpeaking, unlockSpeech } from './speech'
 import type { Passage, PassageBook, PassageLesson, PassageSentence } from './types'
 import { uid } from './utils'
 
@@ -65,6 +65,7 @@ function renderPassageJp(
             aria-label={`朗读 ${surface}`}
             onClick={(event) => {
               event.stopPropagation()
+              unlockSpeech()
               onSpeakWord!(speakText)
             }}
           >
@@ -1091,7 +1092,7 @@ export function PassageView({
                       <ol className="passage-sentences shadow-list">
                         {passage.sentences.map((item, index) => (
                           <li key={item.id}>
-                            <button type="button" className={index === sentenceIndex ? 'active' : ''} onClick={() => { setSentenceIndex(index); void speakJapanese(item.reading || item.text, voiceGender, { sentence: true }) }}>
+                            <button type="button" className={index === sentenceIndex ? 'active' : ''} onClick={() => { unlockSpeech(); setSentenceIndex(index); void speakJapanese(item.reading || item.text, voiceGender, { sentence: true }) }}>
                               <em>{index + 1}</em>
                               <span className="intensive-line-play" aria-hidden><Play size={14} strokeWidth={1.6} /></span>
                               <span className="jp">{item.text}</span>
@@ -1119,6 +1120,7 @@ export function PassageView({
                     </header>
                     <h3 className="jp shadow-target">
                       {renderPassageJp(sentence, [], (text) => {
+                        unlockSpeech()
                         void speakJapanese(text, voiceGender)
                       })}
                     </h3>
@@ -1167,7 +1169,10 @@ export function PassageView({
                     <button
                       type="button"
                       className="passage-audio-play"
-                      onClick={() => playFrom(sentenceIndex)}
+                      onClick={() => {
+                        unlockSpeech()
+                        playFrom(sentenceIndex)
+                      }}
                       aria-label={playingFull ? '暂停' : '播放'}
                     >
                       {playingFull ? <Pause size={18} strokeWidth={1.6} /> : <Play size={18} strokeWidth={1.6} />}
@@ -1233,7 +1238,10 @@ export function PassageView({
                                 className="passage-bilingual-row"
                                 role="button"
                                 tabIndex={0}
-                                onClick={() => goSentence(index, true)}
+                                onClick={() => {
+                                  unlockSpeech()
+                                  goSentence(index, true)
+                                }}
                                 onKeyDown={(event) => {
                                   if (event.key === 'Enter' || event.key === ' ') {
                                     event.preventDefault()
@@ -1244,6 +1252,7 @@ export function PassageView({
                                 <em>{index + 1}</em>
                                 <span className="passage-bilingual-jp">
                                   <span className="jp">{renderPassageJp(item, grammarTerms, (text) => {
+                                    unlockSpeech()
                                     void speakJapanese(text, voiceGender)
                                   })}</span>
                                 </span>
