@@ -159,7 +159,7 @@ async function main() {
     await shot('01-home')
 
     // Bottom tabs should exist on mobile
-    const tabs = ['首页', '单词', '课文', '语法', '复习', '我的']
+    const tabs = ['首页', '单词', '课文', '语法', '生词本', '我的']
     for (const label of tabs) {
       if (await openTab(label)) ok(`tab-${label}`)
       else fail(`tab-${label}`, 'missing')

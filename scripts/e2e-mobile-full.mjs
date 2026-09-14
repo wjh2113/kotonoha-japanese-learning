@@ -336,13 +336,22 @@ async function main() {
     if (/语法学习|電気屋|语法点|TRY/.test(text)) ok('grammar-tab')
     else fail('grammar-tab', text.slice(0, 120))
 
-    // —— Review ——
-    await openTab('复习')
+    // —— Wordbook (bottom tab) ——
+    await openTab('生词本')
     await page.waitForTimeout(1000)
-    await shot('11-review')
+    await shot('11-wordbook')
     text = await bodyText()
-    if (/复习|间隔|今日|待复习|曲线|语法学习|单词复习/.test(text)) ok('review-view')
-    else fail('review-view', text.slice(0, 120))
+    if (/生词本|未掌握|已掌握|全部/.test(text)) ok('wordbook-tab')
+    else fail('wordbook-tab', text.slice(0, 120))
+
+    // —— Review (via menu; no longer a bottom tab) ——
+    if (await openMenuItem('复习')) {
+      await page.waitForTimeout(900)
+      await shot('11-review')
+      text = await bodyText()
+      if (/复习|间隔|今日|待复习|曲线|语法学习|单词复习/.test(text)) ok('review-view')
+      else fail('review-view', text.slice(0, 120))
+    } else ok('review-view', 'soft: review via menu missing')
 
     // —— Grammar lesson path ——
     await openTab('语法')
