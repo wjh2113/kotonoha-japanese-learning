@@ -289,6 +289,7 @@ export function GrammarView({
   initialLessonId?: string
   initialLessonNo?: number
 }) {
+  const { voiceGender } = useContext(SettingsContext)
   const [lessons, setLessons] = useState<GrammarLesson[]>([])
   const [progress, setProgress] = useState<GrammarProgressState>({})
   const [screen, setScreen] = useState<Screen>({ name: 'hub' })
