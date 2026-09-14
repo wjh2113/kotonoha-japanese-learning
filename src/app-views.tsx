@@ -242,20 +242,18 @@ export function MobileTopBar({ view, settings, onView, onSettingsChange, onMenu,
   )
 }
 
-export function MobileTabBar({ view, reviewCount, onView }: { view: View; reviewCount: number; onView: (view: View) => void }) {
+export function MobileTabBar({ view, onView }: { view: View; reviewCount?: number; onView: (view: View) => void }) {
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'home', label: '首页', icon: <Home size={21} /> },
     { id: 'study', label: '单词', icon: <BookOpen size={21} /> },
     { id: 'passage', label: '课文', icon: <FileText size={21} /> },
     { id: 'grammar', label: '语法', icon: <ClipboardList size={21} /> },
-    { id: 'review', label: '复习', icon: <Clock3 size={21} />, count: reviewCount },
+    { id: 'wordbook', label: '生词本', icon: <BookMarked size={21} /> },
     { id: 'settings', label: '我的', icon: <UserRound size={21} /> },
   ]
-  const active = view === 'wordbook'
-    ? 'study'
-    : view === 'errorbook' || view === 'test' || view === 'library' || view === 'dictation'
-      ? ''
-      : view
+  const active = view === 'errorbook' || view === 'test' || view === 'library' || view === 'dictation' || view === 'review'
+    ? ''
+    : view
   return (
     <nav className="mobile-tabbar" aria-label="应用导航">
       {items.map((item) => (

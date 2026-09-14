@@ -177,7 +177,7 @@ async function main() {
     await shot('01-home')
 
     // Tabs
-    for (const label of ['首页', '单词', '课文', '语法', '复习', '我的']) {
+    for (const label of ['首页', '单词', '课文', '语法', '生词本', '我的']) {
       if (await openTab(label)) ok(`tab-${label}`)
       else fail(`tab-${label}`)
     }
