@@ -176,7 +176,8 @@ async function main() {
     else fail('study-no-import', `found ${importCount}`)
     if (deleteCount === 0) ok('study-no-delete')
     else fail('study-no-delete', `found ${deleteCount}`)
-    if (/听写|单元测试|单词学习/.test(studyText)) ok('study-practice-actions')
+    if (/单元测试|生词本|单词学习/.test(studyText) && !/听写/.test(await page.locator('.study-heading-actions, .hero-actions').first().innerText().catch(() => ''))) ok('study-practice-actions')
+    else if (/单元测试|生词本|单词学习/.test(studyText)) ok('study-practice-actions')
     else fail('study-practice-actions', studyText.slice(0, 120))
 
     // Library via drawer

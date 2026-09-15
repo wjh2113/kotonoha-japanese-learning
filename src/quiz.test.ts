@@ -57,6 +57,17 @@ describe('quiz meaning filters', () => {
     expect(after.mastered).toBeUndefined()
     expect(after.meaningCorrect).toBe(1)
   })
+
+  it('stars a word into the wordbook when the quiz answer is wrong', () => {
+    const word = makeFallbackWord({ term: '新聞', meaning: '报纸' })
+    const afterWrong = recordQuizAnswer(word, 'meaning', false, 1000)
+    expect(afterWrong.starred).toBe(true)
+    expect(afterWrong.meaningWrong).toBe(1)
+    // 答对不自动移出，方便继续巩固
+    const afterRight = recordQuizAnswer({ ...word, starred: true }, 'meaning', true, 2000)
+    expect(afterRight.starred).toBeUndefined()
+    expect(afterRight.meaningCorrect).toBe(1)
+  })
 })
 
 describe('quiz weakness weighting', () => {

@@ -365,7 +365,7 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
   onEdit: (word: Word, changes: Partial<Word>) => void
   onToggleStar: (word: Word) => void
   onDeleteWord: (word: Word) => void
-  onSearch: (value: string) => void; onTest: () => void; onDictation: () => void
+  onSearch: (value: string) => void; onTest: () => void; onDictation?: () => void
   onWordbook?: () => void
   practiceOnly?: boolean
 }) {
@@ -426,7 +426,9 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
         </div>
         <div className="hero-actions study-heading-actions">
           {onWordbook && <button className="secondary-button" onClick={onWordbook}><BookMarked size={16} strokeWidth={1.6} />生词本</button>}
-          <button className="secondary-button" onClick={onDictation}><Keyboard size={16} strokeWidth={1.6} />听写</button>
+          {!practiceOnly && onDictation && (
+            <button className="secondary-button" onClick={onDictation}><Keyboard size={16} strokeWidth={1.6} />听写</button>
+          )}
           <button className="secondary-button" onClick={onTest}><GraduationCap size={16} strokeWidth={1.6} />单元测试</button>
           {!practiceOnly && <button className="primary-button" onClick={onImport}><UploadCloud size={16} strokeWidth={1.6} />导入单词</button>}
         </div>

@@ -75,15 +75,19 @@ export function orderQuizByWeakness(words: Word[], kind: 'listening' | 'meaning'
 export function recordQuizAnswer(word: Word, kind: 'listening' | 'meaning', correct: boolean, now = Date.now()): Partial<Word> {
   const review = scheduleReview(word, correct, now)
   const deltaWrong = correct ? -1 : 1
+  // 答错自动收入生词本；答对不自动移出，方便继续巩固
+  const wordbook = correct ? {} : { starred: true }
   if (kind === 'listening') {
     return {
       ...review,
+      ...wordbook,
       listeningCorrect: tally(tally(word.listeningCorrect) + (correct ? 1 : 0)),
       listeningWrong: tally(tally(word.listeningWrong) + deltaWrong),
     }
   }
   return {
     ...review,
+    ...wordbook,
     meaningCorrect: tally(tally(word.meaningCorrect) + (correct ? 1 : 0)),
     meaningWrong: tally(tally(word.meaningWrong) + deltaWrong),
   }
