@@ -838,6 +838,76 @@ body { background: var(--cream); color: var(--ink); }
 .dictation-setup label { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 700; }
 .dictation-setup input { width: 104px; height: 48px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; font-size: 22px; font-weight: 700; }
 .dictation-setup p { margin: 12px 0 18px; color: #3a3e3a; font-size: 16px; }
+.dictation-setup-plan { margin-bottom: 4px; }
+.dictation-setup-summary {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;
+}
+.dictation-setup-summary > div,
+.dictation-plan-summary > div {
+  background: #f4f7fb; border-radius: 12px; padding: 14px 16px;
+  display: grid; gap: 4px;
+}
+.dictation-setup-summary b,
+.dictation-plan-summary b {
+  color: #2f6fed; font-size: 28px; font-weight: 800; line-height: 1.1;
+}
+.dictation-setup-summary span,
+.dictation-plan-summary span { color: #5c635c; font-size: 13px; font-weight: 600; }
+.dictation-setup-goal-row {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
+}
+.dictation-setup-goal-row .secondary-button {
+  height: 42px; padding: 0 14px; border-radius: 12px; display: inline-flex; align-items: center; gap: 6px;
+}
+.dictation-setup-mix {
+  margin: 12px 0 0 !important; color: #3a3e3a; font-size: 15px !important; font-weight: 600;
+}
+.dictation-setup-mix b { color: #2f6fed; }
+.dictation-setup-mix em { margin-left: 6px; color: #8a8f88; font-style: normal; font-weight: 500; font-size: 13px; }
+
+.dictation-plan-modal { width: min(460px, 100%); }
+.dictation-plan-modal h2 { margin-bottom: 18px; }
+.dictation-plan-summary {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px;
+}
+.dictation-plan-goal { display: grid; gap: 8px; margin-bottom: 18px; }
+.dictation-plan-goal > span { color: #5c635c; font-size: 13px; font-weight: 700; }
+.dictation-plan-goal > div { display: flex; gap: 10px; align-items: center; }
+.dictation-plan-goal input {
+  flex: 1; height: 46px; border: 1px solid var(--line); border-radius: 10px;
+  padding: 0 14px; font-size: 20px; font-weight: 800; background: #fbfaf6;
+}
+.dictation-plan-goal .secondary-button {
+  height: 46px; padding: 0 16px; border-radius: 10px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+}
+.dictation-plan-ratio { display: grid; gap: 10px; margin-bottom: 8px; }
+.dictation-plan-ratio-head {
+  display: flex; align-items: center; gap: 8px; color: #5c635c; font-size: 13px; font-weight: 700;
+}
+.dictation-plan-ratio-head label {
+  display: inline-flex; align-items: center; gap: 4px; margin: 0;
+}
+.dictation-plan-ratio-head input[type="number"] {
+  width: 64px; height: 36px; border: 1px solid var(--line); border-radius: 8px;
+  padding: 0 8px; font-size: 16px; font-weight: 800; background: #fbfaf6; margin: 0;
+}
+.dictation-plan-ratio-head em { font-style: normal; color: #8a8f88; }
+.dictation-plan-tip { color: #9aa19a; display: inline-flex; }
+.dictation-plan-ratio input[type="range"] {
+  width: 100%; accent-color: #2f6fed; height: 28px; cursor: pointer;
+}
+.dictation-plan-preview {
+  display: flex; flex-wrap: wrap; gap: 10px 18px; padding: 12px 14px;
+  border-radius: 10px; background: #eef4ff; color: #3a3e3a; font-size: 14px; font-weight: 600;
+}
+.dictation-plan-preview b { color: #2f6fed; font-weight: 800; }
+.dictation-plan-actions {
+  display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px;
+}
+.dictation-plan-actions .secondary-button,
+.dictation-plan-actions .primary-button {
+  min-width: 110px; height: 44px; border-radius: 12px;
+}
 .dictation-playbar {
   display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
   margin: 0 0 16px; color: #2e332f; font-size: 15px; font-weight: 700;

@@ -1,15 +1,15 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import {
   BookOpen, Check, CheckCircle2, ChevronLeft, ClipboardList, GraduationCap, Headphones,
-  Keyboard, Lightbulb, Pencil, RotateCcw, SkipBack, ThumbsUp, Volume2, X,
+  HelpCircle, Keyboard, Lightbulb, Pencil, RotateCcw, Save, SkipBack, ThumbsUp, Volume2, X,
 } from 'lucide-react'
 import { SettingsContext } from './settings-context'
 import { speakJapanese, stopSpeaking } from './speech'
 import type { Unit, Word } from './types'
 import {
-  clampDictationGoal, clampPlaySpeed, clampPlayTimes, dictationCandidates, isConfirmEnter, katakanaDiff,
+  clampDictationGoal, clampNewRatio, clampPlaySpeed, clampPlayTimes, dictationCandidates, isConfirmEnter, katakanaDiff,
   loadDictationPlan, loadDictationPlay, matchesKatakanaAnswer, pickDictationWords, pickErrorBookWords,
-  PLAY_SPEED_OPTIONS, PLAY_TIMES_OPTIONS, removeCurrent, saveDictationPlan,
+  planDictationMix, PLAY_SPEED_OPTIONS, PLAY_TIMES_OPTIONS, removeCurrent, saveDictationPlan,
   saveDictationPlay, sessionMissStats, suggestedReviewWords, unitStudyProgress, wordKatakana,
   type DictationPlan, type DictationPlay,
 } from './dictation'
@@ -41,7 +41,7 @@ export function DictationView({
   const [playSettings, setPlaySettings] = useState<DictationPlay>(() => loadDictationPlay())
   const [playIndex, setPlayIndex] = useState(0)
   const [goalDraft, setGoalDraft] = useState(String(plan.goal))
-  const [editingGoal, setEditingGoal] = useState(false)
+  const [planOpen, setPlanOpen] = useState(false)
   const [started, setStarted] = useState(false)
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [index, setIndex] = useState(0)
@@ -78,18 +78,28 @@ export function DictationView({
   const learnedToday = plan.learnedIds.length
   const reviewedToday = plan.reviewedIds.length
   const newPercent = plan.goal ? Math.round(Math.min(learnedToday, plan.goal) / plan.goal * 100) : 0
+  const planMix = planDictationMix(unit.words, plan.goal, plan.learnedIds, plan.newRatio)
 
   const persistPlan = (next: DictationPlan) => {
-    const saved = { ...next, date: next.date, goal: clampDictationGoal(next.goal) }
+    const saved = {
+      ...next,
+      date: next.date,
+      goal: clampDictationGoal(next.goal),
+      newRatio: clampNewRatio(next.newRatio ?? plan.newRatio),
+    }
     saveDictationPlan(saved)
     setPlan(saved)
+    setGoalDraft(String(saved.goal))
   }
 
   const commitGoal = () => {
     const goal = clampDictationGoal(Number(goalDraft) || plan.goal)
     setGoalDraft(String(goal))
-    setEditingGoal(false)
     persistPlan({ ...plan, goal })
+  }
+
+  const openPlanEditor = () => {
+    setPlanOpen(true)
   }
 
   const persistPlay = (next: DictationPlay) => {
@@ -134,10 +144,10 @@ export function DictationView({
   const start = () => {
     const picked = errorReview
       ? pickErrorBookWords(sourceWords)
-      : pickDictationWords(unit.words, plan.goal, plan.learnedIds)
+      : pickDictationWords(unit.words, plan.goal, plan.learnedIds, plan.newRatio)
     const queueWords = picked.length || errorReview
       ? picked
-      : pickDictationWords(unit.words, plan.goal, [])
+      : pickDictationWords(unit.words, plan.goal, [], plan.newRatio)
     if (!queueWords.length) return
     clearWait()
     setQueue(queueWords.map((word) => ({ word, misses: 0 })))
@@ -336,22 +346,47 @@ export function DictationView({
         </section>
         <section className="dictation-setup">
           {!errorReview && (
-            <label>今日计划学习
-              <input type="number" min={5} max={200} value={goalDraft} onChange={(event) => setGoalDraft(event.target.value)} onBlur={commitGoal} />
-              <span>词</span>
-            </label>
+            <div className="dictation-setup-plan">
+              <div className="dictation-setup-summary">
+                <div><b>{dueReview}</b><span>建议今日复习</span></div>
+                <div><b>{planMix.unlearned}</b><span>剩余未学习</span></div>
+              </div>
+              <div className="dictation-setup-goal-row">
+                <label>
+                  今日计划学习
+                  <input type="number" min={5} max={200} value={goalDraft} onChange={(event) => setGoalDraft(event.target.value)} onBlur={commitGoal} />
+                  <span>词</span>
+                </label>
+                <button type="button" className="secondary-button" onClick={openPlanEditor}>
+                  <Pencil size={15} strokeWidth={1.7} />调整计划
+                </button>
+              </div>
+              <p className="dictation-setup-mix">
+                本轮约 <b>{planMix.total}</b> 词 · 新词 <b>{planMix.newCount}</b> · 复习 <b>{planMix.reviewCount}</b>
+                <em>（新词比例 {plan.newRatio}%）</em>
+              </p>
+            </div>
           )}
           <p>{errorReview
             ? `本次将复习 ${candidates.length} 个错词`
-            : `本单元可听写 ${candidates.length} 词 · 建议复习 ${dueReview} 词 · 今天已完成 ${learnedToday}/${plan.goal}`}</p>
+            : `本单元可听写 ${candidates.length} 词 · 今天已完成 ${learnedToday}/${plan.goal}`}</p>
           <DictationPlayBar play={playSettings} onChange={persistPlay} />
-          <button className="primary-button" onClick={start}>{errorReview ? '开始复习错词' : '开始听写'}</button>
+          <button className="primary-button" onClick={start} disabled={!errorReview && planMix.remaining === 0}>
+            {errorReview ? '开始复习错词' : planMix.remaining === 0 ? '今日计划已完成' : '开始听写'}
+          </button>
         </section>
         {!errorReview && (
           <DictationStats
             plan={plan} dueReview={dueReview} learnedToday={learnedToday} reviewedToday={reviewedToday}
-            newPercent={newPercent} editingGoal={editingGoal} goalDraft={goalDraft}
-            onEditGoal={() => setEditingGoal(true)} onGoalDraft={setGoalDraft} onCommitGoal={commitGoal}
+            newPercent={newPercent} onEditPlan={openPlanEditor}
+          />
+        )}
+        {planOpen && (
+          <DictationPlanModal
+            plan={plan}
+            words={unit.words}
+            onClose={() => setPlanOpen(false)}
+            onConfirm={(next) => { persistPlan({ ...plan, ...next }); setPlanOpen(false) }}
           />
         )}
       </div>
@@ -458,9 +493,16 @@ export function DictationView({
       </div>
       <DictationStats
         plan={plan} dueReview={dueReview} learnedToday={learnedToday} reviewedToday={reviewedToday}
-        newPercent={newPercent} editingGoal={editingGoal} goalDraft={goalDraft}
-        onEditGoal={() => setEditingGoal(true)} onGoalDraft={setGoalDraft} onCommitGoal={commitGoal}
+        newPercent={newPercent} onEditPlan={openPlanEditor}
       />
+      {planOpen && (
+        <DictationPlanModal
+          plan={plan}
+          words={unit.words}
+          onClose={() => setPlanOpen(false)}
+          onConfirm={(next) => { persistPlan({ ...plan, ...next }); setPlanOpen(false) }}
+        />
+      )}
     </div>
   )
 }
@@ -596,32 +638,116 @@ function DictationPlayBar({
 }
 
 function DictationStats({
-  plan, dueReview, learnedToday, reviewedToday, newPercent, editingGoal, goalDraft,
-  onEditGoal, onGoalDraft, onCommitGoal,
+  plan, dueReview, learnedToday, reviewedToday, newPercent, onEditPlan,
 }: {
   plan: DictationPlan
   dueReview: number
   learnedToday: number
   reviewedToday: number
   newPercent: number
-  editingGoal: boolean
-  goalDraft: string
-  onEditGoal: () => void
-  onGoalDraft: (value: string) => void
-  onCommitGoal: () => void
+  onEditPlan: () => void
 }) {
   return (
     <footer className="dictation-stats">
       <span>今日计划学习：
-        {editingGoal
-          ? <input type="number" min={5} max={200} value={goalDraft} autoFocus onChange={(event) => onGoalDraft(event.target.value)} onBlur={onCommitGoal} onKeyDown={(event) => event.key === 'Enter' && onCommitGoal()} />
-          : <b>{plan.goal}</b>}
-        词
-        <button type="button" onClick={onEditGoal} aria-label="修改今日计划"><Pencil size={13} /></button>
+        <b>{plan.goal}</b>词
+        <button type="button" onClick={onEditPlan} aria-label="调整听写计划"><Pencil size={13} /></button>
       </span>
+      <span>新词比例：<b>{plan.newRatio}%</b></span>
       <span>建议今日复习：<b>{dueReview}</b> 词</span>
       <span>已复习/今日计划复习：<b>{reviewedToday}/{dueReview}</b>{dueReview ? ` ${Math.round(reviewedToday / Math.max(dueReview, 1) * 100)}%` : ' 0%'}</span>
-      <span>已学习/今日计划新词：<b>{Math.min(learnedToday, plan.goal)}/{plan.goal}</b> {newPercent}%</span>
+      <span>已学习/今日计划：<b>{Math.min(learnedToday, plan.goal)}/{plan.goal}</b> {newPercent}%</span>
     </footer>
+  )
+}
+
+function DictationPlanModal({
+  plan, words, onClose, onConfirm,
+}: {
+  plan: DictationPlan
+  words: Word[]
+  onClose: () => void
+  onConfirm: (next: Pick<DictationPlan, 'goal' | 'newRatio'>) => void
+}) {
+  const [goalDraft, setGoalDraft] = useState(String(plan.goal))
+  const [ratioDraft, setRatioDraft] = useState(plan.newRatio)
+  const goal = clampDictationGoal(Number(goalDraft) || plan.goal)
+  const ratio = clampNewRatio(ratioDraft)
+  const mix = planDictationMix(words, goal, plan.learnedIds, ratio)
+
+  const applyGoal = () => setGoalDraft(String(goal))
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="modal dictation-plan-modal" role="dialog" aria-modal="true" aria-labelledby="dictation-plan-title">
+        <button type="button" className="modal-close" onClick={onClose} aria-label="关闭"><X size={18} /></button>
+        <h2 id="dictation-plan-title">调整听写计划</h2>
+
+        <div className="dictation-plan-summary">
+          <div>
+            <b>{mix.dueReview}</b>
+            <span>建议今日复习</span>
+          </div>
+          <div>
+            <b>{mix.unlearned}</b>
+            <span>剩余未学习</span>
+          </div>
+        </div>
+
+        <label className="dictation-plan-goal">
+          <span>今日计划学习</span>
+          <div>
+            <input
+              type="number"
+              min={5}
+              max={200}
+              value={goalDraft}
+              onChange={(event) => setGoalDraft(event.target.value)}
+              onBlur={applyGoal}
+              onKeyDown={(event) => event.key === 'Enter' && applyGoal()}
+            />
+            <button type="button" className="secondary-button" onClick={applyGoal}><Save size={15} />保存</button>
+          </div>
+        </label>
+
+        <div className="dictation-plan-ratio">
+          <div className="dictation-plan-ratio-head">
+            <span>新词比例</span>
+            <label>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={ratio}
+                onChange={(event) => setRatioDraft(clampNewRatio(Number(event.target.value)))}
+              />
+              <em>%</em>
+            </label>
+            <span className="dictation-plan-tip" title="新词为尚未掌握的词；其余名额优先给建议复习词，不足时互相补齐。">
+              <HelpCircle size={15} />
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            value={ratio}
+            aria-label="新词比例"
+            onChange={(event) => setRatioDraft(Number(event.target.value))}
+          />
+          <div className="dictation-plan-preview">
+            <span>今日待学单词：<b>{mix.total}</b>个</span>
+            <span>新词：<b>{mix.newCount}</b>个</span>
+            <span>复习词：<b>{mix.reviewCount}</b>个</span>
+          </div>
+        </div>
+
+        <div className="modal-actions dictation-plan-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>取消</button>
+          <button type="button" className="primary-button" onClick={() => onConfirm({ goal, newRatio: ratio })}>确认调整</button>
+        </div>
+      </section>
+    </div>
   )
 }

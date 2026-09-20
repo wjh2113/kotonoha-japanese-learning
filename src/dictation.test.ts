@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   clampDictationGoal, compactKana, dictationCandidates, dictationGap, hasUsableKanaReading, isConfirmEnter, isStickyMiss, katakanaDiff, matchesErrorBookFilter,
-  matchesKatakanaAnswer, pickDictationWords, pickErrorBookWords, reinsertAfterMiss, removeCurrent,
+  matchesKatakanaAnswer, pickDictationWords, pickErrorBookWords, planDictationMix, reinsertAfterMiss, removeCurrent,
   sessionMissStats, suggestedReviewWords, toKatakana, unitStudyProgress, wordKatakana,
 } from './dictation'
 import { makeFallbackWord } from './utils'
@@ -77,7 +77,20 @@ describe('today plan picking', () => {
     const fresh = makeFallbackWord({ term: '猫', reading: 'ねこ', meaning: '猫' })
     const mastered = { ...makeFallbackWord({ term: '犬', reading: 'いぬ', meaning: '狗' }), mastered: true }
     const done = makeFallbackWord({ term: '水', reading: 'みず', meaning: '水' })
-    expect(pickDictationWords([mastered, done, fresh], 5, [done.id]).map((word) => word.term)).toEqual(['猫', '犬'])
+    expect(pickDictationWords([mastered, done, fresh], 5, [done.id], 100).map((word) => word.term)).toEqual(['猫', '犬'])
+  })
+
+  it('splits the remaining daily quota by new-word ratio', () => {
+    const freshA = makeFallbackWord({ term: '猫', reading: 'ねこ', meaning: '猫' })
+    const freshB = makeFallbackWord({ term: '鳥', reading: 'とり', meaning: '鸟' })
+    const review = { ...makeFallbackWord({ term: '水', reading: 'みず', meaning: '水' }), listeningWrong: 2, wrongBook: true }
+    const mix = planDictationMix([freshA, freshB, review], 10, [], 20)
+    expect(mix.remaining).toBe(10)
+    expect(mix.newCount).toBe(2)
+    expect(mix.reviewCount).toBe(1)
+    expect(mix.total).toBe(3)
+    const picked = pickDictationWords([freshA, freshB, review], 10, [], 20)
+    expect(picked.map((word) => word.term).sort()).toEqual(['猫', '水', '鳥'].sort())
   })
 
   it('does not suggest review for words that have never been dictated', () => {

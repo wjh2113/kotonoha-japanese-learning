@@ -7,6 +7,9 @@ export const DICTATION_PLAY_KEY = 'kotonoha-dictation-play-v1'
 export const DEFAULT_DICTATION_GOAL = 20
 export const MIN_DICTATION_GOAL = 5
 export const MAX_DICTATION_GOAL = 200
+export const DEFAULT_NEW_RATIO = 50
+export const MIN_NEW_RATIO = 0
+export const MAX_NEW_RATIO = 100
 export const DEFAULT_PLAY_TIMES = 3
 export const PLAY_TIMES_OPTIONS = [1, 2, 3, 4, 5] as const
 export const PLAY_SPEED_OPTIONS = [0.75, 1, 1.25, 1.5] as const
@@ -14,6 +17,8 @@ export const PLAY_SPEED_OPTIONS = [0.75, 1, 1.25, 1.5] as const
 export type DictationPlan = {
   date: string
   goal: number
+  /** 本轮新词占比 0–100；其余为复习词 */
+  newRatio: number
   learnedIds: string[]
   reviewedIds: string[]
 }
@@ -35,17 +40,31 @@ export function clampDictationGoal(value: number) {
   return Math.max(MIN_DICTATION_GOAL, Math.min(MAX_DICTATION_GOAL, Math.round(value)))
 }
 
-export function emptyDictationPlan(goal = DEFAULT_DICTATION_GOAL): DictationPlan {
-  return { date: todayKey(), goal: clampDictationGoal(goal), learnedIds: [], reviewedIds: [] }
+export function clampNewRatio(value: number) {
+  if (!Number.isFinite(value)) return DEFAULT_NEW_RATIO
+  return Math.max(MIN_NEW_RATIO, Math.min(MAX_NEW_RATIO, Math.round(value)))
+}
+
+export function emptyDictationPlan(goal = DEFAULT_DICTATION_GOAL, newRatio = DEFAULT_NEW_RATIO): DictationPlan {
+  return {
+    date: todayKey(),
+    goal: clampDictationGoal(goal),
+    newRatio: clampNewRatio(newRatio),
+    learnedIds: [],
+    reviewedIds: [],
+  }
 }
 
 export function loadDictationPlan(): DictationPlan {
   try {
     const parsed = JSON.parse(localStorage.getItem(DICTATION_PLAN_KEY) || '')
-    if (parsed?.date !== todayKey()) return emptyDictationPlan(Number(parsed?.goal) || DEFAULT_DICTATION_GOAL)
+    const goal = Number(parsed?.goal) || DEFAULT_DICTATION_GOAL
+    const newRatio = parsed?.newRatio == null ? DEFAULT_NEW_RATIO : Number(parsed.newRatio)
+    if (parsed?.date !== todayKey()) return emptyDictationPlan(goal, newRatio)
     return {
       date: parsed.date,
-      goal: clampDictationGoal(Number(parsed.goal) || DEFAULT_DICTATION_GOAL),
+      goal: clampDictationGoal(goal),
+      newRatio: clampNewRatio(newRatio),
       learnedIds: Array.isArray(parsed.learnedIds) ? parsed.learnedIds.map(String) : [],
       reviewedIds: Array.isArray(parsed.reviewedIds) ? parsed.reviewedIds.map(String) : [],
     }
@@ -59,6 +78,7 @@ export function saveDictationPlan(plan: DictationPlan) {
     ...plan,
     date: todayKey(),
     goal: clampDictationGoal(plan.goal),
+    newRatio: clampNewRatio(plan.newRatio),
   }))
 }
 
@@ -197,12 +217,77 @@ export function suggestedReviewWords(words: Word[], now = Date.now()) {
   })
 }
 
-export function pickDictationWords(words: Word[], goal: number, alreadyLearned: string[] = []) {
+export function unlearnedDictationWords(words: Word[], alreadyLearned: string[] = []) {
   const learned = new Set(alreadyLearned)
-  const usable = dictationCandidates(words)
-  const fresh = usable.filter((word) => !word.mastered && !learned.has(word.id))
-  const rest = usable.filter((word) => !fresh.some((item) => item.id === word.id) && !learned.has(word.id))
-  return [...fresh, ...rest].slice(0, clampDictationGoal(goal))
+  return dictationCandidates(words).filter((word) => !word.mastered && !learned.has(word.id))
+}
+
+export type DictationPlanMix = {
+  remaining: number
+  newCount: number
+  reviewCount: number
+  total: number
+  unlearned: number
+  dueReview: number
+}
+
+/** 按今日剩余名额与新词比例，算出本轮新词/复习词数量（不足时互相补齐）。 */
+export function planDictationMix(
+  words: Word[],
+  goal: number,
+  alreadyLearned: string[] = [],
+  newRatio = DEFAULT_NEW_RATIO,
+  now = Date.now(),
+): DictationPlanMix {
+  const learned = new Set(alreadyLearned)
+  const remaining = Math.max(0, clampDictationGoal(goal) - learned.size)
+  const reviewPool = suggestedReviewWords(words, now).filter((word) => !learned.has(word.id))
+  const reviewIds = new Set(reviewPool.map((word) => word.id))
+  const fresh = unlearnedDictationWords(words, alreadyLearned).filter((word) => !reviewIds.has(word.id))
+  const ratio = clampNewRatio(newRatio)
+  let newCount = Math.min(fresh.length, Math.ceil(remaining * ratio / 100))
+  let reviewCount = Math.min(reviewPool.length, Math.max(0, remaining - newCount))
+  const shortfall = remaining - newCount - reviewCount
+  if (shortfall > 0) {
+    const addNew = Math.min(shortfall, fresh.length - newCount)
+    newCount += addNew
+    reviewCount += Math.min(shortfall - addNew, reviewPool.length - reviewCount)
+  }
+  return {
+    remaining,
+    newCount,
+    reviewCount,
+    total: newCount + reviewCount,
+    unlearned: unlearnedDictationWords(words, alreadyLearned).length,
+    dueReview: reviewPool.length,
+  }
+}
+
+export function pickDictationWords(
+  words: Word[],
+  goal: number,
+  alreadyLearned: string[] = [],
+  newRatio = DEFAULT_NEW_RATIO,
+  now = Date.now(),
+) {
+  const learned = new Set(alreadyLearned)
+  const mix = planDictationMix(words, goal, alreadyLearned, newRatio, now)
+  if (!mix.remaining) return []
+  const reviewPool = suggestedReviewWords(words, now).filter((word) => !learned.has(word.id))
+  const reviewIds = new Set(reviewPool.map((word) => word.id))
+  const fresh = unlearnedDictationWords(words, alreadyLearned).filter((word) => !reviewIds.has(word.id))
+  const pickedReview = reviewPool.slice(0, mix.reviewCount)
+  const pickedNew = fresh.slice(0, mix.newCount)
+  const picked = [...pickedNew, ...pickedReview]
+  const pickedIds = new Set(picked.map((word) => word.id))
+  // 新词/复习池都不够时，用其余可听写词（含已掌握）补足今日剩余名额
+  if (picked.length < mix.remaining) {
+    const filler = dictationCandidates(words)
+      .filter((word) => !learned.has(word.id) && !pickedIds.has(word.id))
+      .slice(0, mix.remaining - picked.length)
+    return [...picked, ...filler]
+  }
+  return picked
 }
 
 export const STICKY_DICTATION_MISSES = 3
