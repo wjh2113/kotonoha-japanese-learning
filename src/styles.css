@@ -690,6 +690,15 @@ body { background: var(--cream); color: var(--ink); }
 }
 
 .mobile-topbar, .mobile-tabbar { display: none; }
+.settings-sync-row {
+  margin: 0 0 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px;
+  background: white; display: grid; gap: 8px;
+}
+.settings-sync-row .secondary-button {
+  height: 44px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font-weight: 700;
+}
+.settings-sync-row small { color: #8a8f88; font-size: 12px; line-height: 1.5; }
 .me-shortcuts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 16px; }
 .me-shortcuts button {
   min-height: 64px; border: 1px solid var(--line); border-radius: 14px; background: white;

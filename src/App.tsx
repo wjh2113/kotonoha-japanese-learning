@@ -83,8 +83,41 @@ function App() {
   })
   const unitsRef = useRef(units)
   const settingsRef = useRef(settings)
+  const pullBusy = useRef(false)
   unitsRef.current = units
   settingsRef.current = settings
+
+  const wordCountOf = (list: Unit[]) => list.reduce((sum, item) => sum + (item.words?.length || 0), 0)
+
+  /** Pull authoritative vocab from server and refresh IndexedDB. Safe for phone (read-only). */
+  const pullServerVocab = async (opts?: { quiet?: boolean; reason?: string }) => {
+    if (pullBusy.current) return false
+    pullBusy.current = true
+    try {
+      const response = await apiFetch('/api/state')
+      if (!response.ok) throw new Error('DATABASE_READ_FAILED')
+      const stored = await response.json() as { units?: Unit[]; settings?: AppSettings }
+      if (!Array.isArray(stored.units) || !stored.units.length) return false
+      const prevWords = wordCountOf(unitsRef.current)
+      const nextWords = wordCountOf(stored.units)
+      const prevUnits = unitsRef.current.length
+      persistPaused.current = true
+      setUnits(stored.units)
+      setSettings(normalizeSettings(stored.settings) || settingsRef.current)
+      await saveVocabState(stored.units, normalizeSettings(stored.settings) || settingsRef.current)
+      window.setTimeout(() => { persistPaused.current = false }, 0)
+      if (!opts?.quiet && (nextWords > prevWords || stored.units.length > prevUnits)) {
+        setToast(`已同步词库：${stored.units.length} 个单元 · ${nextWords} 词`)
+      } else if (!opts?.quiet && opts?.reason === 'manual') {
+        setToast(`词库已是最新：${stored.units.length} 个单元 · ${nextWords} 词`)
+      }
+      return true
+    } catch {
+      return false
+    } finally {
+      pullBusy.current = false
+    }
+  }
 
   useEffect(() => {
     const theme = settings.theme || 'matcha'
@@ -187,20 +220,16 @@ function App() {
         setSettings(normalizeSettings(cached.settings))
       }
       try {
-        const response = await apiFetch('/api/state')
-        if (!response.ok) throw new Error('DATABASE_READ_FAILED')
-        const stored = await response.json()
+        const pulled = await pullServerVocab({ quiet: true })
         if (cancelled) return
-        if (Array.isArray(stored.units) && stored.units.length) {
-          setUnits(stored.units)
-          setSettings(normalizeSettings(stored.settings))
-          await saveVocabState(stored.units, normalizeSettings(stored.settings))
-        } else if (!practiceOnly) {
-          const seed = await apiFetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ units, settings }) })
-          if (!seed.ok) throw new Error('DATABASE_SEED_FAILED')
-          await saveVocabState(units, settings)
-        } else {
-          setToast('服务器暂无词库，请先在电脑端导入')
+        if (!pulled) {
+          if (!practiceOnly) {
+            const seed = await apiFetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ units: unitsRef.current, settings: settingsRef.current }) })
+            if (!seed.ok) throw new Error('DATABASE_SEED_FAILED')
+            await saveVocabState(unitsRef.current, settingsRef.current)
+          } else if (!cached?.units?.length) {
+            setToast('服务器暂无词库，请先在电脑端导入')
+          }
         }
         localStorage.removeItem(STORAGE_KEY)
         localStorage.removeItem(SETTINGS_KEY)
@@ -208,14 +237,17 @@ function App() {
         serverSyncEnabled.current = true
         setDatabaseReady(true)
         try {
-          const sourceUnits = (Array.isArray(stored.units) ? stored.units : units) as Unit[]
+          const sourceUnits = unitsRef.current
           const incomplete = sourceUnits.reduce((sum, item) => sum + (item.words || []).filter((word) => isCoreLexiconIncomplete(word)).length, 0)
           setEnrichRemaining(incomplete)
           if (incomplete > 0 && !practiceOnly) await runEnrichMissing(() => cancelled)
         } catch { /* keep whatever the database already has */ }
         if (!cancelled) {
           persistPaused.current = false
-          setUnits((current) => current.map((item) => ({ ...item, words: [...item.words] })))
+          // Announce sync when phone had fewer lessons than server
+          if (practiceOnly && cached?.units?.length && unitsRef.current.length > cached.units.length) {
+            setToast(`已同步词库：${unitsRef.current.length} 个单元 · ${wordCountOf(unitsRef.current)} 词`)
+          }
         }
       } catch {
         if (cancelled) return
@@ -314,24 +346,13 @@ function App() {
       databaseErrorShown.current = false
       setToast('已恢复联网，正在同步词库…')
       void (async () => {
+        const pulled = await pullServerVocab({ reason: 'online' })
+        if (pulled) return
+        if (practiceOnly) {
+          setToast('联网同步失败，仍使用本地缓存')
+          return
+        }
         try {
-          // Always pull server first. Phone/offline clients must not push a smaller snapshot.
-          const remote = await apiFetch('/api/state')
-          if (!remote.ok) throw new Error('SYNC_FAILED')
-          const stored = await remote.json() as { units?: Unit[]; settings?: AppSettings }
-          if (Array.isArray(stored.units) && stored.units.length) {
-            persistPaused.current = true
-            setUnits(stored.units)
-            setSettings(normalizeSettings(stored.settings) || settingsRef.current)
-            await saveVocabState(stored.units, normalizeSettings(stored.settings) || settingsRef.current)
-            window.setTimeout(() => { persistPaused.current = false }, 0)
-            setToast('已从服务器同步词库')
-            return
-          }
-          if (practiceOnly) {
-            setToast('服务器暂无词库，请先在电脑端导入')
-            return
-          }
           const snapshot = { units: unitsRef.current, settings: settingsRef.current }
           pendingPersist.current = snapshot
           const response = await apiFetch('/api/state', {
@@ -354,9 +375,18 @@ function App() {
         }
       })()
     }
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      // Phone often stays open while PC imports new lessons — refresh when returning to the app.
+      void pullServerVocab({ quiet: false })
+    }
     window.addEventListener('online', onOnline)
-    return () => window.removeEventListener('online', onOnline)
-  }, [auth, practiceOnly])
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener('online', onOnline)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [auth, practiceOnly]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const wordPatchTimers = useRef(new Map<string, number>())
   const queueWordPatch = (wordId: string, changes: Partial<Word>) => {
@@ -760,7 +790,16 @@ function App() {
               />
             </Suspense>
           )}
-          {view === 'settings' && <SettingsView settings={settings} onChange={setSettings} starredCount={starredCount} errorBookCount={errorBookCount} onView={nav} />}
+          {view === 'settings' && (
+            <SettingsView
+              settings={settings}
+              onChange={setSettings}
+              starredCount={starredCount}
+              errorBookCount={errorBookCount}
+              onView={nav}
+              onSyncVocab={() => { void pullServerVocab({ reason: 'manual' }) }}
+            />
+          )}
         </main>
       </div>
       <MobileTabBar view={view} reviewCount={reviewCount} onView={nav} />

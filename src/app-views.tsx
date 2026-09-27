@@ -2,7 +2,7 @@ import { useContext, useEffect, useRef, useState } from 'react'
 import {
   AudioLines, Bell, BookMarked, BookOpen, BrainCircuit, Check, CheckCircle2, ChevronLeft, ChevronRight,
   Circle, ClipboardList, Clock3, FileText, GraduationCap, Headphones, Home, Import, Keyboard, LayoutGrid, LibraryBig, List, Menu,
-  Mic, MoreHorizontal, NotebookPen, Palette, PanelLeft, PanelLeftClose, Pause, Plus, Search, Settings, Sparkles, SquarePen,
+  Mic, MoreHorizontal, NotebookPen, Palette, PanelLeft, PanelLeftClose, Pause, Plus, RefreshCw, Search, Settings, Sparkles, SquarePen,
   Sprout, Target, Trash2, Trophy, UploadCloud, UserRound, Volume2, X,
 } from 'lucide-react'
 import { apiFetch, apiUrl, setAccessToken } from './api'
@@ -1419,8 +1419,10 @@ export function ReviewView({ units, onReview, onOpenGrammar }: {
   )
 }
 
-export function SettingsView({ settings, onChange, starredCount = 0, errorBookCount = 0, onView }: {
-  settings: AppSettings; onChange: (settings: AppSettings) => void; starredCount?: number; errorBookCount?: number; onView?: (view: View) => void
+export function SettingsView({ settings, onChange, starredCount = 0, errorBookCount = 0, onView, onSyncVocab }: {
+  settings: AppSettings; onChange: (settings: AppSettings) => void; starredCount?: number; errorBookCount?: number
+  onView?: (view: View) => void
+  onSyncVocab?: () => void
 }) {
   const avatars = ['ゆ', '桜', '語', '猫', '旅', '月']
   const sample = makeFallbackWord({ term: 'こんにちは', reading: 'こんにちは', meaning: '你好' })
@@ -1446,6 +1448,14 @@ export function SettingsView({ settings, onChange, starredCount = 0, errorBookCo
           <button onClick={() => onView('grammar')}><ClipboardList size={18} /><span>语法学习</span></button>
           <button onClick={() => onView('test')}><GraduationCap size={18} /><span>单元测试</span></button>
           <button onClick={() => onView('dictation')}><Keyboard size={18} /><span>听写</span></button>
+        </div>
+      )}
+      {onSyncVocab && (
+        <div className="settings-sync-row">
+          <button type="button" className="secondary-button" onClick={onSyncVocab}>
+            <RefreshCw size={16} strokeWidth={1.7} />从服务器同步词库
+          </button>
+          <small>电脑端新导入的单元，点这里或重新打开 App 即可更新。</small>
         </div>
       )}
       <div className="settings-layout">
