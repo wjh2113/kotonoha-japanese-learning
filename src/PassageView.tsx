@@ -248,10 +248,10 @@ export function PassageView({
     cacheLocal()
   }
 
-  const flushPersist = async () => {
-    if (!persistEnabled.current) return
+  const flushPersist = async (): Promise<boolean> => {
+    if (!persistEnabled.current) return false
     cacheLocal()
-    if (!serverSyncEnabled.current) return
+    if (!serverSyncEnabled.current) return false
     pendingFlush.current = true
     while (persistBusy.current) {
       await new Promise((resolve) => window.setTimeout(resolve, 40))
@@ -261,7 +261,7 @@ export function PassageView({
       && !dirtyProgress.current.size
       && !dirtyBooks.current
       && !deletedIds.current.size) {
-      return
+      return true
     }
     persistBusy.current = true
     try {
@@ -328,6 +328,7 @@ export function PassageView({
           throw error
         }
       }
+      return true
     } catch {
       serverSyncEnabled.current = false
       if (!persistError.current) {
@@ -335,6 +336,7 @@ export function PassageView({
         setNotice('课文改为本地缓存；联网后会再同步')
       }
       cacheLocal()
+      return false
     } finally {
       persistBusy.current = false
     }
@@ -581,11 +583,15 @@ export function PassageView({
       setMode('source')
     }
     setBusy('正在保存到数据库…')
-    await flushPersist()
+    const synced = await flushPersist()
     setBusy('')
     setUploadOpen(false)
     setChapterPreview([])
     const incompleteLessons = created.filter((item) => item.status !== 'ready')
+    if (!synced) {
+      setNotice(`已导入「${lessonName}」共 ${chapterList.length} 个章节到本机，但未能写入服务器。请确认已登录且网络正常后，刷新页面会自动重试同步。`)
+      return
+    }
     if (truncated) {
       setNotice(`课文库最多 ${MAX_PASSAGES} 篇，本次仅导入 ${chapterList.length} / ${imported.lessons.length} 个章节。${incompleteLessons.length ? `其中 ${incompleteLessons.length} 篇核心列不完整。` : ''}`)
     } else if (incompleteLessons.length) {

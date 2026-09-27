@@ -1,7 +1,7 @@
 /* 言の葉 KOTONOHA — offline-first service worker.
    静态资源 cache-first；页面导航 network-first 回退缓存。
-   /api/state 与 /api/passages 永不缓存：可变数据由 IndexedDB（offline-cache）管理。 */
-const CACHE = 'kotonoha-v41'
+   词库/课文/语法/设置等可变 API 永不缓存，防止上传后仍读到旧列表。 */
+const CACHE = 'kotonoha-v42'
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png']
 
 self.addEventListener('install', (event) => {
@@ -30,7 +30,11 @@ function isLiveApi(pathname) {
     || pathname === '/api/passages'
     || pathname.startsWith('/api/passages/')
     || pathname === '/api/passage-books'
+    || pathname.startsWith('/api/passage-books/')
     || pathname.startsWith('/api/words/')
+    || pathname.startsWith('/api/units/')
+    || pathname === '/api/grammar'
+    || pathname.startsWith('/api/grammar/')
     || pathname === '/api/settings'
 }
 

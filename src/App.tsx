@@ -308,10 +308,25 @@ function App() {
       const snapshot = { units: unitsRef.current, settings: settingsRef.current }
       serverSyncEnabled.current = true
       databaseErrorShown.current = false
-      pendingPersist.current = snapshot
       setToast('已恢复联网，正在同步词库…')
       void (async () => {
         try {
+          const wordCount = (list: Unit[]) => list.reduce((sum, item) => sum + (item.words?.length || 0), 0)
+          // Prefer pulling server first. Blind PUT of a stale offline snapshot can orphan-delete newer uploads.
+          const remote = await apiFetch('/api/state')
+          if (remote.ok) {
+            const stored = await remote.json() as { units?: Unit[]; settings?: AppSettings }
+            if (Array.isArray(stored.units) && stored.units.length && wordCount(stored.units) >= wordCount(snapshot.units)) {
+              persistPaused.current = true
+              setUnits(stored.units)
+              setSettings(normalizeSettings(stored.settings) || snapshot.settings)
+              await saveVocabState(stored.units, normalizeSettings(stored.settings) || snapshot.settings)
+              window.setTimeout(() => { persistPaused.current = false }, 0)
+              setToast('已从服务器同步词库')
+              return
+            }
+          }
+          pendingPersist.current = snapshot
           const response = await apiFetch('/api/state', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },

@@ -4,6 +4,7 @@ import type { GrammarLesson, GrammarLessonProgress, GrammarProgressState } from 
 import bundledLessonMd from '../content/grammar/L02_電気屋で.md?raw'
 
 const PROGRESS_KEY = 'kotonoha-grammar-progress-v1'
+const LESSONS_CACHE_KEY = 'kotonoha-grammar-lessons-v1'
 
 function loadLocalProgress(): GrammarProgressState {
   try {
@@ -24,6 +25,25 @@ function saveLocalProgress(state: GrammarProgressState) {
   }
 }
 
+function loadCachedGrammarLessons(): GrammarLesson[] {
+  try {
+    const raw = localStorage.getItem(LESSONS_CACHE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as GrammarLesson[]
+    return Array.isArray(parsed) ? parsed.filter((item) => item?.id && Array.isArray(item.parts)) : []
+  } catch {
+    return []
+  }
+}
+
+function saveCachedGrammarLessons(lessons: GrammarLesson[]) {
+  try {
+    localStorage.setItem(LESSONS_CACHE_KEY, JSON.stringify(lessons))
+  } catch {
+    // ignore
+  }
+}
+
 export function loadBundledGrammarLessons(): GrammarLesson[] {
   const lesson = parseGrammarMarkdown(bundledLessonMd, 'L02_電気屋で.md')
   return lesson ? [lesson] : []
@@ -38,12 +58,16 @@ export async function fetchGrammarBundle(): Promise<{ lessons: GrammarLesson[]; 
     const progress = data.progress && typeof data.progress === 'object' ? data.progress : {}
     if (lessons.length) {
       saveLocalProgress(progress)
+      saveCachedGrammarLessons(lessons)
       return { lessons, progress }
     }
   } catch {
     // fall through to local/bundled
   }
+  const cached = loadCachedGrammarLessons()
   const localProgress = loadLocalProgress()
+  // Prefer last successful server snapshot over the single bundled demo lesson.
+  if (cached.length) return { lessons: cached, progress: localProgress }
   return {
     lessons: loadBundledGrammarLessons(),
     progress: localProgress,
@@ -65,6 +89,9 @@ export async function uploadGrammarLesson(lesson: GrammarLesson, sourceMarkdown:
   if (!response.ok || !data.lesson) {
     throw new Error(data.error || '语法课保存失败。')
   }
+  const cached = loadCachedGrammarLessons()
+  const next = [data.lesson, ...cached.filter((item) => item.id !== data.lesson!.id)]
+  saveCachedGrammarLessons(next)
   return data
 }
 
