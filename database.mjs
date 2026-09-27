@@ -446,18 +446,20 @@ export function createDatabase(connectionString) {
     }
   }
 
-  /** Upsert units/words/settings; delete orphans. Avoids DELETE-all rewrite. */
+  /**
+   * Upsert units/words/settings only.
+   * Never orphan-delete: a stale phone/offline snapshot PUT must not wipe
+   * units that were just imported on another device. Explicit deletes use
+   * DELETE /api/units/:id and DELETE /api/words/:id.
+   */
   const replaceState = async (input) => {
     const { units, settings } = validateState(input)
     const client = await pool.connect()
     const dropped = []
     try {
       await client.query('BEGIN')
-      const keepUnitIds = []
-      const keepWordIds = []
       for (const [unitIndex, unit] of units.entries()) {
         const unitId = text(unit.id)
-        keepUnitIds.push(unitId)
         await client.query(
           `INSERT INTO units (id, name, description, color, sort_order)
            VALUES ($1, $2, $3, $4, $5)
@@ -472,20 +474,9 @@ export function createDatabase(connectionString) {
         dropped.push(...prepared.dropped.map((item) => ({ ...item, unitId })))
         const wordRows = []
         for (const [wordIndex, entry] of prepared.kept.entries()) {
-          keepWordIds.push(text(entry.word.id))
           wordRows.push(buildWordParams(entry.word, unitId, wordIndex, entry.term, entry.reading, entry.lex))
         }
         if (wordRows.length) await upsertWordsBatch(client, wordRows)
-      }
-      if (keepWordIds.length) {
-        await client.query('DELETE FROM words WHERE NOT (id = ANY($1::text[]))', [keepWordIds])
-      } else {
-        await client.query('DELETE FROM words')
-      }
-      if (keepUnitIds.length) {
-        await client.query('DELETE FROM units WHERE NOT (id = ANY($1::text[]))', [keepUnitIds])
-      } else {
-        await client.query('DELETE FROM units')
       }
       await upsertSettings(client, settings)
       await client.query('COMMIT')

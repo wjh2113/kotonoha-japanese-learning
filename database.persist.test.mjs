@@ -24,12 +24,9 @@ run('PostgreSQL persist integration', () => {
     try {
       await db.deletePassage(passageId)
     } catch { /* ignore */ }
-    // Clean unit via replaceState orphan delete
-    const state = await db.getState()
-    await db.replaceState({
-      units: state.units.filter((unit) => unit.id !== unitId),
-      settings: state.settings,
-    })
+    try {
+      await db.deleteUnit(unitId)
+    } catch { /* ignore LAST_UNIT / missing */ }
     await db.close()
   })
 

@@ -195,10 +195,12 @@ function App() {
           setUnits(stored.units)
           setSettings(normalizeSettings(stored.settings))
           await saveVocabState(stored.units, normalizeSettings(stored.settings))
-        } else {
+        } else if (!practiceOnly) {
           const seed = await apiFetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ units, settings }) })
           if (!seed.ok) throw new Error('DATABASE_SEED_FAILED')
           await saveVocabState(units, settings)
+        } else {
+          setToast('服务器暂无词库，请先在电脑端导入')
         }
         localStorage.removeItem(STORAGE_KEY)
         localStorage.removeItem(SETTINGS_KEY)
@@ -239,6 +241,9 @@ function App() {
   useEffect(() => {
     if (auth !== 'ok' || !databaseReady) return
     if (persistPaused.current) return
+    // Mobile / narrow UI is practice-only: pull server state, never push a full snapshot
+    // (stale IndexedDB on the phone previously orphan-deleted PC imports).
+    if (practiceOnly) return
     if (skipNextUnitsPersist.current) {
       skipNextUnitsPersist.current = false
       // Keep any in-flight debounce timer, but refresh the snapshot so a stale
@@ -250,13 +255,13 @@ function App() {
     if (!serverSyncEnabled.current) return
     const timer = window.setTimeout(() => {
       const flush = async () => {
-        if (persistBusy.current || persistPaused.current || !serverSyncEnabled.current) return
+        if (persistBusy.current || persistPaused.current || !serverSyncEnabled.current || practiceOnly) return
         const payload = pendingPersist.current
         if (!payload) return
         pendingPersist.current = null
         persistBusy.current = true
         try {
-          // Units sync uses upsert (no full wipe). Settings go with the same snapshot for consistency on structural saves.
+          // Upsert-only on the server; explicit deletes use DELETE endpoints.
           const response = await apiFetch('/api/state', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -288,7 +293,7 @@ function App() {
       void flush()
     }, 350)
     return () => window.clearTimeout(timer)
-  }, [units, databaseReady, auth])
+  }, [units, databaseReady, auth, practiceOnly])
 
   useEffect(() => {
     if (auth !== 'ok' || !databaseReady || persistPaused.current || !serverSyncEnabled.current) return
@@ -305,27 +310,29 @@ function App() {
   useEffect(() => {
     if (auth !== 'ok') return
     const onOnline = () => {
-      const snapshot = { units: unitsRef.current, settings: settingsRef.current }
       serverSyncEnabled.current = true
       databaseErrorShown.current = false
       setToast('已恢复联网，正在同步词库…')
       void (async () => {
         try {
-          const wordCount = (list: Unit[]) => list.reduce((sum, item) => sum + (item.words?.length || 0), 0)
-          // Prefer pulling server first. Blind PUT of a stale offline snapshot can orphan-delete newer uploads.
+          // Always pull server first. Phone/offline clients must not push a smaller snapshot.
           const remote = await apiFetch('/api/state')
-          if (remote.ok) {
-            const stored = await remote.json() as { units?: Unit[]; settings?: AppSettings }
-            if (Array.isArray(stored.units) && stored.units.length && wordCount(stored.units) >= wordCount(snapshot.units)) {
-              persistPaused.current = true
-              setUnits(stored.units)
-              setSettings(normalizeSettings(stored.settings) || snapshot.settings)
-              await saveVocabState(stored.units, normalizeSettings(stored.settings) || snapshot.settings)
-              window.setTimeout(() => { persistPaused.current = false }, 0)
-              setToast('已从服务器同步词库')
-              return
-            }
+          if (!remote.ok) throw new Error('SYNC_FAILED')
+          const stored = await remote.json() as { units?: Unit[]; settings?: AppSettings }
+          if (Array.isArray(stored.units) && stored.units.length) {
+            persistPaused.current = true
+            setUnits(stored.units)
+            setSettings(normalizeSettings(stored.settings) || settingsRef.current)
+            await saveVocabState(stored.units, normalizeSettings(stored.settings) || settingsRef.current)
+            window.setTimeout(() => { persistPaused.current = false }, 0)
+            setToast('已从服务器同步词库')
+            return
           }
+          if (practiceOnly) {
+            setToast('服务器暂无词库，请先在电脑端导入')
+            return
+          }
+          const snapshot = { units: unitsRef.current, settings: settingsRef.current }
           pendingPersist.current = snapshot
           const response = await apiFetch('/api/state', {
             method: 'PUT',
@@ -333,11 +340,11 @@ function App() {
             body: JSON.stringify(snapshot),
           })
           if (!response.ok) throw new Error('SYNC_FAILED')
-          const stored = await response.json()
-          if (Array.isArray(stored.units)) {
+          const saved = await response.json()
+          if (Array.isArray(saved.units)) {
             persistPaused.current = true
-            setUnits(stored.units)
-            await saveVocabState(stored.units, normalizeSettings(stored.settings) || snapshot.settings)
+            setUnits(saved.units)
+            await saveVocabState(saved.units, normalizeSettings(saved.settings) || snapshot.settings)
             window.setTimeout(() => { persistPaused.current = false }, 0)
           }
           setToast('词库已同步到服务器')
@@ -349,7 +356,7 @@ function App() {
     }
     window.addEventListener('online', onOnline)
     return () => window.removeEventListener('online', onOnline)
-  }, [auth])
+  }, [auth, practiceOnly])
 
   const wordPatchTimers = useRef(new Map<string, number>())
   const queueWordPatch = (wordId: string, changes: Partial<Word>) => {
