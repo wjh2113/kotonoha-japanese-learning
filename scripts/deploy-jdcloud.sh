@@ -137,7 +137,7 @@ ensure_japan_tenant() {
   if [[ -n "\${existing_id}" ]]; then
     curl -fsS -X PUT "http://127.0.0.1:8001/admin/api/tenants/\${existing_id}/capabilities" \
       -H "Authorization: Bearer \${token}" -H 'content-type: application/json' \
-      -d '{"capabilities":["quality-chat","fast-chat","speech","vision"]}' >/dev/null || true
+      -d '{"capabilities":["quality-chat","fast-chat","speech","vision","tts"]}' >/dev/null || true
   fi
   if [[ -n "\${key}" ]]; then
     sudo sed -i "s|^LLM_GATEWAY_API_KEY=.*|LLM_GATEWAY_API_KEY=\${key}|" "\${REMOTE_DIR}/.env"

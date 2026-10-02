@@ -118,8 +118,12 @@ app.get('/api/health', async (_req, res) => {
   }
 })
 
-/** Public Japanese TTS audio (rate-limited). Used by mobile/WebView where speechSynthesis is silent. */
+/** Japanese TTS: prefer AIapiMgr CosyVoice, then Youdao/Baidu scrapers. */
 const TTS_UA = 'Mozilla/5.0 (compatible; KotonohaTTS/1.1)'
+const TTS_VOICE_FEMALE = process.env.LLM_GATEWAY_TTS_VOICE_FEMALE || 'FunAudioLLM/CosyVoice2-0.5B:anna'
+const TTS_VOICE_MALE = process.env.LLM_GATEWAY_TTS_VOICE_MALE || 'FunAudioLLM/CosyVoice2-0.5B:alex'
+const TTS_CAPABILITY = process.env.LLM_GATEWAY_TTS_CAPABILITY || 'tts'
+const TTS_MAX_CHARS = 400
 
 async function fetchTtsBuffer(url) {
   const upstream = await fetch(url, {
@@ -144,24 +148,66 @@ async function fetchBaiduTts(text) {
   )
 }
 
-async function synthesizeJapaneseTts(text) {
-  // Single MP3 only. Concatenating Youdao/Baidu frames (mixed sample rates)
-  // is inaudible in Android WebView / Capacitor.
-  const whole = await fetchYoudaoTts(text)
-  if (whole) return whole
-  return fetchBaiduTts(text)
+function resolveTtsVoice(gender) {
+  return String(gender || '').toLowerCase() === 'male' ? TTS_VOICE_MALE : TTS_VOICE_FEMALE
+}
+
+/** Binary audio from AIapiMgr POST /api/ai/tts (capability=tts). */
+async function fetchGatewayTts(text, { gender = 'female', speed = 1 } = {}) {
+  if (!gatewayKey) return null
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 45_000)
+  try {
+    const response = await fetch(`${gatewayUrl}/api/ai/tts`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${gatewayKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tenantId,
+        capability: TTS_CAPABILITY,
+        input: text,
+        voice: resolveTtsVoice(gender),
+        responseFormat: 'mp3',
+        speed: Math.min(2, Math.max(0.5, Number(speed) || 1)),
+        dataClass: 'internal',
+        fallback: true,
+      }),
+      signal: controller.signal,
+    })
+    const buf = Buffer.from(await response.arrayBuffer())
+    if (!response.ok) return null
+    if (buf.length < 400) return null
+    if (buf[0] === 0x7b /* { */ || buf[0] === 0x3c /* < */) return null
+    return buf
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function synthesizeJapaneseTts(text, options = {}) {
+  const gateway = await fetchGatewayTts(text, options)
+  if (gateway) return gateway
+  // Scrapers only handle short clips well.
+  const short = text.slice(0, 160)
+  const youdao = await fetchYoudaoTts(short)
+  if (youdao) return youdao
+  return fetchBaiduTts(short)
 }
 
 app.get('/api/tts', rateLimit(60_000, 90), async (req, res) => {
-  const q = String(req.query.q || '').trim().slice(0, 160)
+  const q = String(req.query.q || '').trim().slice(0, TTS_MAX_CHARS)
   if (!q) return res.status(400).json({ error: '缺少朗读文本。' })
   if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(q)) return res.status(400).json({ error: '仅支持日语朗读。' })
+  const gender = String(req.query.gender || 'female').toLowerCase() === 'male' ? 'male' : 'female'
+  const speed = Number(req.query.speed) || 1
   try {
-    const buf = await synthesizeJapaneseTts(q)
+    const buf = await synthesizeJapaneseTts(q, { gender, speed })
     if (!buf) return res.status(502).json({ error: '朗读服务暂不可用。' })
     res.setHeader('Content-Type', 'audio/mpeg')
     res.setHeader('Cache-Control', 'public, max-age=86400')
     res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('X-TTS-Source', gatewayKey ? 'gateway-or-fallback' : 'scraper')
     return res.send(buf)
   } catch (error) {
     console.error(error)

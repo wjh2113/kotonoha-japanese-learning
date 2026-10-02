@@ -149,7 +149,34 @@ describe('speakJapanese mobile gesture safety', () => {
     await speakJapanese('これは本です。', 'female', { sentence: true })
 
     expect(fetchMock).toHaveBeenCalled()
-    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/api/tts')
+    const url = String(fetchMock.mock.calls[0]?.[0] || '')
+    expect(url).toContain('/api/tts')
+    expect(url).toContain('gender=female')
+    expect(speechSynthesis.speak).not.toHaveBeenCalled()
+  })
+
+  it('prefers audio TTS for passage sentences even on desktop', async () => {
+    const { speechSynthesis } = installSpeechMock()
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+    })
+    Object.defineProperty(window, 'AudioContext', { configurable: true, value: undefined })
+    Object.defineProperty(window, 'webkitAudioContext', { configurable: true, value: undefined })
+    const fetchMock = vi.fn(async () => new Response(new Uint8Array(512), {
+      status: 200,
+      headers: { 'content-type': 'audio/mpeg' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:tts-desktop')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+
+    const { speakJapanese } = await import('./speech')
+    await speakJapanese('電気屋でスマートフォンを買いました。', 'male', { sentence: true })
+
+    const url = String(fetchMock.mock.calls[0]?.[0] || '')
+    expect(url).toContain('/api/tts')
+    expect(url).toContain('gender=male')
     expect(speechSynthesis.speak).not.toHaveBeenCalled()
   })
 

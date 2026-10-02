@@ -166,8 +166,8 @@ function stopAudioPlayback() {
   }
 }
 
-/** Split on particles / punctuation so each clip stays a single Youdao MP3. */
-export function chunkJapaneseForTts(text: string, max = 12) {
+/** Split Japanese for TTS. Gateway CosyVoice handles longer clips; scrapers truncate server-side. */
+export function chunkJapaneseForTts(text: string, max = 40) {
   const raw = String(text || '').trim()
   if (!raw) return []
   if (raw.length <= max) return [raw]
@@ -176,7 +176,7 @@ export function chunkJapaneseForTts(text: string, max = 12) {
   for (const ch of raw) {
     buffer += ch
     const boundary = /[。．.!！?？、，,\s]|[はがをにでとはもへのねよ]/u.test(ch)
-    if ((boundary && buffer.length >= 2) || buffer.length >= max) {
+    if ((boundary && buffer.length >= Math.min(8, max)) || buffer.length >= max) {
       const piece = buffer.trim()
       if (piece) parts.push(piece)
       buffer = ''
@@ -186,12 +186,17 @@ export function chunkJapaneseForTts(text: string, max = 12) {
   return parts.length ? parts : [raw]
 }
 
-function ttsAudioUrl(text: string) {
-  return apiUrl(`/api/tts?q=${encodeURIComponent(text)}`)
+function ttsAudioUrl(text: string, voiceGender: VoiceGender = 'female', speed = 1) {
+  const params = new URLSearchParams({
+    q: text,
+    gender: voiceGender === 'male' ? 'male' : 'female',
+  })
+  if (speed && speed !== 1) params.set('speed', String(speed))
+  return apiUrl(`/api/tts?${params.toString()}`)
 }
 
-async function fetchTtsBlob(text: string) {
-  const response = await fetch(ttsAudioUrl(text))
+async function fetchTtsBlob(text: string, voiceGender: VoiceGender = 'female', speed = 1) {
+  const response = await fetch(ttsAudioUrl(text, voiceGender, speed))
   const type = String(response.headers.get('content-type') || '')
   if (!response.ok || type.includes('json') || type.includes('html')) {
     throw new Error('tts-http')
@@ -269,11 +274,14 @@ async function playSharedBlob(blob: Blob, token: number) {
   })
 }
 
-async function speakWithAudioFallback(text: string, options: {
+async function speakWithAudioFallback(text: string, voiceGender: VoiceGender, options: {
   onStart?: () => void
   onEnd?: () => void
+  speed?: number
+  sentence?: boolean
 } = {}) {
-  const parts = chunkJapaneseForTts(text)
+  // Longer clips for CosyVoice (fewer round-trips); still split very long paragraphs.
+  const parts = chunkJapaneseForTts(text, options.sentence ? 120 : 40)
   if (!parts.length) {
     options.onEnd?.()
     return
@@ -284,7 +292,7 @@ async function speakWithAudioFallback(text: string, options: {
   try {
     for (const part of parts) {
       if (token !== audioToken) return
-      await playSharedBlob(await fetchTtsBlob(part), token)
+      await playSharedBlob(await fetchTtsBlob(part, voiceGender, options.speed ?? 1), token)
     }
   } finally {
     if (token === audioToken) options.onEnd?.()
@@ -355,19 +363,20 @@ export async function speakJapanese(text: string, voiceGender: VoiceGender, opti
   void loadSpeechVoices()
   unlockSpeech()
 
-  // Native WebViews / missing ja voices: use audio TTS that actually plays on phone.
-  if (preferAudioTtsFallback()) {
+  // 课文句子 / 手机端：优先走服务端 gateway CosyVoice（经 /api/tts），浏览器自带音色太差。
+  const preferAudio = Boolean(options.sentence) || preferAudioTtsFallback()
+  if (preferAudio) {
     try {
-      await speakWithAudioFallback(value, options)
+      await speakWithAudioFallback(value, voiceGender, options)
       return
     } catch {
-      // Fall through to browser TTS if audio CDN blocked.
+      // Fall through to browser TTS if audio gateway blocked.
     }
   }
 
   if (!speechAvailable()) {
     try {
-      await speakWithAudioFallback(value, options)
+      await speakWithAudioFallback(value, voiceGender, options)
     } catch {
       options.onEnd?.()
     }
@@ -379,7 +388,7 @@ export async function speakJapanese(text: string, voiceGender: VoiceGender, opti
 
   // Browser speak queued but never started / errored — try audio fallback.
   try {
-    await speakWithAudioFallback(value, options)
+    await speakWithAudioFallback(value, voiceGender, options)
   } catch {
     options.onEnd?.()
   }
