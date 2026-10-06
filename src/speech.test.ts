@@ -154,6 +154,9 @@ describe('speakJapanese mobile gesture safety', () => {
     expect(url).toContain('gender=female')
     expect(url).toContain('speed=1.25')
     expect(speechSynthesis.speak).not.toHaveBeenCalled()
+
+    await speakJapanese('これは本です。', 'female', { sentence: true })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('prefers audio TTS for passage sentences even on desktop', async () => {

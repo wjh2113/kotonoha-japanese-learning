@@ -1,7 +1,7 @@
 /* 言の葉 KOTONOHA — offline-first service worker.
    静态资源 cache-first；页面导航 network-first 回退缓存。
    词库/课文/语法/设置等可变 API 永不缓存，防止上传后仍读到旧列表。 */
-const CACHE = 'kotonoha-v46'
+const CACHE = 'kotonoha-v47'
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png']
 
 self.addEventListener('install', (event) => {
@@ -49,6 +49,17 @@ self.addEventListener('fetch', (event) => {
       caches.match(request).then((hit) => {
         const network = fetch(request).then((response) => { put(request, response); return response })
         return hit || network.catch(() => hit)
+      }),
+    )
+    return
+  }
+
+  // 朗读音频：命中本地缓存就不再打网关，同一句课文/单词只合成一次。
+  if (url.pathname === '/api/tts') {
+    event.respondWith(
+      caches.match(request).then((hit) => {
+        if (hit) return hit
+        return fetch(request).then((response) => { put(request, response); return response })
       }),
     )
     return

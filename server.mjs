@@ -3,6 +3,7 @@ import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createDatabase } from './database.mjs'
+import { createTtsCache } from './tts-cache.mjs'
 import {
   extractUploadedLexeme,
   hasUsableReading,
@@ -190,12 +191,17 @@ async function fetchGatewayTts(text, { gender = 'female', speed = 1 } = {}) {
 async function synthesizeJapaneseTts(text, options = {}) {
   const gateway = await fetchGatewayTts(text, options)
   if (gateway) return gateway
-  // Scrapers only handle short clips well.
   const short = text.slice(0, 160)
   const youdao = await fetchYoudaoTts(short)
   if (youdao) return youdao
   return fetchBaiduTts(short)
 }
+
+const ttsCache = createTtsCache({
+  dir: process.env.TTS_CACHE_DIR || path.join(dirname, 'data', 'tts'),
+  days: Number(process.env.TTS_CACHE_DAYS) > 0 ? Number(process.env.TTS_CACHE_DAYS) : 90,
+  synthesize: ({ text, gender, speed }) => synthesizeJapaneseTts(text, { gender, speed }),
+})
 
 app.get('/api/tts', rateLimit(60_000, 90), async (req, res) => {
   const q = String(req.query.q || '').trim().slice(0, TTS_MAX_CHARS)
@@ -204,11 +210,17 @@ app.get('/api/tts', rateLimit(60_000, 90), async (req, res) => {
   const gender = String(req.query.gender || 'female').toLowerCase() === 'male' ? 'male' : 'female'
   const speed = Number(req.query.speed) > 0 ? Number(req.query.speed) : 1.25
   try {
-    const buf = await synthesizeJapaneseTts(q, { gender, speed })
+    const { buf, hit } = await ttsCache.getOrCreate({
+      text: q,
+      gender,
+      speed,
+      voice: resolveTtsVoice(gender),
+    })
     if (!buf) return res.status(502).json({ error: '朗读服务暂不可用。' })
     res.setHeader('Content-Type', 'audio/mpeg')
-    res.setHeader('Cache-Control', 'public, max-age=86400')
+    res.setHeader('Cache-Control', 'public, max-age=2592000')
     res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('X-TTS-Cache', hit ? 'hit' : 'miss')
     res.setHeader('X-TTS-Source', gatewayKey ? 'gateway-or-fallback' : 'scraper')
     return res.send(buf)
   } catch (error) {
@@ -920,6 +932,12 @@ if (process.env.NODE_ENV === 'production') {
 
 async function start() {
   await database.initialize()
+  try {
+    const removed = ttsCache.cleanup()
+    if (removed) console.log(`TTS cache cleanup removed ${removed} files`)
+  } catch (error) {
+    console.warn('TTS cache cleanup skipped:', error.message)
+  }
   app.listen(port, host, () => console.log(`KOTONOHA API listening on http://${host}:${port} with PostgreSQL`))
   // Do not auto-backfill on every deploy/restart — that was the main token burn.
   // Incomplete words are filled only via POST /api/enrich-missing (login / import).

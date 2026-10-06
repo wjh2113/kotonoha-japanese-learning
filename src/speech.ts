@@ -14,6 +14,8 @@ let audioToken = 0
 let audioContext: AudioContext | null = null
 let activeSource: AudioBufferSourceNode | null = null
 let activeGain: GainNode | null = null
+const blobMemo = new Map<string, Promise<Blob>>()
+const BLOB_MEMO_MAX = 80
 
 /** CosyVoice 1.0 is leisurely; 1x in the reader maps to a slightly quicker lesson pace. */
 export function resolveGatewayTtsSpeed(userSpeed = 1) {
@@ -225,14 +227,29 @@ function ttsAudioUrl(text: string, voiceGender: VoiceGender = 'female', speed = 
 }
 
 async function fetchTtsBlob(text: string, voiceGender: VoiceGender = 'female', speed = 1) {
-  const response = await fetch(ttsAudioUrl(text, voiceGender, speed))
-  const type = String(response.headers.get('content-type') || '')
-  if (!response.ok || type.includes('json') || type.includes('html')) {
-    throw new Error('tts-http')
+  const url = ttsAudioUrl(text, voiceGender, speed)
+  const cached = blobMemo.get(url)
+  if (cached) return cached
+  const pending = (async () => {
+    const response = await fetch(url)
+    const type = String(response.headers.get('content-type') || '')
+    if (!response.ok || type.includes('json') || type.includes('html')) {
+      throw new Error('tts-http')
+    }
+    const blob = await response.blob()
+    if (blob.size < 400) throw new Error('tts-empty')
+    return blob
+  })()
+  blobMemo.set(url, pending)
+  pending.catch(() => {
+    if (blobMemo.get(url) === pending) blobMemo.delete(url)
+  })
+  while (blobMemo.size > BLOB_MEMO_MAX) {
+    const oldest = blobMemo.keys().next().value
+    if (oldest === undefined) break
+    blobMemo.delete(oldest)
   }
-  const blob = await response.blob()
-  if (blob.size < 400) throw new Error('tts-empty')
-  return blob
+  return pending
 }
 
 function stopActiveSource() {
@@ -490,6 +507,9 @@ export async function speakJapaneseQueue(texts: string[], voiceGender: VoiceGend
   for (let index = 0; index < lines.length; index += 1) {
     if (options.shouldContinue && !options.shouldContinue()) return
     options.onIndex?.(index)
+    if (index + 1 < lines.length) {
+      void fetchTtsBlob(lines[index + 1], voiceGender, options.speed ?? 1).catch(() => {})
+    }
     await speakJapanese(lines[index], voiceGender, {
       sentence: options.sentence,
       speed: options.speed,

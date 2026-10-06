@@ -23,6 +23,8 @@ rsync -az \
   --exclude '.postgres-data' \
   --exclude '.DS_Store' \
   --exclude 'dist' \
+  --exclude 'data' \
+  --exclude 'artifacts' \
   "${ROOT}/" "${REMOTE}:${STAGING}/"
 rsync -az "${ROOT}/dist/" "${REMOTE}:${STAGING}/dist/"
 
@@ -40,10 +42,11 @@ PORT='${PORT}'
 DOMAIN='${DOMAIN}'
 ACCESS_PASSWORD='${ACCESS_PASSWORD}'
 
-sudo mkdir -p "\${REMOTE_DIR}"
+sudo mkdir -p "\${REMOTE_DIR}" "\${REMOTE_DIR}/data/tts"
 sudo rsync -a \
   --exclude '.env' \
   --exclude 'node_modules' \
+  --exclude 'data' \
   "\${STAGING}/" "\${REMOTE_DIR}/"
 
 cd "\${REMOTE_DIR}"
