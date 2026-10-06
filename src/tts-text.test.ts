@@ -21,4 +21,15 @@ describe('spokenJapanese', () => {
     expect(spokenLexeme('電子辞書', 'でんしじしょ')).toBe('でんしじしょ')
     expect(spokenLexeme('電子辞書', 'デンシジショ')).toBe('でんしじしょ')
   })
+
+  it('reads speaker names like 山田 in Japanese even without ruby', () => {
+    expect(spokenJapanese({
+      text: '山田：スミスさん、今度の日曜日、上野へ行きませんか。',
+      tokens: [
+        { surface: '山田' },
+        { surface: '：' },
+        { surface: 'スミスさん、今度の日曜日、上野へ行きませんか。' },
+      ],
+    })).toBe('やまだ：スミスさん、こんどのにちようび、うえのへいきませんか。')
+  })
 })

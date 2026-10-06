@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createDatabase } from './database.mjs'
 import { createTtsCache } from './tts-cache.mjs'
+import { finalizeTtsKana } from './tts-kana.mjs'
 import {
   extractUploadedLexeme,
   hasUsableReading,
@@ -205,8 +206,7 @@ const ttsCache = createTtsCache({
 })
 
 app.get('/api/tts', rateLimit(60_000, 90), async (req, res) => {
-  const q = String(req.query.q || '').trim().slice(0, TTS_MAX_CHARS)
-    .replace(/[\u4e00-\u9fff]+[（(]([^）)]+)[）)]/g, '$1')
+  const q = finalizeTtsKana(String(req.query.q || '').trim()).slice(0, TTS_MAX_CHARS)
   if (!q) return res.status(400).json({ error: '缺少朗读文本。' })
   if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(q)) return res.status(400).json({ error: '仅支持日语朗读。' })
   const gender = String(req.query.gender || 'female').toLowerCase() === 'male' ? 'male' : 'female'
