@@ -12,10 +12,12 @@ import {
   chapterOptionLabel, grammarHighlightTerms, hasChineseTranslation, highlightGrammarInText, isTransientPassage,
   listCatalogLessons, mergePassageBooks, mergePassageLessons, normalizePassageSentence, MAX_PASSAGES,
   orderPassagesByCatalog, passageLessonKey, parsePassageHandbook, recordSentenceDictation, recordSentenceScore,
-  recoverInterruptedIngest, sentenceNeedsAnalysis,
+  recoverInterruptedIngest, sentenceNeedsAnalysis, splitPassageAndGrammarMarkdown, withGrammarImportMeta,
 } from './passage'
 import { PassageIntensive } from './PassageIntensive'
 import { PronunciationPractice } from './PronunciationPractice'
+import { parseGrammarMarkdown } from './grammar'
+import { uploadGrammarLesson } from './grammar-store'
 import { SettingsContext } from './settings-context'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking, unlockSpeech } from './speech'
 import { spokenJapanese } from './tts-text'
@@ -526,7 +528,8 @@ export function PassageView({
       setNotice('课文库还在加载，请稍后再试。')
       return
     }
-    const imported = parsePassageHandbook(text)
+    const { passageMarkdown, grammarMarkdown } = splitPassageAndGrammarMarkdown(text)
+    const imported = parsePassageHandbook(passageMarkdown)
     if (!imported?.lessons.length) {
       setNotice('未识别到「课文整理」手册格式。请使用下载的 .md 模版（含 ## 课文N 与「原文 / 假名注音 / 中文解释」表）。')
       return
@@ -598,19 +601,41 @@ export function PassageView({
     setUploadOpen(false)
     setChapterPreview([])
     const incompleteLessons = created.filter((item) => item.status !== 'ready')
+    let grammarNote = ''
+    if (synced && grammarMarkdown) {
+      setBusy('正在导入语法课…')
+      const packed = withGrammarImportMeta(grammarMarkdown, {
+        course: book?.name || '',
+        lessonName,
+        title: grammarMarkdown.match(/^#\s+(.+)$/m)?.[1] || lessonName,
+      })
+      const grammarLesson = parseGrammarMarkdown(packed, `${lessonName}.md`)
+      if (!grammarLesson) {
+        grammarNote = '手册里的「【语法课】」未能解析（需要「① 语法点」等标题）。课文已导入。'
+      } else {
+        try {
+          await uploadGrammarLesson(grammarLesson, packed)
+          grammarNote = `语法课「${grammarLesson.title}」已一并写入。`
+        } catch {
+          grammarNote = '课文已导入，语法课保存失败，可到「语法」页单独再传后半段。'
+        }
+      }
+      setBusy('')
+    }
+    const extra = grammarNote ? ` ${grammarNote}` : ''
     if (!synced) {
       setNotice(`已导入「${lessonName}」共 ${chapterList.length} 个章节到本机，但未能写入服务器。请确认已登录且网络正常后，刷新页面会自动重试同步。`)
       return
     }
     if (truncated) {
-      setNotice(`课文库最多 ${MAX_PASSAGES} 篇，本次仅导入 ${chapterList.length} / ${imported.lessons.length} 个章节。${incompleteLessons.length ? `其中 ${incompleteLessons.length} 篇核心列不完整。` : ''}`)
+      setNotice(`课文库最多 ${MAX_PASSAGES} 篇，本次仅导入 ${chapterList.length} / ${imported.lessons.length} 个章节。${incompleteLessons.length ? `其中 ${incompleteLessons.length} 篇核心列不完整。` : ''}${extra}`)
     } else if (incompleteLessons.length) {
-      setNotice(`已导入 ${chapterList.length} 个章节到「${lessonName}」，但有 ${incompleteLessons.length} 篇缺少假名或中文解释，请按模版补全后重传。`)
+      setNotice(`已导入 ${chapterList.length} 个章节到「${lessonName}」，但有 ${incompleteLessons.length} 篇缺少假名或中文解释，请按模版补全后重传。${extra}`)
     } else {
       setNotice(
         chapterList.length > 1
-          ? `已导入课时「${lessonName}」下 ${chapterList.length} 个章节，内容已原样写入数据库。`
-          : `已导入课时「${lessonName}」，内容已原样写入数据库。`,
+          ? `已导入课时「${lessonName}」下 ${chapterList.length} 个章节，内容已原样写入数据库。${extra}`
+          : `已导入课时「${lessonName}」，内容已原样写入数据库。${extra}`,
       )
     }
   }
@@ -1385,7 +1410,7 @@ export function PassageView({
             <span className="modal-icon"><FileText /></span>
             <span className="eyebrow">PASSAGE HANDBOOK</span>
             <h2>添加课文</h2>
-            <p>选择课本与课时后上传 Markdown。系统自动识别手册里的「## 课文N」为章节，原样入库。</p>
+            <p>选择课本与课时后上传 Markdown。同一文件可在课文表格后加「## 【语法课】」，课文和语法课会一起入库。</p>
             <div className="import-template-row">
               <a className="secondary-button import-template-link" href="/templates/课文导入模版.md" download="课文导入模版.md">
                 下载导入模版

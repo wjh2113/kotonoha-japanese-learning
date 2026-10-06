@@ -376,6 +376,37 @@ function looksLikePassageHandbook(raw: string) {
   return false
 }
 
+/** Split a combined handbook: 课文 chapters, then optional `## 【语法课】` pack. */
+export function splitPassageAndGrammarMarkdown(raw: string) {
+  const text = String(raw || '').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n')
+  const match = text.match(/^#{1,2}\s*【语法课】\s*(.*)$/m)
+  if (!match || match.index == null) {
+    return { passageMarkdown: text.trim(), grammarMarkdown: '' }
+  }
+  const passageMarkdown = text.slice(0, match.index).trim()
+  const restTitle = String(match[1] || '').trim()
+  const restBody = text.slice(match.index + match[0].length).replace(/^\n+/, '')
+  const titleLine = restTitle ? `# ${restTitle}` : '# 语法课'
+  return {
+    passageMarkdown,
+    grammarMarkdown: `${titleLine}\n${restBody}`.trim(),
+  }
+}
+
+export function withGrammarImportMeta(markdown: string, meta: { course?: string; lessonName?: string; title?: string }) {
+  const body = String(markdown || '').trim()
+  if (!body) return ''
+  if (/^---\s*\n/.test(body)) return body
+  const lesson = Number(String(meta.lessonName || '').match(/(\d+)/)?.[1] || 0)
+  const course = String(meta.course || '').trim() || '语法'
+  const title = String(meta.title || '').trim()
+  const quote = (value: string) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+  const lines = ['---', `course: ${quote(course)}`, `lesson: ${lesson}`]
+  if (title) lines.push(`title: ${quote(title)}`)
+  lines.push('---', '', body)
+  return lines.join('\n')
+}
+
 function parseHandbookGrammarBullets(block: string): PassageSentence['grammar'] {
   const points: PassageSentence['grammar'] = []
   for (const line of String(block || '').split(/\r?\n/)) {
@@ -448,7 +479,8 @@ function parseHandbookLessonBody(title: string, body: string): PassageLessonDraf
  * 一篇文件可含多章节，每章节拆成独立 Passage。上传内容原样入库，不调用模型。
  */
 export function parsePassageHandbook(raw: string): ParsedPassageImport | null {
-  const text = String(raw || '').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').trim()
+  const { passageMarkdown } = splitPassageAndGrammarMarkdown(raw)
+  const text = passageMarkdown.trim()
   if (!text || !looksLikePassageHandbook(text)) return null
 
   const lines = text.split('\n')
