@@ -9,6 +9,7 @@ import { apiFetch, apiUrl, setAccessToken } from './api'
 import { readVocabularyFile } from './docx'
 import { SettingsContext } from './settings-context'
 import { loadSpeechVoices, selectJapaneseVoice, speakJapanese } from './speech'
+import { spokenJapanese, spokenLexeme } from './tts-text'
 import type { AppSettings, ImportDraft, ThemeName, Unit, View, Word } from './types'
 import { DEFAULT_UNIT_THEME, fallbackUnitTheme, isPlaceholderTheme } from './theme'
 import { buildQuizOptions, isPlaceholderMeaning, optionLabel, orderQuizByWeakness, recordQuizAnswer, sharedDistractors, usableQuizWords } from './quiz'
@@ -384,7 +385,7 @@ export function StudyView({ unit, units, selectedWord, search, onUnit, onSelect,
 
   const selectWord = (word: Word) => {
     onSelect(word.id)
-    const speakText = String(word.reading || word.term || '').trim()
+    const speakText = spokenLexeme(word.term, word.reading)
     if (speakText) void speakJapanese(speakText, voiceGender)
   }
 
@@ -623,8 +624,8 @@ function VolumeButton({ word, small = false, sentence = false }: { word: Word; s
   const speak = async (event: React.MouseEvent) => {
     event.stopPropagation()
     const text = sentence
-      ? word.example
-      : String(word.reading || word.term || '').trim()
+      ? spokenJapanese({ text: word.example, reading: word.exampleReading })
+      : spokenLexeme(word.term, word.reading)
     await speakJapanese(text, voiceGender, {
       sentence,
       onStart: () => setSpeaking(true),
@@ -865,7 +866,7 @@ export function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit
   }, [current?.id, kind])
   useEffect(() => {
     if (kind !== 'listening' || !current || answers[current.id]) return
-    void speakJapanese(current.term, voiceGender)
+    void speakJapanese(spokenLexeme(current.term, current.reading), voiceGender)
     // Speak once per unanswered question; answers/unit updates must not reshuffle audio.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, current?.id, voiceGender])
@@ -959,7 +960,7 @@ export function TestView({ unit, units, onUnit, onBack, onAnswer }: { unit: Unit
             <button
               type="button"
               className="quiz-listen-play"
-              onClick={() => void speakJapanese(current.term, voiceGender)}
+              onClick={() => void speakJapanese(spokenLexeme(current.term, current.reading), voiceGender)}
               aria-label="播放单词"
             >
               <Volume2 size={34} strokeWidth={1.6} />
@@ -1069,7 +1070,7 @@ export function WordbookView({
   }
 
   const speakTerm = (term: string, reading?: string) => {
-    const speakText = String(reading || term || '').trim()
+    const speakText = spokenLexeme(term, reading)
     if (speakText) void speakJapanese(speakText, voiceGender)
   }
 
@@ -1217,7 +1218,7 @@ function WordCardSheet({
             type="button"
             className="wordbook-speak"
             aria-label={`朗读 ${word.term}`}
-            onClick={() => { if (word.term) void speakJapanese(word.term, voiceGender) }}
+            onClick={() => { if (word.term) void speakJapanese(spokenLexeme(word.term, word.reading), voiceGender) }}
           >
             <Volume2 size={18} strokeWidth={1.7} />
           </button>

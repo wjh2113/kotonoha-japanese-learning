@@ -11,6 +11,7 @@ import {
 import type { GrammarBlock, GrammarLesson, GrammarPoint, GrammarProgressState, GrammarQuestion } from './grammar-types'
 import { SettingsContext } from './settings-context'
 import { speakJapanese, unlockSpeech } from './speech'
+import { spokenJapanese } from './tts-text'
 
 type Screen =
   | { name: 'hub' }
@@ -67,7 +68,7 @@ function BlockView({ block }: { block: GrammarBlock }) {
             type="button"
             className="grammar-example"
             onPointerDown={() => unlockSpeech()}
-            onClick={() => void speakJapanese(item.jp, voiceGender, { sentence: true })}
+            onClick={() => void speakJapanese(spokenJapanese(item.jp), voiceGender, { sentence: true })}
           >
             <span className="jp">{item.jp}</span>
             <small>{item.zh}</small>
@@ -447,7 +448,7 @@ export function GrammarView({
             className="grammar-point-speak"
             aria-label="朗读语法点标题"
             onPointerDown={() => unlockSpeech()}
-            onClick={() => void speakJapanese(activePoint.title, voiceGender, { sentence: true })}
+            onClick={() => void speakJapanese(spokenJapanese(activePoint.title), voiceGender, { sentence: true })}
           >
             <Volume2 size={18} strokeWidth={1.7} />
           </button>
@@ -565,7 +566,7 @@ export function GrammarView({
                   className="grammar-point-speak"
                   aria-label="朗读语法点标题"
                   onPointerDown={() => unlockSpeech()}
-                  onClick={() => void speakJapanese(previewPoint.title, voiceGender, { sentence: true })}
+                  onClick={() => void speakJapanese(spokenJapanese(previewPoint.title), voiceGender, { sentence: true })}
                 >
                   <Volume2 size={18} strokeWidth={1.7} />
                 </button>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Check, CheckCircle2, ChevronLeft, FileText, Headphones, Pause, Play, SquarePen, Star, X } from 'lucide-react'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking } from './speech'
+import { spokenJapanese } from './tts-text'
 import type { Passage, PassageSentence, VoiceGender } from './types'
 import { normalizeJapanese } from './utils'
 
@@ -62,7 +63,7 @@ export function PassageIntensive({
     onPlaying(false)
     stopSpeaking()
     onIndex(index)
-    void speakJapanese(absolute.reading || absolute.text, voiceGender, { sentence: true })
+    void speakJapanese(spokenJapanese(absolute), voiceGender, { sentence: true })
   }
 
   const playContinuous = (startIndex = sentenceIndex) => {
@@ -75,7 +76,7 @@ export function PassageIntensive({
     onPlaying(true)
     onIndex(start)
     void speakJapaneseQueue(
-      passage.sentences.slice(start).map((item) => item.reading || item.text),
+      passage.sentences.slice(start).map((item) => spokenJapanese(item)),
       voiceGender,
       {
         sentence: true,

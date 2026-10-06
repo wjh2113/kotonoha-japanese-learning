@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { SettingsContext } from './settings-context'
 import { speakJapanese, stopSpeaking } from './speech'
+import { spokenLexeme } from './tts-text'
 import type { Unit, Word } from './types'
 import {
   clampDictationGoal, clampNewRatio, clampPlaySpeed, clampPlayTimes, dictationCandidates, isConfirmEnter, katakanaDiff,
@@ -116,7 +117,7 @@ export function DictationView({
     for (let round = 0; round < total; round += 1) {
       if (playToken.current !== token) return
       setPlayIndex(round + 1)
-      await speakJapanese(word.term, voiceGender, { speed: playSettings.speed, restart: round === 0 })
+      await speakJapanese(spokenLexeme(word.term, word.reading), voiceGender, { speed: playSettings.speed, restart: round === 0 })
       if (round < total - 1 && playToken.current === token) {
         await new Promise((resolve) => window.setTimeout(resolve, 280))
       }

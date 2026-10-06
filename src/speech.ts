@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core'
 import { apiUrl } from './api'
 import type { VoiceGender } from './types'
+import { expandFuriganaForTts } from './tts-text'
 
 const MALE_VOICE_HINT = /ichiro|keita|takumi|haruto|daichi|naoki|otoya|male|man|男性|男声/i
 const FEMALE_VOICE_HINT = /nanami|ayumi|haruka|kyoko|sayaka|female|woman|女性|女声/i
@@ -443,7 +444,7 @@ export async function speakJapanese(text: string, voiceGender: VoiceGender, opti
   onStart?: () => void
   onEnd?: () => void
 } = {}) {
-  const value = String(text || '').trim()
+  const value = expandFuriganaForTts(String(text || '').trim())
   if (!value) {
     options.onEnd?.()
     return

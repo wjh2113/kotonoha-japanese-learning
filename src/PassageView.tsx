@@ -18,6 +18,7 @@ import { PassageIntensive } from './PassageIntensive'
 import { PronunciationPractice } from './PronunciationPractice'
 import { SettingsContext } from './settings-context'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking, unlockSpeech } from './speech'
+import { spokenJapanese } from './tts-text'
 import type { Passage, PassageBook, PassageLesson, PassageSentence } from './types'
 import { uid } from './utils'
 
@@ -51,7 +52,7 @@ function renderPassageJp(
       const showRuby = Boolean(reading && reading !== surface && /[\u4e00-\u9fff]/.test(surface))
       const hit = grammarTerms.some((term) => term && surface.includes(term))
       const body = showRuby ? <ruby>{surface}<rt>{reading}</rt></ruby> : surface
-      const speakText = (reading || surface).trim()
+      const speakText = spokenJapanese({ text: surface, reading })
       const canSpeak = Boolean(onSpeakWord && isSpeakableJapanese(speakText))
       const className = [hit ? 'grammar-hit' : '', canSpeak ? 'passage-word-token' : '']
         .filter(Boolean)
@@ -92,7 +93,7 @@ function renderPassageJp(
           aria-label={`朗读 ${part.text}`}
           onClick={(event) => {
             event.stopPropagation()
-            onSpeakWord!(part.text)
+            onSpeakWord!(spokenJapanese(part.text))
           }}
         >
           {part.text}
@@ -639,7 +640,7 @@ export function PassageView({
     stopSpeaking()
     setSentenceIndex(index)
     const next = passage.sentences[index]
-    if (speak) void speakJapanese(next.reading || next.text, voiceGender, { sentence: true })
+    if (speak) void speakJapanese(spokenJapanese(next), voiceGender, { sentence: true })
   }
 
   const playFrom = (startIndex = 0) => {
@@ -657,7 +658,7 @@ export function PassageView({
     setSentenceIndex(start)
     const run = (from: number) => {
       void speakJapaneseQueue(
-        passage.sentences.slice(from).map((item) => item.reading || item.text),
+        passage.sentences.slice(from).map((item) => spokenJapanese(item)),
         voiceGender,
         {
           sentence: true,

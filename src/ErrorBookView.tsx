@@ -2,6 +2,7 @@ import { useContext, useMemo, useState } from 'react'
 import { Check, ChevronLeft, NotebookPen, Pause, Play, Trash2, Volume2 } from 'lucide-react'
 import { SettingsContext } from './settings-context'
 import { speakJapanese } from './speech'
+import { spokenLexeme } from './tts-text'
 import type { Unit, Word } from './types'
 import {
   errorBookWords, matchesErrorBookFilter, pickErrorBookWords, wordKatakana,
@@ -122,7 +123,7 @@ function ErrorBookSpeak({ word }: { word: Word }) {
       className={`volume-button small ${speaking ? 'speaking' : ''}`}
       aria-label="朗读"
       onClick={async () => {
-        await speakJapanese(word.term, voiceGender, {
+        await speakJapanese(spokenLexeme(word.term, word.reading), voiceGender, {
           onStart: () => setSpeaking(true),
           onEnd: () => setSpeaking(false),
         })
