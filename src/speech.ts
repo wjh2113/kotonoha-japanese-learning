@@ -149,10 +149,7 @@ function primeSharedAudio() {
 
 function stopAudioPlayback() {
   audioToken += 1
-  if (activeSource) {
-    try { activeSource.stop() } catch { /* ignore */ }
-    activeSource = null
-  }
+  stopActiveSource()
   if (blobUrl) {
     URL.revokeObjectURL(blobUrl)
     blobUrl = null
@@ -206,6 +203,12 @@ async function fetchTtsBlob(text: string, voiceGender: VoiceGender = 'female', s
   return blob
 }
 
+function stopActiveSource() {
+  if (!activeSource) return
+  try { activeSource.stop() } catch { /* ignore */ }
+  activeSource = null
+}
+
 async function playSharedBlob(blob: Blob, token: number) {
   const ctx = getAudioContext()
   if (ctx) {
@@ -216,25 +219,35 @@ async function playSharedBlob(blob: Blob, token: number) {
     if (token !== audioToken) return
     const buffer = await ctx.decodeAudioData(data.slice(0))
     if (token !== audioToken) return
+    stopActiveSource()
     await new Promise<void>((resolve, reject) => {
       const source = ctx.createBufferSource()
       source.buffer = buffer
       source.connect(ctx.destination)
       activeSource = source
-      source.onended = () => {
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
         if (activeSource === source) activeSource = null
         resolve()
       }
+      source.onended = finish
       try {
         source.start()
       } catch (reason) {
         reject(reason instanceof Error ? reason : new Error('audio-tts-failed'))
         return
       }
+      // MP3 duration can be underestimated; never overlap the next clip.
       window.setTimeout(() => {
-        if (token !== audioToken) return
-        if (activeSource === source) resolve()
-      }, Math.ceil(buffer.duration * 1000) + 800)
+        if (token !== audioToken || activeSource !== source) {
+          finish()
+          return
+        }
+        stopActiveSource()
+        finish()
+      }, Math.ceil(buffer.duration * 1000) + 2500)
     })
     return
   }
@@ -329,7 +342,10 @@ function speakWithBrowser(text: string, voiceGender: VoiceGender, options: {
       Math.max(12_000, Math.ceil((text.length * 420) / Math.max(0.3, utterance.rate)) + 3000),
     )
     const startWatch = window.setTimeout(() => {
-      if (!started) finish('error')
+      if (!started) {
+        try { window.speechSynthesis.cancel() } catch { /* ignore */ }
+        finish('error')
+      }
     }, 1200)
     utterance.onstart = () => {
       started = true
@@ -370,7 +386,7 @@ export async function speakJapanese(text: string, voiceGender: VoiceGender, opti
       await speakWithAudioFallback(value, voiceGender, options)
       return
     } catch {
-      // Fall through to browser TTS if audio gateway blocked.
+      stopAudioPlayback()
     }
   }
 
@@ -386,7 +402,7 @@ export async function speakJapanese(text: string, voiceGender: VoiceGender, opti
   const result = await speakWithBrowser(value, voiceGender, options)
   if (result === 'ok') return
 
-  // Browser speak queued but never started / errored — try audio fallback.
+  stopSpeaking()
   try {
     await speakWithAudioFallback(value, voiceGender, options)
   } catch {
@@ -409,11 +425,13 @@ export async function speakJapaneseQueue(texts: string[], voiceGender: VoiceGend
   speed?: number
   onIndex?: (index: number) => void
   onAllEnd?: () => void
+  shouldContinue?: () => boolean
 } = {}) {
   const lines = texts.map((item) => String(item || '').trim()).filter(Boolean)
   if (!lines.length) return
   stopSpeaking()
   for (let index = 0; index < lines.length; index += 1) {
+    if (options.shouldContinue && !options.shouldContinue()) return
     options.onIndex?.(index)
     await speakJapanese(lines[index], voiceGender, {
       sentence: options.sentence,
@@ -421,5 +439,6 @@ export async function speakJapaneseQueue(texts: string[], voiceGender: VoiceGend
       restart: false,
     })
   }
+  if (options.shouldContinue && !options.shouldContinue()) return
   options.onAllEnd?.()
 }

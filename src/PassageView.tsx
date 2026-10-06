@@ -197,6 +197,15 @@ export function PassageView({
   const booksRef = useRef<PassageBook[]>([])
   const lessonsRef = useRef<PassageLesson[]>([])
   const activeSentenceRef = useRef<HTMLLIElement | null>(null)
+  const playGenRef = useRef(0)
+  const playingFullRef = useRef(false)
+  playingFullRef.current = playingFull
+
+  const haltPlayback = () => {
+    playGenRef.current += 1
+    setPlayingFull(false)
+    stopSpeaking()
+  }
 
   useEffect(() => () => {
     stopSpeaking()
@@ -508,7 +517,7 @@ export function PassageView({
     setSourceEditing(false)
     setMode('source')
     setPlayingFull(false)
-    stopSpeaking()
+    haltPlayback()
   }, [selectedId])
 
   const queueHandbook = async (text: string) => {
@@ -625,6 +634,7 @@ export function PassageView({
 
   const goSentence = (index: number, speak = false) => {
     if (!passage || index < 0 || index >= passage.sentences.length) return
+    playGenRef.current += 1
     setPlayingFull(false)
     stopSpeaking()
     setSentenceIndex(index)
@@ -635,11 +645,14 @@ export function PassageView({
   const playFrom = (startIndex = 0) => {
     if (!passage?.sentences.length) return
     if (playingFull) {
+      playGenRef.current += 1
       stopSpeaking()
       setPlayingFull(false)
       return
     }
     const start = Math.max(0, Math.min(startIndex, passage.sentences.length - 1))
+    const playGen = playGenRef.current + 1
+    playGenRef.current = playGen
     setPlayingFull(true)
     setSentenceIndex(start)
     const run = (from: number) => {
@@ -649,8 +662,10 @@ export function PassageView({
         {
           sentence: true,
           speed: playSpeed,
+          shouldContinue: () => playGenRef.current === playGen,
           onIndex: (index) => setSentenceIndex(from + index),
           onAllEnd: () => {
+            if (playGenRef.current !== playGen) return
             if (playLoop) run(0)
             else setPlayingFull(false)
           },
@@ -665,8 +680,7 @@ export function PassageView({
   const playCurrentLine = () => {
     if (!passage?.sentences[sentenceIndex]) return
     if (playingFull) {
-      stopSpeaking()
-      setPlayingFull(false)
+      haltPlayback()
       return
     }
     goSentence(sentenceIndex, true)
@@ -788,7 +802,7 @@ export function PassageView({
     }
     setSelectedId(id)
     setPlayingFull(false)
-    stopSpeaking()
+    haltPlayback()
     if (practiceOnly) setMobileCatalog(false)
   }
 
@@ -895,7 +909,7 @@ export function PassageView({
                     aria-label="返回目录"
                     onClick={() => {
                       setPlayingFull(false)
-                      stopSpeaking()
+                      haltPlayback()
                       setMobileCatalog(true)
                     }}
                   >
@@ -906,8 +920,7 @@ export function PassageView({
                     type="button"
                     className="passage-mobile-shadow-btn"
                     onClick={() => {
-                      setPlayingFull(false)
-                      stopSpeaking()
+                      haltPlayback()
                       setMode('shadow')
                     }}
                   >
@@ -1034,12 +1047,11 @@ export function PassageView({
                       ['shadow', '跟读', Mic],
                     ] as const).map(([id, label, Icon]) => (
                       <button key={id} type="button" className={mode === id ? 'active' : ''} onClick={() => {
+                        haltPlayback()
                         setMode(id)
                         if (id === 'source') {
                           setSourceDraft(passage.sourceText)
                           setSourceEditing(false)
-                          setPlayingFull(false)
-                          stopSpeaking()
                         }
                       }}><Icon size={14} strokeWidth={1.6} />{label}</button>
                     ))}
@@ -1054,8 +1066,7 @@ export function PassageView({
                     className="passage-mobile-back"
                     aria-label="返回原文"
                     onClick={() => {
-                      setPlayingFull(false)
-                      stopSpeaking()
+                      haltPlayback()
                       setMode('source')
                     }}
                   >
@@ -1085,7 +1096,7 @@ export function PassageView({
                   onDictation={(sentenceId, text) => patchPassage(passage.id, {
                     progress: recordSentenceDictation(passage.progress, sentenceId, text),
                   })}
-                  onBack={() => { setPlayingFull(false); stopSpeaking(); setMode('source') }}
+                  onBack={() => { haltPlayback(); setMode('source') }}
                 />
               ) : mode === 'shadow' && sentence ? (
                 <div className={`shadow-layout shadow-design${practiceOnly ? ' shadow-mobile' : ''}`}>
@@ -1098,7 +1109,7 @@ export function PassageView({
                       <ol className="passage-sentences shadow-list">
                         {passage.sentences.map((item, index) => (
                           <li key={item.id}>
-                            <button type="button" className={index === sentenceIndex ? 'active' : ''} onClick={() => { unlockSpeech(); setSentenceIndex(index); void speakJapanese(item.reading || item.text, voiceGender, { sentence: true }) }}>
+                            <button type="button" className={index === sentenceIndex ? 'active' : ''} onClick={() => { unlockSpeech(); goSentence(index, true) }}>
                               <em>{index + 1}</em>
                               <span className="intensive-line-play" aria-hidden><Play size={14} strokeWidth={1.6} /></span>
                               <span className="jp">{item.text}</span>
@@ -1127,7 +1138,7 @@ export function PassageView({
                     <h3 className="jp shadow-target">
                       {renderPassageJp(sentence, [], (text) => {
                         unlockSpeech()
-                        void speakJapanese(text, voiceGender)
+                        void speakJapanese(text, voiceGender, { sentence: true })
                       })}
                     </h3>
                     {hasChineseTranslation(sentence.translation) && (
@@ -1259,7 +1270,7 @@ export function PassageView({
                                 <span className="passage-bilingual-jp">
                                   <span className="jp">{renderPassageJp(item, grammarTerms, (text) => {
                                     unlockSpeech()
-                                    void speakJapanese(text, voiceGender)
+                                    void speakJapanese(text, voiceGender, { sentence: true })
                                   })}</span>
                                 </span>
                                 {hasChineseTranslation(item.translation) && (
@@ -1343,8 +1354,7 @@ export function PassageView({
                       setSelectedId(nextPassage.id)
                       setMode('source')
                       setSentenceIndex(0)
-                      setPlayingFull(false)
-                      stopSpeaking()
+                      haltPlayback()
                     }}
                   >
                     下一课<ChevronRight size={16} strokeWidth={1.6} />
