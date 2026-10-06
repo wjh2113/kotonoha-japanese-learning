@@ -172,6 +172,32 @@ export function parseVocabularyHandbook(raw: string): ImportDraft[] {
   return normalizeImportDrafts(out)
 }
 
+function markdownTableToTsv(raw: string) {
+  const rows = String(raw || '').split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('|'))
+    .map((line) => line.replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim()))
+    .filter((cells) => cells.length && !cells.every((cell) => /^:?-+:?$/.test(cell)))
+  return rows.map((cells) => cells.join('\t')).join('\n')
+}
+
+/** 课时手册里的 Markdown 单词表（【单词】）。 */
+export function parseVocabularyMarkdownTable(raw: string): ImportDraft[] {
+  const tsv = markdownTableToTsv(raw)
+  const text = tsv || String(raw || '').trim()
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (!lines.length) return []
+  const headerCols = splitImportColumns(lines[0])
+  const header = matchTableHeader(headerCols)
+  if (!header || !header.includes('term') || !header.includes('reading') || !header.includes('meaning')) return []
+  const out: ImportDraft[] = []
+  for (const line of lines.slice(1)) {
+    const draft = draftFromTableRow(splitImportColumns(line), header)
+    if (draft) out.push(draft)
+  }
+  return normalizeImportDrafts(out)
+}
+
 export function makeFallbackWord(draft: ImportDraft): Word {
   const cleaned = looksLikeVocabularyTerm(draft.term)
     ? draft

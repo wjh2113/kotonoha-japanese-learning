@@ -376,21 +376,42 @@ function looksLikePassageHandbook(raw: string) {
   return false
 }
 
-/** Split a combined handbook: 课文 chapters, then optional `## 【语法课】` pack. */
-export function splitPassageAndGrammarMarkdown(raw: string) {
+export function canonicalLessonName(raw: string) {
+  const text = String(raw || '').replace(/^【课文整理】\s*/, '').trim()
+  const n = Number(text.match(/(\d+)/)?.[1])
+  if (Number.isFinite(n) && n > 0) return `第${String(n).padStart(3, '0')}课`
+  return text.slice(0, 80)
+}
+
+/** 课文 / 【单词】 / 【语法课】 写在同一份课时手册里。 */
+export function splitLessonHandbook(raw: string) {
   const text = String(raw || '').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n')
-  const match = text.match(/^#{1,2}\s*【语法课】\s*(.*)$/m)
-  if (!match || match.index == null) {
-    return { passageMarkdown: text.trim(), grammarMarkdown: '' }
+  const re = /^#{1,2}\s*【(语法课|单词|词汇)】\s*(.*)$/gm
+  const hits = [...text.matchAll(re)]
+  if (!hits.length) {
+    return { passageMarkdown: text.trim(), grammarMarkdown: '', vocabMarkdown: '' }
   }
-  const passageMarkdown = text.slice(0, match.index).trim()
-  const restTitle = String(match[1] || '').trim()
-  const restBody = text.slice(match.index + match[0].length).replace(/^\n+/, '')
-  const titleLine = restTitle ? `# ${restTitle}` : '# 语法课'
-  return {
-    passageMarkdown,
-    grammarMarkdown: `${titleLine}\n${restBody}`.trim(),
+  const passageMarkdown = text.slice(0, hits[0].index).trim()
+  let grammarMarkdown = ''
+  let vocabMarkdown = ''
+  for (let i = 0; i < hits.length; i += 1) {
+    const kind = hits[i][1]
+    const title = String(hits[i][2] || '').trim()
+    const start = (hits[i].index || 0) + hits[i][0].length
+    const end = i + 1 < hits.length ? (hits[i + 1].index || text.length) : text.length
+    const body = text.slice(start, end).replace(/^\n+/, '').trim()
+    if (kind === '语法课') {
+      grammarMarkdown = `${title ? `# ${title}` : '# 语法课'}\n${body}`.trim()
+    } else {
+      vocabMarkdown = body
+    }
   }
+  return { passageMarkdown, grammarMarkdown, vocabMarkdown }
+}
+
+export function splitPassageAndGrammarMarkdown(raw: string) {
+  const { passageMarkdown, grammarMarkdown } = splitLessonHandbook(raw)
+  return { passageMarkdown, grammarMarkdown }
 }
 
 export function withGrammarImportMeta(markdown: string, meta: { course?: string; lessonName?: string; title?: string }) {
@@ -479,7 +500,7 @@ function parseHandbookLessonBody(title: string, body: string): PassageLessonDraf
  * 一篇文件可含多章节，每章节拆成独立 Passage。上传内容原样入库，不调用模型。
  */
 export function parsePassageHandbook(raw: string): ParsedPassageImport | null {
-  const { passageMarkdown } = splitPassageAndGrammarMarkdown(raw)
+  const { passageMarkdown } = splitLessonHandbook(raw)
   const text = passageMarkdown.trim()
   if (!text || !looksLikePassageHandbook(text)) return null
 

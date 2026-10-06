@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chunkItems, extractPassageVocab, unusedPassageVocab, isTransientPassage, listCatalogLessons, listPassageBooks, mergeAnalyzedSentences, mergePassageLessons, MAX_PASSAGES, orderPassagesByCatalog, catalogOptionLabel, chapterOptionLabel, passageLessonKey, PASSAGE_ANALYZE_CHUNK, PASSAGE_ANALYZE_CONCURRENCY, passageNeedsAnalysis, passageProgressSummary, parsePassageHandbook, parsePassageTable, recordSentenceScore, recoverInterruptedIngest, splitPassageAndGrammarMarkdown, withGrammarImportMeta } from './passage'
+import { chunkItems, extractPassageVocab, unusedPassageVocab, isTransientPassage, listCatalogLessons, listPassageBooks, mergeAnalyzedSentences, mergePassageLessons, MAX_PASSAGES, orderPassagesByCatalog, catalogOptionLabel, chapterOptionLabel, passageLessonKey, PASSAGE_ANALYZE_CHUNK, PASSAGE_ANALYZE_CONCURRENCY, passageNeedsAnalysis, passageProgressSummary, parsePassageHandbook, parsePassageTable, recordSentenceScore, recoverInterruptedIngest, canonicalLessonName, splitLessonHandbook, splitPassageAndGrammarMarkdown, withGrammarImportMeta } from './passage'
 import type { Passage } from './types'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -77,13 +77,20 @@ describe('parsePassageHandbook', () => {
     expect(parsed!.lessons[2].sentences.length).toBeGreaterThanOrEqual(4)
   })
 
-  it('keeps 【语法课】 out of passage chapters and parseable as a grammar pack', async () => {
+  it('keeps 【语法课】 and 【单词】 out of passage chapters', async () => {
     const md = readFileSync(resolve(process.cwd(), 'public/templates/课文导入模版.md'), 'utf8')
-    const { passageMarkdown, grammarMarkdown } = splitPassageAndGrammarMarkdown(md)
+    const { passageMarkdown, grammarMarkdown, vocabMarkdown } = splitLessonHandbook(md)
     expect(grammarMarkdown).toContain('三大谓语句型')
     expect(passageMarkdown).not.toContain('【语法课】')
+    expect(passageMarkdown).not.toContain('【单词】')
+    expect(vocabMarkdown).toContain('たべる')
+    const { passageMarkdown: aliasPassage, grammarMarkdown: aliasGrammar } = splitPassageAndGrammarMarkdown(md)
+    expect(aliasGrammar).toContain('三大谓语句型')
+    expect(aliasPassage).toBe(passageMarkdown)
     const parsed = parsePassageHandbook(md)
-    expect(parsed!.lessons.map((item) => item.title).join()).not.toMatch(/语法课/)
+    expect(parsed!.lessons.map((item) => item.title).join()).not.toMatch(/语法课|单词/)
+    expect(canonicalLessonName(parsed!.documentTitle)).toBe('第007课')
+    expect(canonicalLessonName('第7课')).toBe('第007课')
     const { parseGrammarMarkdown, flattenGrammarPoints, countGrammarQuestions } = await import('./grammar')
     const packed = withGrammarImportMeta(grammarMarkdown, { course: '羊驼日语', lessonName: '第007课' })
     const lesson = parseGrammarMarkdown(packed, '第007课.md')

@@ -16,6 +16,7 @@ import {
   TestView, WordbookView,
 } from './app-views'
 import { getReviewState, scheduleReview, touchStudyStreak, uid } from './utils'
+import { canonicalLessonName } from './passage'
 import { loadSpeechVoices, unlockSpeech } from './speech'
 import type { DictationMode } from './DictationView'
 
@@ -625,6 +626,64 @@ function App() {
     })()
   }
 
+  const importLessonWords = async (lessonName: string, words: Word[]): Promise<string> => {
+    const name = canonicalLessonName(lessonName)
+    if (!name || !words.length) return ''
+    try {
+      let target = units.find((item) => canonicalLessonName(item.name) === name)
+      if (!target) {
+        const created: Unit = {
+          id: uid(),
+          name,
+          description: DEFAULT_UNIT_THEME,
+          color: COLORS[units.length % COLORS.length],
+          words: [],
+        }
+        const createResponse = await apiFetch('/api/units', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: created.id,
+            name: created.name,
+            description: created.description,
+            color: created.color,
+            sortOrder: units.length,
+          }),
+        })
+        if (!createResponse.ok) throw new Error('CREATE_UNIT_FAILED')
+        skipNextUnitsPersist.current = true
+        setUnits((current) => (current.some((item) => item.id === created.id) ? current : [...current, created]))
+        target = created
+      }
+      const response = await apiFetch(`/api/units/${encodeURIComponent(target.id)}/words`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ words }),
+      })
+      if (!response.ok) throw new Error('APPEND_WORDS_FAILED')
+      const data = await response.json() as { words?: Word[]; droppedCount?: number }
+      const saved = Array.isArray(data.words) ? data.words : words
+      const unitIdForPatch = target.id
+      const unitSnapshot = target
+      skipNextUnitsPersist.current = true
+      setUnits((current) => {
+        const has = current.some((item) => item.id === unitIdForPatch)
+        const next = has ? current : [...current, { ...unitSnapshot, words: [] }]
+        return next.map((item) => item.id === unitIdForPatch
+          ? { ...item, name, words: [...item.words, ...saved] }
+          : item)
+      })
+      setUnitId(unitIdForPatch)
+      if (saved[0]) setSelectedId(saved[0].id)
+      const dropped = Number(data.droppedCount) || 0
+      return dropped > 0
+        ? `单词已写入课时「${name}」（${saved.length} 个，跳过 ${dropped} 个）。`
+        : `单词已写入课时「${name}」（${saved.length} 个）。`
+    } catch {
+      return '单词未能写入词库，请稍后在单词页补导。'
+    }
+  }
+
   const renameUnit = (targetId: string, name: string) => {
     const next = name.trim()
     if (!next) {
@@ -787,6 +846,7 @@ function App() {
                   setGrammarFocus(opts?.lessonNo ? { lessonNo: opts.lessonNo } : null)
                   setView('grammar')
                 }}
+                onImportLessonWords={importLessonWords}
               />
             </Suspense>
           )}

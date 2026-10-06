@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatReviewTime, getReviewState, levenshtein, makeFallbackWord, matchesTypingAnswer, normalizeJapanese, parseVocabulary, parseVocabularyHandbook, pronunciationScore, pronunciationScoreFor, scheduleReview, splitJapaneseSentences, splitWordList, toHiragana, toRomaji } from './utils'
+import { formatReviewTime, getReviewState, levenshtein, makeFallbackWord, matchesTypingAnswer, normalizeJapanese, parseVocabulary, parseVocabularyHandbook, parseVocabularyMarkdownTable, pronunciationScore, pronunciationScoreFor, scheduleReview, splitJapaneseSentences, splitWordList, toHiragana, toRomaji } from './utils'
 import { fallbackUnitTheme, isPlaceholderTheme } from './theme'
 
 describe('parseVocabulary', () => {
@@ -56,6 +56,21 @@ describe('parseVocabulary', () => {
   it('rejects non-handbook formats in strict handbook parser', () => {
     expect(parseVocabularyHandbook('猫\n犬')).toEqual([])
     expect(parseVocabularyHandbook('单词,读音,释义\n食べる,たべる,吃')).toEqual([])
+  })
+
+  it('parses markdown vocab tables from a lesson handbook', () => {
+    const md = [
+      '| 序号 | 单词 | 假名 | 词性 | 中文释义 | 罗马音 |',
+      '| --- | --- | --- | --- | --- | --- |',
+      '| 1 | 私 | わたし | 代词 | 我 | watashi |',
+    ].join('\n')
+    expect(parseVocabularyMarkdownTable(md)[0]).toMatchObject({
+      term: '私',
+      reading: 'わたし',
+      partOfSpeech: '代词',
+      meaning: '我',
+      romaji: 'watashi',
+    })
   })
 
   it('parses handbook rows without header when leading index is present', () => {

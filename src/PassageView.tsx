@@ -9,10 +9,10 @@ import { readPassageSource } from './docx'
 import { isPassagePlaceholder, looksLikeErrorDocument, publicApiMessage } from './error-text'
 import { loadPassagesBundle, savePassagesBundle } from './offline-cache'
 import {
-  chapterOptionLabel, grammarHighlightTerms, hasChineseTranslation, highlightGrammarInText, isTransientPassage,
+  canonicalLessonName, chapterOptionLabel, grammarHighlightTerms, hasChineseTranslation, highlightGrammarInText, isTransientPassage,
   listCatalogLessons, mergePassageBooks, mergePassageLessons, normalizePassageSentence, MAX_PASSAGES,
   orderPassagesByCatalog, passageLessonKey, parsePassageHandbook, recordSentenceDictation, recordSentenceScore,
-  recoverInterruptedIngest, sentenceNeedsAnalysis, splitPassageAndGrammarMarkdown, withGrammarImportMeta,
+  recoverInterruptedIngest, sentenceNeedsAnalysis, splitLessonHandbook, withGrammarImportMeta,
 } from './passage'
 import { PassageIntensive } from './PassageIntensive'
 import { PronunciationPractice } from './PronunciationPractice'
@@ -21,8 +21,8 @@ import { uploadGrammarLesson } from './grammar-store'
 import { SettingsContext } from './settings-context'
 import { speakJapanese, speakJapaneseQueue, stopSpeaking, unlockSpeech } from './speech'
 import { spokenJapanese } from './tts-text'
-import type { Passage, PassageBook, PassageLesson, PassageSentence } from './types'
-import { uid } from './utils'
+import type { Passage, PassageBook, PassageLesson, PassageSentence, Word } from './types'
+import { makeFallbackWord, parseVocabularyMarkdownTable, uid } from './utils'
 
 type Mode = 'source' | 'intensive' | 'shadow'
 
@@ -158,8 +158,10 @@ function hydratePassage(item: unknown): Passage | null {
 
 export function PassageView({
   onOpenGrammar,
+  onImportLessonWords,
 }: {
   onOpenGrammar?: (opts?: { lessonNo?: number; lessonName?: string }) => void
+  onImportLessonWords?: (lessonName: string, words: Word[]) => Promise<string>
 }) {
   const { voiceGender } = useContext(SettingsContext)
   const practiceOnly = isPracticeOnlyClient()
@@ -528,13 +530,13 @@ export function PassageView({
       setNotice('课文库还在加载，请稍后再试。')
       return
     }
-    const { passageMarkdown, grammarMarkdown } = splitPassageAndGrammarMarkdown(text)
+    const { passageMarkdown, grammarMarkdown, vocabMarkdown } = splitLessonHandbook(text)
     const imported = parsePassageHandbook(passageMarkdown)
     if (!imported?.lessons.length) {
       setNotice('未识别到「课文整理」手册格式。请使用下载的 .md 模版（含 ## 课文N 与「原文 / 假名注音 / 中文解释」表）。')
       return
     }
-    const lessonName = (draftLessonName.trim() || imported.documentTitle.trim()).slice(0, 80)
+    const lessonName = canonicalLessonName(draftLessonName.trim() || imported.documentTitle.trim())
     if (!lessonName) {
       setNotice('请填写课时名称（例如：第007课）。也可在手册第一行写 # 【课文整理】第007课。')
       setChapterPreview(imported.lessons.map((item) => item.title))
@@ -555,14 +557,17 @@ export function PassageView({
     }
     const book = books.find((item) => item.id === draftBookId)
     let lesson = lessonsRef.current.find(
-      (item) => item.bookId === (book?.id || '') && item.name === lessonName,
+      (item) => item.bookId === (book?.id || '') && canonicalLessonName(item.name) === lessonName,
     )
     if (!lesson) {
       lesson = { id: uid(), bookId: book?.id || '', name: lessonName }
       commitLessons([...lessonsRef.current, lesson])
-    } else if (book?.id && lesson.bookId !== book.id) {
-      lesson = { ...lesson, bookId: book.id }
-      commitLessons(lessonsRef.current.map((item) => item.id === lesson!.id ? lesson! : item))
+    } else {
+      const nextBookId = book?.id || lesson.bookId
+      if (lesson.name !== lessonName || (book?.id && lesson.bookId !== book.id)) {
+        lesson = { ...lesson, name: lessonName, bookId: nextBookId }
+        commitLessons(lessonsRef.current.map((item) => item.id === lesson!.id ? lesson! : item))
+      }
     }
     // 倒序加入，使「课文1」排在列表最前并被选中
     const chapters = [...chapterList].reverse()
@@ -622,20 +627,33 @@ export function PassageView({
       }
       setBusy('')
     }
-    const extra = grammarNote ? ` ${grammarNote}` : ''
+    let vocabNote = ''
+    if (synced && onImportLessonWords && vocabMarkdown.trim()) {
+      const drafts = parseVocabularyMarkdownTable(vocabMarkdown)
+      const words = drafts.map((draft) => makeFallbackWord(draft))
+      if (words.length) {
+        setBusy('正在导入本课单词…')
+        vocabNote = await onImportLessonWords(lessonName, words)
+        setBusy('')
+      } else {
+        vocabNote = '手册含【单词】但未识别到表格，请核对表头：单词、假名、词性、中文释义。'
+      }
+    }
+    const extra = [grammarNote, vocabNote].filter(Boolean).join(' ')
+    const tail = extra ? ` ${extra}` : ''
     if (!synced) {
       setNotice(`已导入「${lessonName}」共 ${chapterList.length} 个章节到本机，但未能写入服务器。请确认已登录且网络正常后，刷新页面会自动重试同步。`)
       return
     }
     if (truncated) {
-      setNotice(`课文库最多 ${MAX_PASSAGES} 篇，本次仅导入 ${chapterList.length} / ${imported.lessons.length} 个章节。${incompleteLessons.length ? `其中 ${incompleteLessons.length} 篇核心列不完整。` : ''}${extra}`)
+      setNotice(`课文库最多 ${MAX_PASSAGES} 篇，本次仅导入 ${chapterList.length} / ${imported.lessons.length} 个章节。${incompleteLessons.length ? `其中 ${incompleteLessons.length} 篇核心列不完整。` : ''}${tail}`)
     } else if (incompleteLessons.length) {
-      setNotice(`已导入 ${chapterList.length} 个章节到「${lessonName}」，但有 ${incompleteLessons.length} 篇缺少假名或中文解释，请按模版补全后重传。${extra}`)
+      setNotice(`已导入 ${chapterList.length} 个章节到「${lessonName}」，但有 ${incompleteLessons.length} 篇缺少假名或中文解释，请按模版补全后重传。${tail}`)
     } else {
       setNotice(
         chapterList.length > 1
-          ? `已导入课时「${lessonName}」下 ${chapterList.length} 个章节，内容已原样写入数据库。${extra}`
-          : `已导入课时「${lessonName}」，内容已原样写入数据库。${extra}`,
+          ? `已导入课时「${lessonName}」下 ${chapterList.length} 个章节，内容已原样写入数据库。${tail}`
+          : `已导入课时「${lessonName}」，内容已原样写入数据库。${tail}`,
       )
     }
   }
@@ -848,7 +866,7 @@ export function PassageView({
           </div>
           {!practiceOnly && (
             <div className="hero-actions">
-              <button className="primary-button" disabled={!ready} onClick={openUpload}><UploadCloud size={17} strokeWidth={1.6} />添加课文</button>
+              <button className="primary-button" disabled={!ready} onClick={openUpload}><UploadCloud size={17} strokeWidth={1.6} />导入课时</button>
             </div>
           )}
         </section>
@@ -1398,8 +1416,8 @@ export function PassageView({
           <h2>还没有课文</h2>
           <p>{practiceOnly
             ? '请先在电脑端上传课文手册，手机端联网同步后即可离线练习与朗读。'
-            : '请上传「课文整理」Markdown 手册。结构为课本 → 课时 → 章节（## 课文N），上传时选择课本与课时，系统自动识别章节入库，不调用模型。'}</p>
-          {!practiceOnly && <button onClick={openUpload}>添加课文</button>}
+            : '请上传一份课时手册（.md）。同一文件包含课文、【单词】、【语法课】，课时名称统一为第NNN课。'}</p>
+          {!practiceOnly && <button onClick={openUpload}>导入课时</button>}
         </div>
       ) : null}
 
@@ -1409,13 +1427,13 @@ export function PassageView({
             <button className="modal-close" onClick={() => !busy && setUploadOpen(false)}><X /></button>
             <span className="modal-icon"><FileText /></span>
             <span className="eyebrow">PASSAGE HANDBOOK</span>
-            <h2>添加课文</h2>
-            <p>选择课本与课时后上传 Markdown。同一文件可在课文表格后加「## 【语法课】」，课文和语法课会一起入库。</p>
+            <h2>导入课时</h2>
+            <p>上传一份 Markdown：课文、单词、语法课写在同一文件里，课时名称统一（例如第011课）。</p>
             <div className="import-template-row">
               <a className="secondary-button import-template-link" href="/templates/课文导入模版.md" download="课文导入模版.md">
                 下载导入模版
               </a>
-              <small>结构：课本 → 课时（# 第N课）→ 章节（## 课文N）→ 原文/假名注音/中文解释表</small>
+              <small>同一文件：课文表格 → ## 【单词】 → ## 【语法课】。课时会规范成第007课，单词单元同名。</small>
             </div>
             <label className="passage-add-title">课本
               <span className="passage-book-row">
@@ -1430,7 +1448,7 @@ export function PassageView({
               <input
                 list="passage-lesson-suggestions"
                 value={draftLessonName}
-                placeholder="例如：第007课（可与手册 # 标题一致）"
+                placeholder="例如：第007课（与单词单元、语法课号一致）"
                 onChange={(event) => setDraftLessonName(event.target.value.slice(0, 80))}
               />
               <datalist id="passage-lesson-suggestions">
@@ -1449,7 +1467,7 @@ export function PassageView({
             >
               <input type="file" accept=".md,.markdown,text/markdown,text/x-markdown" hidden disabled={Boolean(busy)} onChange={(event) => { void readUpload(event.target.files?.[0]); event.target.value = '' }} />
               {busy ? <span className="spinner dark" /> : <UploadCloud />}
-              <b>{busy || '拖入或选择课文整理 .md'}</b>
+              <b>{busy || '拖入或选择课时手册 .md'}</b>
               <span>不接受 Word / 图片 / 粘贴</span>
             </label>
             {notice && <div className="modal-notice">{notice}</div>}
