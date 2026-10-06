@@ -152,6 +152,7 @@ describe('speakJapanese mobile gesture safety', () => {
     const url = String(fetchMock.mock.calls[0]?.[0] || '')
     expect(url).toContain('/api/tts')
     expect(url).toContain('gender=female')
+    expect(url).toContain('speed=1.25')
     expect(speechSynthesis.speak).not.toHaveBeenCalled()
   })
 
@@ -187,5 +188,24 @@ describe('speakJapanese mobile gesture safety', () => {
     expect(speechSynthesis.speak).toHaveBeenCalledTimes(1)
     await pending
     expect(spoken[0]?.text).toBe('花')
+  })
+
+  it('maps 1x reader speed to a quicker CosyVoice pace', async () => {
+    const { resolveGatewayTtsSpeed } = await import('./speech')
+    expect(resolveGatewayTtsSpeed(1)).toBe(1.25)
+    expect(resolveGatewayTtsSpeed(0.75)).toBe(0.94)
+    expect(resolveGatewayTtsSpeed(1.5)).toBe(1.88)
+  })
+
+  it('zeros trailing low-energy samples that cause CosyVoice hiss', async () => {
+    const { speechEndIndex, applySpeechEdges } = await import('./speech')
+    const sr = 1000
+    const samples = new Float32Array(1000)
+    for (let i = 0; i < 400; i += 1) samples[i] = 0.4
+    for (let i = 400; i < 1000; i += 1) samples[i] = 0.002
+    const end = speechEndIndex(samples, sr)
+    expect(end).toBeLessThan(500)
+    applySpeechEdges(samples, sr, end)
+    expect(samples[900]).toBe(0)
   })
 })

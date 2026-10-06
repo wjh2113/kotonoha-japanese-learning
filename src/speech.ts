@@ -13,6 +13,38 @@ let blobUrl: string | null = null
 let audioToken = 0
 let audioContext: AudioContext | null = null
 let activeSource: AudioBufferSourceNode | null = null
+let activeGain: GainNode | null = null
+
+/** CosyVoice 1.0 is leisurely; 1x in the reader maps to a slightly quicker lesson pace. */
+export function resolveGatewayTtsSpeed(userSpeed = 1) {
+  const n = Number(userSpeed)
+  const base = Number.isFinite(n) && n > 0 ? n : 1
+  return Math.min(2, Math.max(0.5, Math.round(base * 1.25 * 100) / 100))
+}
+
+/** Find the last frame that still has speech energy. */
+export function speechEndIndex(samples: Float32Array, sampleRate: number) {
+  const window = Math.max(32, Math.floor(sampleRate * 0.02))
+  let end = samples.length
+  while (end > window) {
+    let sum = 0
+    for (let i = end - window; i < end; i += 1) sum += samples[i] * samples[i]
+    if (Math.sqrt(sum / window) > 0.016) break
+    end -= Math.floor(window / 2)
+  }
+  return Math.min(samples.length, end + Math.floor(sampleRate * 0.02))
+}
+
+export function applySpeechEdges(samples: Float32Array, sampleRate: number, endIndex: number) {
+  const fadeIn = Math.min(endIndex, Math.floor(sampleRate * 0.008))
+  const fadeOut = Math.min(endIndex, Math.floor(sampleRate * 0.03))
+  for (let i = 0; i < fadeIn; i += 1) samples[i] *= i / fadeIn
+  const fadeStart = Math.max(0, endIndex - fadeOut)
+  for (let i = fadeStart; i < endIndex; i += 1) {
+    samples[i] *= (endIndex - 1 - i) / Math.max(1, fadeOut)
+  }
+  for (let i = endIndex; i < samples.length; i += 1) samples[i] = 0
+}
 
 /** Tiny silent WAV so the shared <audio> can be primed inside a user gesture. */
 const SILENT_WAV = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA'
@@ -187,8 +219,8 @@ function ttsAudioUrl(text: string, voiceGender: VoiceGender = 'female', speed = 
   const params = new URLSearchParams({
     q: text,
     gender: voiceGender === 'male' ? 'male' : 'female',
+    speed: String(resolveGatewayTtsSpeed(speed)),
   })
-  if (speed && speed !== 1) params.set('speed', String(speed))
   return apiUrl(`/api/tts?${params.toString()}`)
 }
 
@@ -204,9 +236,22 @@ async function fetchTtsBlob(text: string, voiceGender: VoiceGender = 'female', s
 }
 
 function stopActiveSource() {
-  if (!activeSource) return
-  try { activeSource.stop() } catch { /* ignore */ }
+  const ctx = audioContext
+  const gain = activeGain
+  const source = activeSource
+  activeGain = null
   activeSource = null
+  if (gain && ctx) {
+    try {
+      const now = ctx.currentTime
+      gain.gain.cancelScheduledValues(now)
+      gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), now)
+      gain.gain.linearRampToValueAtTime(0.0001, now + 0.02)
+    } catch { /* ignore */ }
+  }
+  if (source) {
+    try { source.stop() } catch { /* ignore */ }
+  }
 }
 
 async function playSharedBlob(blob: Blob, token: number) {
@@ -219,35 +264,47 @@ async function playSharedBlob(blob: Blob, token: number) {
     if (token !== audioToken) return
     const buffer = await ctx.decodeAudioData(data.slice(0))
     if (token !== audioToken) return
+    let endIndex = 0
+    for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+      endIndex = Math.max(endIndex, speechEndIndex(buffer.getChannelData(channel), buffer.sampleRate))
+    }
+    for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+      applySpeechEdges(buffer.getChannelData(channel), buffer.sampleRate, endIndex)
+    }
+    const playSeconds = Math.max(0.05, endIndex / buffer.sampleRate)
     stopActiveSource()
     await new Promise<void>((resolve, reject) => {
       const source = ctx.createBufferSource()
+      const gain = ctx.createGain()
       source.buffer = buffer
-      source.connect(ctx.destination)
+      source.connect(gain)
+      gain.connect(ctx.destination)
       activeSource = source
+      activeGain = gain
       let settled = false
       const finish = () => {
         if (settled) return
         settled = true
-        if (activeSource === source) activeSource = null
+        if (activeSource === source) {
+          activeSource = null
+          activeGain = null
+        }
         resolve()
       }
       source.onended = finish
       try {
-        source.start()
+        source.start(0, 0, playSeconds)
       } catch (reason) {
         reject(reason instanceof Error ? reason : new Error('audio-tts-failed'))
         return
       }
-      // MP3 duration can be underestimated; never overlap the next clip.
       window.setTimeout(() => {
         if (token !== audioToken || activeSource !== source) {
           finish()
           return
         }
-        stopActiveSource()
         finish()
-      }, Math.ceil(buffer.duration * 1000) + 2500)
+      }, Math.ceil(playSeconds * 1000) + 250)
     })
     return
   }

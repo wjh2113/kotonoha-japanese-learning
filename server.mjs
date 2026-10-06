@@ -167,7 +167,9 @@ async function fetchGatewayTts(text, { gender = 'female', speed = 1 } = {}) {
         input: text,
         voice: resolveTtsVoice(gender),
         responseFormat: 'mp3',
-        speed: Math.min(2, Math.max(0.5, Number(speed) || 1)),
+        // CosyVoice only honors speed in non-stream inference.
+        stream: false,
+        speed: Math.min(2, Math.max(0.5, Number(speed) || 1.25)),
         dataClass: 'internal',
         fallback: true,
       }),
@@ -200,7 +202,7 @@ app.get('/api/tts', rateLimit(60_000, 90), async (req, res) => {
   if (!q) return res.status(400).json({ error: '缺少朗读文本。' })
   if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(q)) return res.status(400).json({ error: '仅支持日语朗读。' })
   const gender = String(req.query.gender || 'female').toLowerCase() === 'male' ? 'male' : 'female'
-  const speed = Number(req.query.speed) || 1
+  const speed = Number(req.query.speed) > 0 ? Number(req.query.speed) : 1.25
   try {
     const buf = await synthesizeJapaneseTts(q, { gender, speed })
     if (!buf) return res.status(502).json({ error: '朗读服务暂不可用。' })
