@@ -662,11 +662,12 @@ export function PassageView({
     if (!file || ingesting.current) return
     if (!ready) { setNotice('课文库还在加载，请稍后再试。'); return }
     ingesting.current = true
-    setBusy('正在读取课文手册…')
+    setBusy(file.name.toLowerCase().endsWith('.zip') ? '正在解压课时压缩包…' : '正在读取课文手册…')
     setNotice('')
     try {
       const source = await readPassageSource(file)
       await queueHandbook(source.text)
+      if (source.packNote) setNotice((current) => (current ? `${current} ${source.packNote}` : source.packNote))
     } catch (reason) {
       setNotice(reason instanceof Error ? reason.message : '课文读取失败。')
       setBusy('')
@@ -1416,7 +1417,7 @@ export function PassageView({
           <h2>还没有课文</h2>
           <p>{practiceOnly
             ? '请先在电脑端上传课文手册，手机端联网同步后即可离线练习与朗读。'
-            : '请上传一份课时手册（.md）。同一文件包含课文、【单词】、【语法课】，课时名称统一为第NNN课。'}</p>
+            : '请上传课时手册 .md，或包含课文 / 单词 / 语法的 .zip。课时名称统一为第NNN课，信息勿拆丢。'}</p>
           {!practiceOnly && <button onClick={openUpload}>导入课时</button>}
         </div>
       ) : null}
@@ -1428,12 +1429,12 @@ export function PassageView({
             <span className="modal-icon"><FileText /></span>
             <span className="eyebrow">PASSAGE HANDBOOK</span>
             <h2>导入课时</h2>
-            <p>上传一份 Markdown：课文、单词、语法课写在同一文件里，课时名称统一（例如第011课）。</p>
+            <p>上传 .md 或 .zip。可一份手册含课文+单词+语法，也可 zip 里分开放（如 课文.md + 单词.xlsx + 语法.md），课时名统一，内容勿漏。</p>
             <div className="import-template-row">
               <a className="secondary-button import-template-link" href="/templates/课文导入模版.md" download="课文导入模版.md">
                 下载导入模版
               </a>
-              <small>同一文件：课文表格 → ## 【单词】 → ## 【语法课】。课时会规范成第007课，单词单元同名。</small>
+              <small>支持：单文件 .md，或 zip（课文 Markdown + 单词表 xlsx/md + 语法 md）。课时规范成第007课。</small>
             </div>
             <label className="passage-add-title">课本
               <span className="passage-book-row">
@@ -1465,9 +1466,9 @@ export function PassageView({
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => { event.preventDefault(); if (!busy) void readUpload(event.dataTransfer.files[0]) }}
             >
-              <input type="file" accept=".md,.markdown,text/markdown,text/x-markdown" hidden disabled={Boolean(busy)} onChange={(event) => { void readUpload(event.target.files?.[0]); event.target.value = '' }} />
+              <input type="file" accept=".md,.markdown,.zip,text/markdown,text/x-markdown,application/zip" hidden disabled={Boolean(busy)} onChange={(event) => { void readUpload(event.target.files?.[0]); event.target.value = '' }} />
               {busy ? <span className="spinner dark" /> : <UploadCloud />}
-              <b>{busy || '拖入或选择课时手册 .md'}</b>
+              <b>{busy || '拖入或选择课时手册 .md / .zip'}</b>
               <span>不接受 Word / 图片 / 粘贴</span>
             </label>
             {notice && <div className="modal-notice">{notice}</div>}

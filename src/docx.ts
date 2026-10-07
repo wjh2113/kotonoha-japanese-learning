@@ -102,13 +102,125 @@ export async function extractDocxPassage(file: File) {
   return { text: htmlToPassageText(result.value), images }
 }
 
+function basename(path: string) {
+  return path.replace(/\\/g, '/').split('/').pop() || path
+}
+
+function isJunkZipPath(path: string) {
+  const normalized = path.replace(/\\/g, '/')
+  const name = basename(normalized)
+  if (!name || normalized.endsWith('/')) return true
+  if (normalized.startsWith('__MACOSX/') || normalized.includes('/__MACOSX/')) return true
+  if (name.startsWith('._') || name === '.DS_Store' || name === 'Thumbs.db') return true
+  return false
+}
+
+function decodeZipText(bytes: Uint8Array) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    return new TextDecoder('utf-8').decode(bytes)
+  }
+}
+
+function looksLikeVocabTable(text: string) {
+  return /(^|\n)\s*\|?\s*序号\s*\|/.test(text)
+    || /(^|\n)序号\t单词\t假名/.test(text)
+    || /(^|\n)单词\t假名\t词性\t中文释义/.test(text)
+    || /【单词】|【词汇】/.test(text)
+}
+
+function looksLikeGrammarPack(text: string) {
+  return /【语法课】/.test(text)
+    || /^##\s*第\s*\d+\s*部分/m.test(text)
+    || /^##\s*[①②③④⑤⑥⑦⑧⑨⑩]/m.test(text)
+}
+
+function classifyLessonEntry(path: string, text: string): 'passage' | 'vocab' | 'grammar' | 'unknown' {
+  const name = basename(path)
+  if (/单词|词汇|vocab|words?/i.test(name)) return 'vocab'
+  if (/语法|grammar/i.test(name)) return 'grammar'
+  if (/课文|会话|passage|课时|handbook/i.test(name)) return 'passage'
+  if (/【课文整理】/.test(text) || (/\|\s*原文\s*\|/.test(text) && /\|\s*中文解释\s*\|/.test(text))) return 'passage'
+  if (looksLikeVocabTable(text)) return 'vocab'
+  if (looksLikeGrammarPack(text)) return 'grammar'
+  return 'unknown'
+}
+
+async function workbookBytesToVocabularyText(bytes: Uint8Array, filename: string) {
+  const file = new File([bytes], filename, {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+  return readVocabularyFile(file)
+}
+
+async function readLessonZip(file: File) {
+  if (file.size > 20 * 1024 * 1024) throw new Error('ZIP 请控制在 20MB 以内。')
+  const { unzipSync } = await import('fflate')
+  const entries = unzipSync(new Uint8Array(await file.arrayBuffer()))
+  let passageMarkdown = ''
+  let vocabMarkdown = ''
+  let grammarMarkdown = ''
+  const leftovers: string[] = []
+
+  for (const [path, data] of Object.entries(entries)) {
+    if (isJunkZipPath(path) || !data?.length) continue
+    const name = basename(path)
+    const lower = name.toLowerCase()
+    if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+      const text = await workbookBytesToVocabularyText(data, name)
+      vocabMarkdown = vocabMarkdown ? `${vocabMarkdown}\n${text}` : text
+      continue
+    }
+    if (!(lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.txt'))) {
+      leftovers.push(name)
+      continue
+    }
+    const text = decodeZipText(data).replace(/^\uFEFF/, '').trim()
+    if (!text) continue
+    const kind = classifyLessonEntry(path, text)
+    if (kind === 'passage') {
+      // 一份综合手册优先：本身已含单词/语法时整份保留
+      if (/【单词】|【词汇】|【语法课】/.test(text) || (!passageMarkdown && /原文/.test(text))) {
+        passageMarkdown = passageMarkdown || text
+      } else {
+        passageMarkdown = passageMarkdown ? `${passageMarkdown}\n\n${text}` : text
+      }
+    } else if (kind === 'vocab') {
+      vocabMarkdown = vocabMarkdown ? `${vocabMarkdown}\n${text}` : text
+    } else if (kind === 'grammar') {
+      grammarMarkdown = grammarMarkdown ? `${grammarMarkdown}\n\n${text}` : text
+    } else {
+      leftovers.push(name)
+    }
+  }
+
+  if (!passageMarkdown) {
+    throw new Error('ZIP 里没有识别到课文 Markdown（需含「原文 / 假名注音 / 中文解释」表，或文件名含「课文」）。')
+  }
+
+  const { assembleLessonHandbook } = await import('./passage')
+  const text = assembleLessonHandbook({ passageMarkdown, vocabMarkdown, grammarMarkdown })
+  if (!text) throw new Error('ZIP 内容无法拼成课时手册。')
+  return {
+    text,
+    images: [] as Blob[],
+    packNote: leftovers.length
+      ? `已忽略 ${leftovers.length} 个非导入文件（${leftovers.slice(0, 3).join('、')}${leftovers.length > 3 ? '…' : ''}）。`
+      : '',
+  }
+}
+
 export async function readPassageSource(file: File) {
   const extension = file.name.toLowerCase().split('.').pop() || ''
+  if (extension === 'zip' || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
+    return readLessonZip(file)
+  }
   if (['md', 'markdown'].includes(extension) || file.type === 'text/markdown' || file.type === 'text/x-markdown') {
     if (file.size > 1024 * 1024) throw new Error('Markdown 文件请控制在 1MB 以内。')
-    return { text: await file.text(), images: [] as Blob[] }
+    return { text: await file.text(), images: [] as Blob[], packNote: '' }
   }
-  throw new Error('课文只支持「课文整理」Markdown 模版（.md）。请先下载模版按格式填写。')
+  throw new Error('请上传课时手册 .md，或包含课文 / 单词 / 语法的 .zip（信息勿拆丢）。')
 }
 
 export async function readVocabularyFile(file: File) {

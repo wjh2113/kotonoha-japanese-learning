@@ -414,6 +414,45 @@ export function splitPassageAndGrammarMarkdown(raw: string) {
   return { passageMarkdown, grammarMarkdown }
 }
 
+/** 把拆开的课文 / 单词 / 语法拼回一份课时手册（导入 zip 时用）。 */
+export function assembleLessonHandbook(parts: {
+  passageMarkdown: string
+  vocabMarkdown?: string
+  grammarMarkdown?: string
+  lessonName?: string
+}) {
+  const rawPassage = String(parts.passageMarkdown || '').trim()
+  if (!rawPassage) return ''
+  const fromPassage = splitLessonHandbook(rawPassage)
+  const body = fromPassage.passageMarkdown || rawPassage
+  const lesson = canonicalLessonName(
+    parts.lessonName
+    || body.match(/^#\s*【课文整理】\s*(.+)$/m)?.[1]
+    || body.match(/^#\s+(.+)$/m)?.[1]
+    || '',
+  )
+  const vocab = String(parts.vocabMarkdown || fromPassage.vocabMarkdown || '').trim()
+  let grammar = String(parts.grammarMarkdown || fromPassage.grammarMarkdown || '').trim()
+  if (grammar) {
+    grammar = grammar.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '').trim()
+  }
+
+  const chunks = [body]
+  if (vocab) chunks.push('', `## 【单词】${lesson}`, '', vocab)
+  if (grammar) {
+    const firstLine = grammar.split('\n')[0] || ''
+    const hasTitle = /^#{1,2}\s+/.test(firstLine)
+    const title = hasTitle
+      ? firstLine.replace(/^#{1,2}\s+/, '').trim()
+      : (lesson || '语法课')
+    const rest = hasTitle
+      ? grammar.slice(firstLine.length).replace(/^\n+/, '')
+      : grammar
+    chunks.push('', `## 【语法课】${title}`, '', rest)
+  }
+  return chunks.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
 export function withGrammarImportMeta(markdown: string, meta: { course?: string; lessonName?: string; title?: string }) {
   const body = String(markdown || '').trim()
   if (!body) return ''

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chunkItems, extractPassageVocab, unusedPassageVocab, isTransientPassage, listCatalogLessons, listPassageBooks, mergeAnalyzedSentences, mergePassageLessons, MAX_PASSAGES, orderPassagesByCatalog, catalogOptionLabel, chapterOptionLabel, passageLessonKey, PASSAGE_ANALYZE_CHUNK, PASSAGE_ANALYZE_CONCURRENCY, passageNeedsAnalysis, passageProgressSummary, parsePassageHandbook, parsePassageTable, recordSentenceScore, recoverInterruptedIngest, canonicalLessonName, splitLessonHandbook, splitPassageAndGrammarMarkdown, withGrammarImportMeta } from './passage'
+import { assembleLessonHandbook, chunkItems, extractPassageVocab, unusedPassageVocab, isTransientPassage, listCatalogLessons, listPassageBooks, mergeAnalyzedSentences, mergePassageLessons, MAX_PASSAGES, orderPassagesByCatalog, catalogOptionLabel, chapterOptionLabel, passageLessonKey, PASSAGE_ANALYZE_CHUNK, PASSAGE_ANALYZE_CONCURRENCY, passageNeedsAnalysis, passageProgressSummary, parsePassageHandbook, parsePassageTable, recordSentenceScore, recoverInterruptedIngest, canonicalLessonName, splitLessonHandbook, splitPassageAndGrammarMarkdown, withGrammarImportMeta } from './passage'
 import type { Passage } from './types'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -75,6 +75,30 @@ describe('parsePassageHandbook', () => {
     expect(parsed!.lessons[0].sentences.at(-1)!.grammar.length).toBeGreaterThanOrEqual(1)
     expect(parsed!.lessons[1].title).toMatch(/课文2/)
     expect(parsed!.lessons[2].sentences.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('assembles split passage / vocab / grammar back into one handbook', () => {
+    const md = assembleLessonHandbook({
+      passageMarkdown: [
+        '# 【课文整理】第7课',
+        '',
+        '## 课文1：测试',
+        '',
+        '| 原文 | 假名注音 | 中文解释 |',
+        '| --- | --- | --- |',
+        '| 私は学生です。 | 私（わたし）は学生（がくせい）です。 | 我是学生。 |',
+      ].join('\n'),
+      vocabMarkdown: '| 序号 | 单词 | 假名 | 词性 | 中文释义 |\n| --- | --- | --- | --- | --- |\n| 1 | 私 | わたし | 代词 | 我 |',
+      grammarMarkdown: '# 第007课 です\n\n## 第 1 部分　测试\n\n## ① 名词谓语句\n\n**句型公式**\n\n- AはBです\n',
+      lessonName: '第7课',
+    })
+    const parts = splitLessonHandbook(md)
+    expect(canonicalLessonName('第7课')).toBe('第007课')
+    expect(parts.passageMarkdown).toContain('原文')
+    expect(parts.passageMarkdown).not.toContain('【单词】')
+    expect(parts.vocabMarkdown).toContain('わたし')
+    expect(parts.grammarMarkdown).toContain('名词谓语句')
+    expect(parsePassageHandbook(md)?.lessons).toHaveLength(1)
   })
 
   it('keeps 【语法课】 and 【单词】 out of passage chapters', async () => {

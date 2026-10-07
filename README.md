@@ -81,7 +81,7 @@ LLM_GATEWAY_SPEECH_CAPABILITY=speech
 - 词汇：仅支持「词汇手册」Excel 模版（`.xlsx`）。表头需含序号、单词、假名、词性、中文释义等字段；表内内容原样入库。
 - 课文：仅支持「课文整理」Markdown 模版（`.md`）。不接受 Word、图片、粘贴或自由正文。
 
-模版可在课文页下载一份课时手册：`public/templates/课文导入模版.md`（课文 + 单词 + 语法）。单词页仍可单独下载 `public/templates/词汇导入模版.xlsx`。
+模版可在课文页下载：`public/templates/课文导入模版.md`（课文 + 单词 + 语法）。也可打成 zip（课文.md + 单词.xlsx + 语法.md）一次导入。单词页仍可单独下载 `public/templates/词汇导入模版.xlsx`。
 
 ## 语音说明
 

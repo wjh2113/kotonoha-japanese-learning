@@ -39,7 +39,73 @@ describe('Word vocabulary extraction', () => {
   })
 
   it('rejects passage non-markdown uploads', async () => {
-    await expect(readPassageSource(new File(['x'], 'a.txt'))).rejects.toThrow('Markdown')
+    await expect(readPassageSource(new File(['x'], 'a.txt'))).rejects.toThrow('.md')
+  })
+
+  it('merges a lesson zip with 课文 md + 单词 tsv-as-md + 语法 md', async () => {
+    const { zipSync, strToU8 } = await import('fflate')
+    const { splitLessonHandbook } = await import('./passage')
+    const passage = [
+      '# 【课文整理】第011课',
+      '',
+      '## 课文1：测试',
+      '',
+      '| 原文 | 假名注音 | 中文解释 |',
+      '| --- | --- | --- |',
+      '| 私は学生です。 | 私（わたし）は学生（がくせい）です。 | 我是学生。 |',
+      '',
+      '**语法考点**',
+      '',
+      '- ～は～です：名词谓语句',
+    ].join('\n')
+    const vocab = [
+      '| 序号 | 单词 | 假名 | 词性 | 中文释义 | 罗马音 | 例句 | 例句译文 | 发音注意事项 | 记忆技巧 | 同义词 | 形近词 |',
+      '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+      '| 1 | 私 | わたし | 代词 | 我 | watashi | 私は学生です。 | 我是学生。 | は读wa | 主题是我 |  |  |',
+    ].join('\n')
+    const grammar = [
+      '# 第011课 です',
+      '',
+      '## 第 1 部分　谓语句',
+      '',
+      '## ① 名词谓语句',
+      '',
+      '**句型公式**',
+      '',
+      '- ［名1］は［名2］です',
+      '',
+      '**例句**',
+      '',
+      '- 私は学生です。—— 我是学生。',
+      '',
+      '**⚠️ 注意**',
+      '',
+      '- は读 wa',
+      '',
+      '### 测验（1题）',
+      '',
+      '**Q1.** 助词は怎么读？',
+      '',
+      '- A. は',
+      '- B. わ',
+      '- C. ば',
+      '- D. ぱ',
+      '',
+      '| 题号 | 答案 | 解析 |',
+      '| --- | --- | --- |',
+      '| 1 | B | 提示主题的は读わ |',
+    ].join('\n')
+    const zipped = zipSync({
+      '第011课/课文.md': strToU8(passage),
+      '第011课/单词.md': strToU8(vocab),
+      '第011课/语法.md': strToU8(grammar),
+    })
+    const file = new File([zipped], '第011课.zip', { type: 'application/zip' })
+    const source = await readPassageSource(file)
+    const parts = splitLessonHandbook(source.text)
+    expect(parts.passageMarkdown).toContain('私は学生です')
+    expect(parts.vocabMarkdown).toContain('わたし')
+    expect(parts.grammarMarkdown).toContain('名词谓语句')
   })
 })
 
