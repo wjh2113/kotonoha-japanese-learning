@@ -1,3 +1,5 @@
+import { assembleLessonHandbook } from './passage'
+
 function cleanText(value: string | null | undefined) {
   return String(value || '').replace(/\u00a0/g, ' ').replace(/ +/g, ' ').trim()
 }
@@ -201,7 +203,6 @@ async function readLessonZip(file: File) {
     throw new Error('ZIP 里没有识别到课文 Markdown（需含「原文 / 假名注音 / 中文解释」表，或文件名含「课文」）。')
   }
 
-  const { assembleLessonHandbook } = await import('./passage')
   const text = assembleLessonHandbook({ passageMarkdown, vocabMarkdown, grammarMarkdown })
   if (!text) throw new Error('ZIP 内容无法拼成课时手册。')
   return {
