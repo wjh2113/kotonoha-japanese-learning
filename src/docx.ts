@@ -148,7 +148,9 @@ function classifyLessonEntry(path: string, text: string): 'passage' | 'vocab' | 
 }
 
 async function workbookBytesToVocabularyText(bytes: Uint8Array, filename: string) {
-  const file = new File([bytes], filename, {
+  const copy = new Uint8Array(bytes.byteLength)
+  copy.set(bytes)
+  const file = new File([copy], filename, {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   })
   return readVocabularyFile(file)
