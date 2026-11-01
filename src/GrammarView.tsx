@@ -35,27 +35,40 @@ function pointStatus(progress: GrammarProgressState, lessonId: string, pointId: 
   return '未学' as const
 }
 
+/** 把 **加粗** 渲染出来，避免注意列表里露出原文星号 */
+function RichText({ text }: { text: string }) {
+  const parts = String(text || '').split(/(\*\*[^*]+\*\*)/g).filter(Boolean)
+  return (
+    <>
+      {parts.map((part, index) => {
+        const bold = part.match(/^\*\*([^*]+)\*\*$/)
+        if (bold) return <strong key={`${bold[1]}-${index}`}>{bold[1]}</strong>
+        return <span key={`${part.slice(0, 12)}-${index}`}>{part}</span>
+      })}
+    </>
+  )
+}
+
 function BlockView({ block }: { block: GrammarBlock }) {
   const { voiceGender } = useContext(SettingsContext)
-  const [tableOpen, setTableOpen] = useState(false)
+  const [tableOpen, setTableOpen] = useState(true)
   if (block.type === 'section') {
     return <h3 className={`grammar-section-title kind-${block.kind}`}>{block.title}</h3>
   }
   if (block.type === 'paragraph') {
-    return <p className="grammar-paragraph">{block.text}</p>
+    return <p className="grammar-paragraph"><RichText text={block.text} /></p>
   }
   if (block.type === 'list') {
     return (
       <ul className="grammar-list">
-        {block.items.map((item) => <li key={item}>{item}</li>)}
+        {block.items.map((item) => <li key={item}><RichText text={item} /></li>)}
       </ul>
     )
   }
   if (block.type === 'notes') {
     return (
       <div className="grammar-notes">
-        <b>注意</b>
-        <ul>{block.items.map((item) => <li key={item}>{item}</li>)}</ul>
+        <ul>{block.items.map((item) => <li key={item}><RichText text={item} /></li>)}</ul>
       </div>
     )
   }
@@ -67,30 +80,39 @@ function BlockView({ block }: { block: GrammarBlock }) {
             key={`${item.jp}-${item.zh}`}
             type="button"
             className="grammar-example"
+            aria-label={`播放例句：${item.jp}`}
             onPointerDown={() => unlockSpeech()}
-            onClick={() => void speakJapanese(spokenJapanese(item.jp), voiceGender, { sentence: true })}
+            onClick={() => {
+              const line = spokenJapanese(item.jp)
+              if (!line.trim()) return
+              void speakJapanese(line, voiceGender, { sentence: true })
+            }}
           >
-            <span className="jp">{item.jp}</span>
-            <small>{item.zh}</small>
-            <Volume2 size={15} strokeWidth={1.7} aria-hidden />
+            <span className="jp"><RichText text={item.jp} /></span>
+            {item.zh ? <small><RichText text={item.zh} /></small> : null}
+            <span className="grammar-example-play" aria-hidden>
+              <Volume2 size={16} strokeWidth={2} />
+            </span>
           </button>
         ))}
       </div>
     )
   }
   if (block.type === 'table') {
-    const long = block.rows.length > 4
-    const rows = long && !tableOpen ? block.rows.slice(0, 4) : block.rows
+    const long = block.rows.length > 8
+    const rows = long && !tableOpen ? block.rows.slice(0, 8) : block.rows
     return (
       <div className="grammar-table-wrap">
         <table className="grammar-table">
           <thead>
-            <tr>{block.headers.map((cell) => <th key={cell}>{cell}</th>)}</tr>
+            <tr>{block.headers.map((cell) => <th key={cell}><RichText text={cell} /></th>)}</tr>
           </thead>
           <tbody>
             {rows.map((row, index) => (
               <tr key={`${row[0]}-${index}`}>
-                {row.map((cell, cellIndex) => <td key={`${cell}-${cellIndex}`}>{cell}</td>)}
+                {row.map((cell, cellIndex) => (
+                  <td key={`${cell}-${cellIndex}`}><RichText text={cell} /></td>
+                ))}
               </tr>
             ))}
           </tbody>
@@ -571,11 +593,13 @@ export function GrammarView({
                   <Volume2 size={18} strokeWidth={1.7} />
                 </button>
               </header>
-              <article className="grammar-point-card grammar-lesson-preview-body">
-                {previewPoint.blocks.map((block, index) => (
-                  <BlockView key={`${previewPoint.id}-${index}`} block={block} />
-                ))}
-              </article>
+              <div className="grammar-lesson-preview-body">
+                <article className="grammar-point-card">
+                  {previewPoint.blocks.map((block, index) => (
+                    <BlockView key={`${previewPoint.id}-${index}`} block={block} />
+                  ))}
+                </article>
+              </div>
               <div className="grammar-lesson-preview-actions">
                 <button
                   type="button"

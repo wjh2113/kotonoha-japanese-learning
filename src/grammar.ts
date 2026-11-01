@@ -9,11 +9,14 @@ import type {
 
 const POINT_HEADING = /^##\s*([①②③④⑤⑥⑦⑧⑨⑩⑪⑫]|[0-9]+)[.\s、．]*\s*(.+?)\s*$/
 const PART_HEADING = /^##\s*第\s*([0-9１２３４５６７８９０]+)\s*部分/
-const SECTION_BOLD = /^\*\*(.+?)\*\*\s*$/
+/** 允许 `**句型公式**` / `**句型公式**:` / `**句型公式**：`（LLM 常带冒号） */
+const SECTION_BOLD = /^\*\*(.+?)\*\*\s*[：:．.]?\s*(.*)$/
 const QUESTION_HEAD = /^\*\*Q([0-9]+)\.\*\*\s*(.+)$/
 const CHOICE_LINE = /^-\s*([A-D])\.\s*(.+)$/
-const EXAMPLE_LINE = /^-\s*(.+?)\s*(?:——|—|--)\s*(.+)\s*$/
+/** 日语 —— 中文；也容忍 en-dash / 双连字符 */
+const EXAMPLE_LINE = /^-\s*(.+?)\s*(?:——|—|–|--)\s*(.+)\s*$/
 const TABLE_ROW = /^\|(.+)\|\s*$/
+const SECTION_TITLE_HINT = /句型|公式|接续|分类|数量词|注意|规则|变形|含义|读音|促音|浊音|例句|要点|用法/
 
 const CIRCLED: Record<string, number> = {
   '①': 1, '②': 2, '③': 3, '④': 4, '⑤': 5,
@@ -128,14 +131,48 @@ function parseQuiz(section: string, pointId: string): GrammarQuestion[] {
   return questions
 }
 
+function looksJapanese(text: string) {
+  return /[\u3040-\u30ffー]/.test(text)
+}
+
 function parseExamples(lines: string[]): GrammarExample[] {
   const items: GrammarExample[] = []
   for (const line of lines) {
     const match = line.match(EXAMPLE_LINE)
-    if (!match) continue
-    items.push({ jp: match[1].trim(), zh: match[2].trim() })
+    if (match) {
+      items.push({ jp: match[1].trim(), zh: match[2].trim() })
+      continue
+    }
+    // 无 —— 时：整行是日语仍做成可播放例句卡（中文可空）
+    const stripped = line.replace(/^-\s+/, '').trim()
+    if (stripped && looksJapanese(stripped)) {
+      items.push({ jp: stripped, zh: '' })
+    }
   }
   return items
+}
+
+/** 列表项可跨行续写（缩进行并入上一项），避免注意/规则「显示不全」 */
+function collectDashItems(lines: string[], start: number) {
+  const items: string[] = []
+  let i = start
+  while (i < lines.length) {
+    const raw = lines[i]
+    const trimmed = raw.trim()
+    if (!trimmed) break
+    if (/^-\s+/.test(trimmed)) {
+      items.push(trimmed.replace(/^-\s+/, ''))
+      i += 1
+      continue
+    }
+    if (/^\s{2,}\S/.test(raw) && items.length) {
+      items[items.length - 1] = `${items[items.length - 1]} ${trimmed}`
+      i += 1
+      continue
+    }
+    break
+  }
+  return { items, next: i }
 }
 
 function parsePointBody(body: string, pointId: string): { blocks: GrammarBlock[]; questions: GrammarQuestion[] } {
@@ -166,10 +203,15 @@ function parsePointBody(body: string, pointId: string): { blocks: GrammarBlock[]
     const section = trimmed.match(SECTION_BOLD)
     if (section) {
       const title = section[1].replace(/^⚠️\s*/, '').trim()
-      currentSection = title
-      blocks.push({ type: 'section', title, kind: sectionKind(title) })
-      i += 1
-      continue
+      const rest = (section[2] || '').trim()
+      // 带冒号的小节标题，或标题关键词命中时当作 section（避免正文里的 **强调** 误伤）
+      if (!rest || SECTION_TITLE_HINT.test(title)) {
+        currentSection = title
+        blocks.push({ type: 'section', title, kind: sectionKind(title) })
+        if (rest) pushParagraph(stripHtml(rest))
+        i += 1
+        continue
+      }
     }
 
     if (TABLE_ROW.test(trimmed)) {
@@ -190,30 +232,26 @@ function parsePointBody(body: string, pointId: string): { blocks: GrammarBlock[]
     if (/^-\s+/.test(trimmed)) {
       if (/例句/.test(currentSection)) {
         const collected: string[] = []
-        while (i < lines.length && /^-\s+/.test(lines[i].trim())) {
-          collected.push(lines[i].trim())
-          i += 1
+        let j = i
+        while (j < lines.length && /^-\s+/.test(lines[j].trim())) {
+          collected.push(lines[j].trim())
+          j += 1
         }
+        i = j
         const examples = parseExamples(collected)
         if (examples.length) blocks.push({ type: 'examples', items: examples })
         else blocks.push({ type: 'list', items: collected.map((item) => item.replace(/^-\s+/, '')) })
         continue
       }
       if (/注意/.test(currentSection)) {
-        const items: string[] = []
-        while (i < lines.length && /^-\s+/.test(lines[i].trim())) {
-          items.push(lines[i].trim().replace(/^-\s+/, ''))
-          i += 1
-        }
-        blocks.push({ type: 'notes', items })
+        const collected = collectDashItems(lines, i)
+        blocks.push({ type: 'notes', items: collected.items })
+        i = collected.next
         continue
       }
-      const items: string[] = []
-      while (i < lines.length && /^-\s+/.test(lines[i].trim())) {
-        items.push(lines[i].trim().replace(/^-\s+/, ''))
-        i += 1
-      }
-      blocks.push({ type: 'list', items })
+      const collected = collectDashItems(lines, i)
+      blocks.push({ type: 'list', items: collected.items })
+      i = collected.next
       continue
     }
 

@@ -1,13 +1,13 @@
-/** Server-side grammar markdown parser. Keep in sync with src/grammar.ts */
-
+/** Server-side grammar markdown parser. Keep in sync with src/grammar.ts (rebuild: npx esbuild src/grammar.ts --bundle --platform=node --format=esm --outfile=grammar.mjs) */
 // src/grammar.ts
 var POINT_HEADING = /^##\s*([①②③④⑤⑥⑦⑧⑨⑩⑪⑫]|[0-9]+)[.\s、．]*\s*(.+?)\s*$/;
 var PART_HEADING = /^##\s*第\s*([0-9１２３４５６７８９０]+)\s*部分/;
-var SECTION_BOLD = /^\*\*(.+?)\*\*\s*$/;
+var SECTION_BOLD = /^\*\*(.+?)\*\*\s*[：:．.]?\s*(.*)$/;
 var QUESTION_HEAD = /^\*\*Q([0-9]+)\.\*\*\s*(.+)$/;
 var CHOICE_LINE = /^-\s*([A-D])\.\s*(.+)$/;
-var EXAMPLE_LINE = /^-\s*(.+?)\s*(?:——|—|--)\s*(.+)\s*$/;
+var EXAMPLE_LINE = /^-\s*(.+?)\s*(?:——|—|–|--)\s*(.+)\s*$/;
 var TABLE_ROW = /^\|(.+)\|\s*$/;
+var SECTION_TITLE_HINT = /句型|公式|接续|分类|数量词|注意|规则|变形|含义|读音|促音|浊音|例句|要点|用法/;
 var CIRCLED = {
   "\u2460": 1,
   "\u2461": 2,
@@ -110,14 +110,44 @@ function parseQuiz(section, pointId) {
   }
   return questions;
 }
+function looksJapanese(text) {
+  return /[\u3040-\u30ffー]/.test(text);
+}
 function parseExamples(lines) {
   const items = [];
   for (const line of lines) {
     const match = line.match(EXAMPLE_LINE);
-    if (!match) continue;
-    items.push({ jp: match[1].trim(), zh: match[2].trim() });
+    if (match) {
+      items.push({ jp: match[1].trim(), zh: match[2].trim() });
+      continue;
+    }
+    const stripped = line.replace(/^-\s+/, "").trim();
+    if (stripped && looksJapanese(stripped)) {
+      items.push({ jp: stripped, zh: "" });
+    }
   }
   return items;
+}
+function collectDashItems(lines, start) {
+  const items = [];
+  let i = start;
+  while (i < lines.length) {
+    const raw = lines[i];
+    const trimmed = raw.trim();
+    if (!trimmed) break;
+    if (/^-\s+/.test(trimmed)) {
+      items.push(trimmed.replace(/^-\s+/, ""));
+      i += 1;
+      continue;
+    }
+    if (/^\s{2,}\S/.test(raw) && items.length) {
+      items[items.length - 1] = `${items[items.length - 1]} ${trimmed}`;
+      i += 1;
+      continue;
+    }
+    break;
+  }
+  return { items, next: i };
 }
 function parsePointBody(body, pointId) {
   const quizSplit = body.split(/^###\s*测验/m);
@@ -143,10 +173,14 @@ function parsePointBody(body, pointId) {
     const section = trimmed.match(SECTION_BOLD);
     if (section) {
       const title = section[1].replace(/^⚠️\s*/, "").trim();
-      currentSection = title;
-      blocks.push({ type: "section", title, kind: sectionKind(title) });
-      i += 1;
-      continue;
+      const rest = (section[2] || "").trim();
+      if (!rest || SECTION_TITLE_HINT.test(title)) {
+        currentSection = title;
+        blocks.push({ type: "section", title, kind: sectionKind(title) });
+        if (rest) pushParagraph(stripHtml(rest));
+        i += 1;
+        continue;
+      }
     }
     if (TABLE_ROW.test(trimmed)) {
       const parsed = parseTable(lines, i);
@@ -163,31 +197,27 @@ function parsePointBody(body, pointId) {
     }
     if (/^-\s+/.test(trimmed)) {
       if (/例句/.test(currentSection)) {
-        const collected = [];
-        while (i < lines.length && /^-\s+/.test(lines[i].trim())) {
-          collected.push(lines[i].trim());
-          i += 1;
+        const collected2 = [];
+        let j = i;
+        while (j < lines.length && /^-\s+/.test(lines[j].trim())) {
+          collected2.push(lines[j].trim());
+          j += 1;
         }
-        const examples = parseExamples(collected);
+        i = j;
+        const examples = parseExamples(collected2);
         if (examples.length) blocks.push({ type: "examples", items: examples });
-        else blocks.push({ type: "list", items: collected.map((item) => item.replace(/^-\s+/, "")) });
+        else blocks.push({ type: "list", items: collected2.map((item) => item.replace(/^-\s+/, "")) });
         continue;
       }
       if (/注意/.test(currentSection)) {
-        const items2 = [];
-        while (i < lines.length && /^-\s+/.test(lines[i].trim())) {
-          items2.push(lines[i].trim().replace(/^-\s+/, ""));
-          i += 1;
-        }
-        blocks.push({ type: "notes", items: items2 });
+        const collected2 = collectDashItems(lines, i);
+        blocks.push({ type: "notes", items: collected2.items });
+        i = collected2.next;
         continue;
       }
-      const items = [];
-      while (i < lines.length && /^-\s+/.test(lines[i].trim())) {
-        items.push(lines[i].trim().replace(/^-\s+/, ""));
-        i += 1;
-      }
-      blocks.push({ type: "list", items });
+      const collected = collectDashItems(lines, i);
+      blocks.push({ type: "list", items: collected.items });
+      i = collected.next;
       continue;
     }
     if (/^\d+\.\s+/.test(trimmed)) {

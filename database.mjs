@@ -795,23 +795,68 @@ export function createDatabase(connectionString) {
     return { id: passageId }
   }
 
+  /** 用 source_markdown 重解析，修旧课里 `**句型公式**:` / 缺 —— 例句等；保持原 lesson/point id 以免进度对不上 */
+  const remapGrammarIds = (parsed, storedId) => {
+    const lessonId = text(storedId).slice(0, 80)
+    if (!parsed?.parts?.length || !lessonId) return parsed
+    return {
+      ...parsed,
+      id: lessonId,
+      parts: parsed.parts.map((part, partIndex) => {
+        const partId = `${lessonId}-part-${partIndex + 1}`
+        return {
+          ...part,
+          id: partId,
+          points: (part.points || []).map((point) => {
+            const pointId = `${lessonId}-p${point.index}`
+            return {
+              ...point,
+              id: pointId,
+              questions: (point.questions || []).map((question, qIndex) => {
+                const num = String(question.id || '').match(/q(\d+)$/i)?.[1] || String(qIndex + 1)
+                return { ...question, id: `${pointId}-q${num}` }
+              }),
+            }
+          }),
+        }
+      }),
+    }
+  }
+
   const mapGrammarRow = (row) => {
     const content = row.content && typeof row.content === 'object' ? row.content : {}
+    const sourceMarkdown = text(row.source_markdown)
+    let parts = Array.isArray(content.parts) ? content.parts : []
+    let summary = text(content.summary || row.summary)
+    let title = text(content.title || row.title) || '语法课'
+    if (sourceMarkdown) {
+      try {
+        const reparsed = parseGrammarMarkdown(sourceMarkdown, text(row.source_name) || text(content.sourceName) || '')
+        if (reparsed?.parts?.length) {
+          const remapped = remapGrammarIds(reparsed, row.id)
+          parts = remapped.parts
+          if (remapped.summary) summary = text(remapped.summary)
+          if (remapped.title) title = text(remapped.title) || title
+        }
+      } catch {
+        // keep stored content
+      }
+    }
     const lesson = {
       id: row.id,
       course: text(content.course || row.course),
       unit: Number(content.unit ?? row.unit_no) || 0,
       unitTitle: text(content.unitTitle || row.unit_title),
       lesson: Number(content.lesson ?? row.lesson_no) || 0,
-      title: text(content.title || row.title) || '语法课',
-      summary: text(content.summary || row.summary),
-      parts: Array.isArray(content.parts) ? content.parts : [],
+      title,
+      summary,
+      parts,
       sourceName: text(content.sourceName || row.source_name) || undefined,
     }
     return {
       lesson,
       progress: validateGrammarProgress(row.progress),
-      sourceMarkdown: text(row.source_markdown),
+      sourceMarkdown,
       updatedAt: row.updated_at?.getTime?.() || Date.now(),
     }
   }

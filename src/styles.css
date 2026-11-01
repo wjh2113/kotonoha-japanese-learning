@@ -2964,36 +2964,53 @@ body { background: var(--cream); color: var(--ink); }
 }
 .grammar-point-card {
   border: 1px solid #e5ebe0; border-radius: 18px; background: #fff; padding: 18px 16px;
-  display: grid; gap: 14px;
+  display: flex; flex-direction: column; gap: 14px;
+  min-width: 0; width: 100%; box-sizing: border-box;
 }
 .grammar-section-title {
   margin: 8px 0 0; font-size: 15px; color: #2f6a45;
 }
 .grammar-section-title.kind-notes { color: #c47d1a; }
 .grammar-paragraph { margin: 0; color: #3f4a42; line-height: 1.7; font-size: 14px; }
+.grammar-paragraph strong, .grammar-list strong, .grammar-notes strong, .grammar-table strong {
+  font-weight: 700; color: inherit;
+}
 .grammar-list { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; color: #3f4a42; font-size: 14px; line-height: 1.6; }
 .grammar-notes {
   border-radius: 12px; background: #fff7ee; border: 1px solid #f0d2a8; padding: 12px 14px;
   display: grid; gap: 8px;
 }
-.grammar-notes b { color: #c47d1a; font-size: 13px; }
-.grammar-notes ul { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; color: #8a5a1c; font-size: 13px; line-height: 1.55; }
+.grammar-notes ul { margin: 0; padding-left: 1.1em; display: grid; gap: 8px; color: #8a5a1c; font-size: 13px; line-height: 1.6; }
+.grammar-notes li { overflow-wrap: anywhere; }
 .grammar-examples { display: grid; gap: 8px; }
 .grammar-example {
   display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center;
   text-align: left; border: 1px solid #e5ebe0; border-radius: 12px; background: #fafcf7;
-  padding: 12px 14px; cursor: pointer;
+  padding: 12px 14px; cursor: pointer; width: 100%; box-sizing: border-box;
 }
+.grammar-example:active { background: #eef6f0; }
 .grammar-example .jp { font-size: 16px; color: #1f2a22; }
 .grammar-example small { grid-column: 1; color: #8b9180; font-size: 13px; }
-.grammar-example svg { color: #3f6b4f; }
-.grammar-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.grammar-example-play {
+  grid-row: 1 / span 2; align-self: center;
+  width: 34px; height: 34px; border-radius: 999px;
+  display: grid; place-items: center;
+  background: #e7f2ea; color: #2f6a45; flex-shrink: 0;
+}
+.grammar-table-wrap {
+  width: 100%; max-width: 100%; min-width: 0;
+  overflow-x: auto; overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  flex-shrink: 0;
+}
 .grammar-table {
-  width: 100%; min-width: 420px; border-collapse: collapse; font-size: 13px;
+  width: max-content; min-width: 100%; border-collapse: collapse; font-size: 13px;
+  height: auto; table-layout: auto;
 }
 .grammar-table th, .grammar-table td {
-  border: 1px solid #e5ebe0; padding: 8px 10px; text-align: left; vertical-align: top;
-  color: #3f4a42; line-height: 1.45;
+  border: 1px solid #e5ebe0; padding: 10px 12px; text-align: left; vertical-align: top;
+  color: #3f4a42; line-height: 1.55; height: auto; min-height: 2.4em;
+  white-space: normal; overflow-wrap: anywhere;
 }
 .grammar-table th { background: #f3f7ef; color: #2f6a45; white-space: nowrap; }
 .grammar-table-toggle {
@@ -3102,7 +3119,12 @@ body { background: var(--cream); color: var(--ink); }
   .grammar-lesson-preview-body {
     max-height: calc(100vh - 280px);
     overflow: auto;
-    padding: 14px 12px;
+    min-height: 0;
+    min-width: 0;
+    padding: 0;
+  }
+  .grammar-lesson-preview-body > .grammar-point-card {
+    border: 0; border-radius: 0; padding: 4px 2px 8px;
   }
   .grammar-lesson-preview-actions {
     display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
