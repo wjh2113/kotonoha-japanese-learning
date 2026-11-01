@@ -53,7 +53,8 @@ export function replaceKnownKanji(text: string) {
 }
 
 export function finalizeTtsKana(text: string) {
-  return expandFuriganaForTts(replaceKnownKanji(String(text || '')))
+  // 去说话人标签 → 展开注音 → 补无注音汉字（顺序不能反，否则会破坏「東京大学（…）」）
+  return replaceKnownKanji(expandFuriganaForTts(stripDialogueSpeakerPrefix(String(text || ''))))
 }
 
 function countKanji(text: string) {
@@ -73,22 +74,37 @@ function spokenToken(token: { surface?: string; reading?: string }) {
   return finalizeTtsKana(surface)
 }
 
+/**
+ * 课文对话行首「佐藤：」「りん：」「佐藤（さとう）：」只作说话人标签，朗读时去掉，
+ * 避免与句中再次出现的同一人名读两遍。
+ */
+export function stripDialogueSpeakerPrefix(text: string) {
+  return String(text || '').replace(
+    /^\s*[^\s：:]{1,24}?(?:（[^）]*）|\([^)]*\))?\s*[：:]\s*/,
+    '',
+  )
+}
+
+function speakable(text: string) {
+  return stripDialogueSpeakerPrefix(String(text || '').trim())
+}
+
 /** Prefer kana readings so TTS is Japanese, not Chinese kanji. */
 export function spokenJapanese(source: {
   text?: string
   reading?: string
   tokens?: Array<{ surface?: string; reading?: string }>
 } | string) {
-  if (typeof source === 'string') return spokenLexeme(source)
-  const readingSpoken = finalizeTtsKana(String(source.reading || '').trim())
+  if (typeof source === 'string') return spokenLexeme(speakable(source))
+  const readingSpoken = finalizeTtsKana(speakable(String(source.reading || '').trim()))
   if (readingSpoken && !KANJI.test(readingSpoken)) return readingSpoken
 
   const tokens = Array.isArray(source.tokens) ? source.tokens : []
   if (tokens.length) {
-    const joined = tokens.map(spokenToken).join('')
+    const joined = speakable(tokens.map(spokenToken).join(''))
     if (!KANJI.test(joined)) return joined
     if (readingSpoken && countKanji(readingSpoken) < countKanji(joined)) return readingSpoken
     return joined
   }
-  return spokenLexeme(source.text, source.reading)
+  return spokenLexeme(speakable(source.text), speakable(source.reading))
 }

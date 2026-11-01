@@ -48,6 +48,15 @@ export function replaceKnownKanji(text) {
   return out
 }
 
+/** 去掉行首「佐藤：」「りん：」说话人标签，避免与句中人名读两遍。 */
+export function stripDialogueSpeakerPrefix(text) {
+  return String(text || '').replace(
+    /^\s*[^\s：:]{1,24}?(?:（[^）]*）|\([^)]*\))?\s*[：:]\s*/,
+    '',
+  )
+}
+
 export function finalizeTtsKana(text) {
-  return expandFuriganaForTts(replaceKnownKanji(String(text || '')))
+  // 先去说话人标签、再展开注音、最后补无注音汉字
+  return replaceKnownKanji(expandFuriganaForTts(stripDialogueSpeakerPrefix(String(text || ''))))
 }
