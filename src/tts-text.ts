@@ -85,7 +85,7 @@ export function stripDialogueSpeakerPrefix(text: string) {
   )
 }
 
-function speakable(text: string) {
+function speakable(text?: string) {
   return stripDialogueSpeakerPrefix(String(text || '').trim())
 }
 
