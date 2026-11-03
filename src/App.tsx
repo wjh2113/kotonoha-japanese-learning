@@ -842,6 +842,16 @@ function App() {
           {view === 'passage' && (
             <Suspense fallback={<div className="wide-empty compact"><b>加载中…</b></div>}>
               <PassageView
+                onOpenStudy={(lessonName) => {
+                  const target = units.find((item) => canonicalLessonName(item.name) === canonicalLessonName(lessonName))
+                  if (!target) {
+                    setToast('当前课时还没有对应的单词单元，请先导入本课单词')
+                    return
+                  }
+                  setUnitId(target.id)
+                  setSearch('')
+                  nav('study')
+                }}
                 onOpenGrammar={(opts) => {
                   setGrammarFocus(opts?.lessonNo ? { lessonNo: opts.lessonNo } : null)
                   setView('grammar')

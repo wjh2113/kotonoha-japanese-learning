@@ -158,8 +158,10 @@ function hydratePassage(item: unknown): Passage | null {
 
 export function PassageView({
   onOpenGrammar,
+  onOpenStudy,
   onImportLessonWords,
 }: {
+  onOpenStudy?: (lessonName: string) => void
   onOpenGrammar?: (opts?: { lessonNo?: number; lessonName?: string }) => void
   onImportLessonWords?: (lessonName: string, words: Word[]) => Promise<string>
 }) {
@@ -1358,6 +1360,16 @@ export function PassageView({
                             <p className="passage-grammar-empty">
                               {passage.status === 'processing' ? '语法点整理中，解析完成后会显示在这里。' : '本课暂无语法标注。'}
                             </p>
+                          )}
+                          {onOpenStudy && (
+                            <button
+                              type="button"
+                              className="secondary-button passage-grammar-jump"
+                              onClick={() => onOpenStudy(passage.lessonName || passage.title)}
+                            >
+                              <BookOpen size={15} strokeWidth={1.7} />
+                              去学单词
+                            </button>
                           )}
                           {onOpenGrammar && (
                             <button

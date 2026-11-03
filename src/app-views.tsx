@@ -113,8 +113,8 @@ export function AppHeader({ open, view, starredCount, errorBookCount, reviewCoun
 }) {
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'home', label: '首页', icon: <Home size={18} strokeWidth={1.6} /> },
-    { id: 'study', label: '单词学习', icon: <BookOpen size={18} strokeWidth={1.6} /> },
     { id: 'passage', label: '课文学习', icon: <FileText size={18} strokeWidth={1.6} /> },
+    { id: 'study', label: '单词学习', icon: <BookOpen size={18} strokeWidth={1.6} /> },
     { id: 'grammar', label: '语法学习', icon: <ClipboardList size={18} strokeWidth={1.6} /> },
     { id: 'test', label: '测试', icon: <GraduationCap size={18} strokeWidth={1.6} /> },
     { id: 'dictation', label: '听写', icon: <Keyboard size={18} strokeWidth={1.6} /> },
@@ -246,8 +246,8 @@ export function MobileTopBar({ view, settings, onView, onSettingsChange, onMenu,
 export function MobileTabBar({ view, onView }: { view: View; reviewCount?: number; onView: (view: View) => void }) {
   const items: { id: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'home', label: '首页', icon: <Home size={21} /> },
-    { id: 'study', label: '单词', icon: <BookOpen size={21} /> },
     { id: 'passage', label: '课文', icon: <FileText size={21} /> },
+    { id: 'study', label: '单词', icon: <BookOpen size={21} /> },
     { id: 'grammar', label: '语法', icon: <ClipboardList size={21} /> },
     { id: 'wordbook', label: '生词本', icon: <BookMarked size={21} /> },
     { id: 'settings', label: '我的', icon: <UserRound size={21} /> },
