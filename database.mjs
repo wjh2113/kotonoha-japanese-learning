@@ -219,6 +219,8 @@ export function createDatabase(connectionString) {
   const initialize = async () => {
     const schema = await fs.readFile(path.join(dirname, 'db', 'schema.sql'), 'utf8')
     await pool.query(schema)
+    const dedupe = await fs.readFile(path.join(dirname, 'db', 'dedupe-words.sql'), 'utf8')
+    await pool.query(dedupe)
     await migrateBooksMetaRow()
     await migrateLessonsFromPassages()
     await seedDefaultGrammarLessons()
@@ -470,10 +472,16 @@ export function createDatabase(connectionString) {
              sort_order = EXCLUDED.sort_order`,
           [unitId, text(unit.name), text(unit.description), text(unit.color, '#e6533f'), unitIndex],
         )
+        // The unit upsert above holds its row lock until commit.
+        const existing = await client.query('SELECT id, term, reading FROM words WHERE unit_id = $1', [unitId])
+        const ids = new Map(existing.rows.map((w) => [`${w.term}\0${w.reading}`, w.id]))
         const prepared = prepareUnitWords(unit.words)
         dropped.push(...prepared.dropped.map((item) => ({ ...item, unitId })))
         const wordRows = []
         for (const [wordIndex, entry] of prepared.kept.entries()) {
+          const existingId = ids.get(`${entry.term}\0${entry.reading}`)
+          // Ignore stale copies with a different ID: never overwrite merged progress.
+          if (existingId && existingId !== text(entry.word.id)) continue
           wordRows.push(buildWordParams(entry.word, unitId, wordIndex, entry.term, entry.reading, entry.lex))
         }
         if (wordRows.length) await upsertWordsBatch(client, wordRows)
@@ -1161,12 +1169,25 @@ export function createDatabase(connectionString) {
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
+      // Serialize imports for this unit, including concurrent requests.
+      await client.query('SELECT id FROM units WHERE id = $1 FOR UPDATE', [id])
       const wordRows = []
       for (const entry of prepared.kept) {
         wordRows.push(buildWordParams(entry.word, id, sortOrder, entry.term, entry.reading, entry.lex))
         sortOrder += 1
       }
-      if (wordRows.length) await upsertWordsBatch(client, wordRows)
+      // Importing again must never reset the saved learning progress.
+      const insertedIds = new Set()
+      for (const row of wordRows) {
+        const result = await client.query(wordUpsertSql.replace(wordUpsertConflictSql,
+          'ON CONFLICT DO NOTHING RETURNING id'), row)
+        if (result.rows[0]) insertedIds.add(result.rows[0].id)
+      }
+      prepared.kept = prepared.kept.filter((entry) => {
+        if (insertedIds.has(text(entry.word.id))) return true
+        prepared.dropped.push({ id: text(entry.word.id), term: entry.term, reason: 'duplicate_existing' })
+        return false
+      })
       await client.query('COMMIT')
     } catch (error) {
       await client.query('ROLLBACK')
