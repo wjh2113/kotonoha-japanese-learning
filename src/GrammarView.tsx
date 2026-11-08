@@ -3,15 +3,22 @@ import {
   BookOpen, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, GraduationCap,
   UploadCloud, Volume2, X,
 } from 'lucide-react'
-import { flattenGrammarPoints, parseGrammarMarkdown } from './grammar'
+import { collectGrammarPointSpeakLines, flattenGrammarPoints, parseGrammarMarkdown } from './grammar'
 import {
   fetchGrammarBundle, lessonProgressSummary, markGrammarPointStudied, recordGrammarAnswer,
   syncGrammarProgress, uploadGrammarLesson,
 } from './grammar-store'
 import type { GrammarBlock, GrammarLesson, GrammarPoint, GrammarProgressState, GrammarQuestion } from './grammar-types'
 import { SettingsContext } from './settings-context'
-import { speakJapanese, unlockSpeech } from './speech'
+import { speakJapanese, speakJapaneseQueue, unlockSpeech } from './speech'
 import { spokenJapanese } from './tts-text'
+import type { VoiceGender } from './types'
+
+function speakGrammarPoint(point: GrammarPoint, voiceGender: VoiceGender) {
+  const lines = collectGrammarPointSpeakLines(point)
+  if (!lines.length) return
+  void speakJapaneseQueue(lines, voiceGender, { sentence: true })
+}
 
 type Screen =
   | { name: 'hub' }
@@ -468,9 +475,9 @@ export function GrammarView({
           <button
             type="button"
             className="grammar-point-speak"
-            aria-label="朗读语法点标题"
+            aria-label="朗读本语法点"
             onPointerDown={() => unlockSpeech()}
-            onClick={() => void speakJapanese(spokenJapanese(activePoint.title), voiceGender, { sentence: true })}
+            onClick={() => speakGrammarPoint(activePoint, voiceGender)}
           >
             <Volume2 size={18} strokeWidth={1.7} />
           </button>
@@ -586,9 +593,9 @@ export function GrammarView({
                 <button
                   type="button"
                   className="grammar-point-speak"
-                  aria-label="朗读语法点标题"
+                  aria-label="朗读本语法点"
                   onPointerDown={() => unlockSpeech()}
-                  onClick={() => void speakJapanese(spokenJapanese(previewPoint.title), voiceGender, { sentence: true })}
+                  onClick={() => speakGrammarPoint(previewPoint, voiceGender)}
                 >
                   <Volume2 size={18} strokeWidth={1.7} />
                 </button>

@@ -319,6 +319,46 @@ function flattenGrammarPoints(lesson) {
 function countGrammarQuestions(lesson) {
   return flattenGrammarPoints(lesson).reduce((sum, point) => sum + point.questions.length, 0);
 }
+function stripInlineMarkdown(text) {
+  return String(text || "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/^[-*]\s+/, "").trim();
+}
+function hasJapaneseKana(text) {
+  return /[\u3040-\u30ffー]/.test(text);
+}
+function collectGrammarPointSpeakLines(point) {
+  const lines = [];
+  const seen = /* @__PURE__ */ new Set();
+  const push = (raw, force = false) => {
+    const text = stripInlineMarkdown(raw);
+    if (!text) return;
+    if (!force && !hasJapaneseKana(text)) return;
+    if (seen.has(text)) return;
+    seen.add(text);
+    lines.push(text);
+  };
+  push(point.title, true);
+  for (const block of point.blocks) {
+    if (block.type === "section") continue;
+    if (block.type === "paragraph") {
+      push(block.text);
+      continue;
+    }
+    if (block.type === "list" || block.type === "notes") {
+      for (const item of block.items) push(item);
+      continue;
+    }
+    if (block.type === "examples") {
+      for (const item of block.items) push(item.jp, true);
+      continue;
+    }
+    if (block.type === "table") {
+      for (const row of block.rows) {
+        for (const cell of row) push(cell);
+      }
+    }
+  }
+  return lines;
+}
 function mergeGrammarLessons(base, uploaded) {
   const map = /* @__PURE__ */ new Map();
   for (const lesson of [...base, ...uploaded]) map.set(lesson.id, lesson);
@@ -329,6 +369,7 @@ function mergeGrammarLessons(base, uploaded) {
   });
 }
 export {
+  collectGrammarPointSpeakLines,
   countGrammarQuestions,
   flattenGrammarPoints,
   mergeGrammarLessons,

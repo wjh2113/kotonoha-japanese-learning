@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { countGrammarQuestions, flattenGrammarPoints, parseGrammarMarkdown } from './grammar'
+import {
+  collectGrammarPointSpeakLines,
+  countGrammarQuestions,
+  flattenGrammarPoints,
+  parseGrammarMarkdown,
+} from './grammar'
 import sample from '../content/grammar/L02_電気屋で.md?raw'
 
 describe('parseGrammarMarkdown', () => {
@@ -22,6 +27,47 @@ describe('parseGrammarMarkdown', () => {
 
   it('returns null for empty content', () => {
     expect(parseGrammarMarkdown('')).toBeNull()
+  })
+
+  it('collects title, examples and kana table cells for full-point TTS', () => {
+    const point = {
+      id: 'p1',
+      index: 1,
+      title: '量词：枚・台・番・円',
+      questions: [],
+      blocks: [
+        { type: 'section' as const, title: '句型公式', kind: 'formula' as const },
+        {
+          type: 'table' as const,
+          headers: ['量词', '读音', '用于', '示例'],
+          rows: [
+            ['~枚', 'まい', '薄而平的物品', '紙を一枚 (いちまい)'],
+            ['~台', 'だい', '机器车辆', 'パソコンを一台 (いちだい)'],
+          ],
+        },
+        {
+          type: 'table' as const,
+          headers: ['数字', '~枚', '~台'],
+          rows: [
+            ['1', 'いちまい', 'いちだい'],
+            ['2', 'にまい', 'にだい'],
+          ],
+        },
+        {
+          type: 'examples' as const,
+          items: [{ jp: 'りんごを一つください。', zh: '请给我一个苹果。' }],
+        },
+      ],
+    }
+    const lines = collectGrammarPointSpeakLines(point)
+    expect(lines[0]).toBe('量词：枚・台・番・円')
+    expect(lines).toContain('まい')
+    expect(lines).toContain('紙を一枚 (いちまい)')
+    expect(lines).toContain('いちまい')
+    expect(lines).toContain('にだい')
+    expect(lines).toContain('りんごを一つください。')
+    expect(lines.some((line) => line === '句型公式')).toBe(false)
+    expect(lines.some((line) => line === '薄而平的物品')).toBe(false)
   })
 
   it('tolerates section titles with trailing colon and keeps table rows + playable examples', () => {

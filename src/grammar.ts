@@ -370,6 +370,58 @@ export function countGrammarQuestions(lesson: GrammarLesson) {
   return flattenGrammarPoints(lesson).reduce((sum, point) => sum + point.questions.length, 0)
 }
 
+function stripInlineMarkdown(text: string) {
+  return String(text || '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^[-*]\s+/, '')
+    .trim()
+}
+
+function hasJapaneseKana(text: string) {
+  return /[\u3040-\u30ffー]/.test(text)
+}
+
+/**
+ * 语法点整段朗读文案：标题 + 正文/列表/注意/例句/表格里带假名的内容。
+ * 跳过纯中文小节标题（如「句型公式」），避免 CosyVoice 用日语音色硬读中文。
+ */
+export function collectGrammarPointSpeakLines(point: GrammarPoint): string[] {
+  const lines: string[] = []
+  const seen = new Set<string>()
+  const push = (raw: string, force = false) => {
+    const text = stripInlineMarkdown(raw)
+    if (!text) return
+    if (!force && !hasJapaneseKana(text)) return
+    if (seen.has(text)) return
+    seen.add(text)
+    lines.push(text)
+  }
+
+  push(point.title, true)
+  for (const block of point.blocks) {
+    if (block.type === 'section') continue
+    if (block.type === 'paragraph') {
+      push(block.text)
+      continue
+    }
+    if (block.type === 'list' || block.type === 'notes') {
+      for (const item of block.items) push(item)
+      continue
+    }
+    if (block.type === 'examples') {
+      for (const item of block.items) push(item.jp, true)
+      continue
+    }
+    if (block.type === 'table') {
+      for (const row of block.rows) {
+        for (const cell of row) push(cell)
+      }
+    }
+  }
+  return lines
+}
+
 export function mergeGrammarLessons(base: GrammarLesson[], uploaded: GrammarLesson[]) {
   const map = new Map<string, GrammarLesson>()
   for (const lesson of [...base, ...uploaded]) map.set(lesson.id, lesson)
